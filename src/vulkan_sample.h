@@ -13,14 +13,14 @@
 #include "_interface/sdl_window.h" // For default implementation
 #include "_interface/window.h"
 #include "_old/vulkan_commandbuffer.h"
-#include "_old/vulkan_framebuffer.h"
 #include "_old/vulkan_pipeline.h"
-#include "_old/vulkan_renderpass.h"
 #include "_old/vulkan_shader.h"
 #include "_old/vulkan_synchronization.h"
 #include "_templates/common.hpp"
 #include "_vra/vra.h"
 #include "utility/config_reader.h"
+#include "render_graph/system.h"
+#include "render_graph/vk_backend.h"
 
 struct window_config
 {
@@ -112,10 +112,8 @@ private:
     interface::camera_container* camera_container = nullptr;
     size_t camera_entity_index                    = 0;
     std::unique_ptr<VulkanShaderHelper> vk_shader_helper;
-    std::unique_ptr<VulkanRenderpassHelper> vk_renderpass_helper;
     std::unique_ptr<VulkanPipelineHelper> vk_pipeline_helper;
     std::unique_ptr<VulkanCommandBufferHelper> vk_command_buffer_helper;
-    std::unique_ptr<VulkanFrameBufferHelper> vk_frame_buffer_helper;
     std::unique_ptr<VulkanSynchronizationHelper> vk_synchronization_helper;
 
     // --- Vulkan Initialization Steps ---
@@ -129,8 +127,6 @@ private:
     bool create_physical_device();
     bool create_logical_device();
     bool create_swapchain();
-    bool create_depth_resources();
-    bool create_frame_buffer();
     bool create_pipeline();
     bool create_command_pool();
     bool create_and_write_descriptor_relatives();
@@ -148,6 +144,7 @@ private:
     void draw_frame();
     void resize_swapchain();
     bool record_command(uint32_t image_index, const std::string& command_buffer_id);
+    bool build_render_graph();
     void update_uniform_buffer(uint32_t current_frame_index);
 
     // -------------------------
@@ -184,12 +181,15 @@ private:
 
     std::map<vra::BatchId, vra::VraDataBatcher::VraBatchHandle> local_host_batch_handle;
 
-    // 深度资源相关成员
-    vk::Image depth_image          = VK_NULL_HANDLE;
-    vk::DeviceMemory depth_memory  = VK_NULL_HANDLE;
-    vk::ImageView depth_image_view = VK_NULL_HANDLE;
     vk::Format depth_format        = vk::Format::eD32Sfloat;
 
-    // 创建深度资源
-    vk::Format find_supported_depth_format();
+    using frame_render_graph = render_graph::render_graph_system<render_graph::vk_backend>;
+    std::unique_ptr<frame_render_graph> frame_graph;
+    render_graph::image_handle rg_swapchain{};
+    render_graph::image_handle rg_depth{};
+    render_graph::buffer_handle rg_staging{};
+    render_graph::buffer_handle rg_local{};
+    render_graph::buffer_handle rg_uniform{};
+    bool mesh_upload_pending = true;
+    uint64_t submitted_frame = 0;
 };

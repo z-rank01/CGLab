@@ -180,9 +180,16 @@ bool VulkanPipelineHelper::CreatePipeline(vk::Device device)
         .pDynamicStates = dynamicStates.data()
     };
 
+    vk::PipelineRenderingCreateInfo rendering_info{
+        .colorAttachmentCount = 1,
+        .pColorAttachmentFormats = &config_.color_format,
+        .depthAttachmentFormat = config_.depth_format,
+    };
+
     // graphics pipeline create info
     vk::GraphicsPipelineCreateInfo pipelineInfo
     {
+        .pNext = &rendering_info,
         .stageCount = static_cast<uint32_t>(shader_stages.size()),
         .pStages = shader_stages.data(),
         .pVertexInputState = &vertexInputInfo,
@@ -194,7 +201,7 @@ bool VulkanPipelineHelper::CreatePipeline(vk::Device device)
         .pColorBlendState = &colorBlending,
         .pDynamicState = &dynamicState,
         .layout = pipeline_layout_,
-        .renderPass = config_.renderpass,
+        .renderPass = VK_NULL_HANDLE,
         .subpass = 0,
         .basePipelineHandle = VK_NULL_HANDLE,
         .basePipelineIndex = -1

@@ -55,25 +55,6 @@ vulkan_sample::~vulkan_sample()
     // 等待设备空闲，确保没有正在进行的操作
     comm_vk_logical_device.waitIdle();
 
-    // 销毁深度资源
-    if (depth_image_view != VK_NULL_HANDLE)
-    {
-        comm_vk_logical_device.destroyImageView(depth_image_view);
-        depth_image_view = VK_NULL_HANDLE;
-    }
-
-    if (depth_image != VK_NULL_HANDLE)
-    {
-        comm_vk_logical_device.destroyImage(depth_image);
-        depth_image = VK_NULL_HANDLE;
-    }
-
-    if (depth_memory != VK_NULL_HANDLE)
-    {
-        comm_vk_logical_device.freeMemory(depth_memory, nullptr);
-        depth_memory = VK_NULL_HANDLE;
-    }
-
     // 销毁描述符相关资源
     if (descriptor_pool != VK_NULL_HANDLE)
     {
@@ -103,6 +84,7 @@ vulkan_sample::~vulkan_sample()
         vmaDestroyBuffer(vma_allocator, staging_buffer, staging_buffer_allocation);
         staging_buffer = VK_NULL_HANDLE;
     }
+    frame_graph.reset();
     if (vma_allocator != VK_NULL_HANDLE)
     {
         vmaDestroyAllocator(vma_allocator);
@@ -120,9 +102,7 @@ vulkan_sample::~vulkan_sample()
     // release unique pointer
 
     vk_shader_helper.reset();
-    vk_renderpass_helper.reset();
     vk_pipeline_helper.reset();
-    vk_frame_buffer_helper.reset();
     vk_command_buffer_helper.reset();
     vk_synchronization_helper.reset();
 
@@ -190,11 +170,6 @@ void vulkan_sample::initialize_vulkan()
     if (!create_pipeline())
     {
         throw std::runtime_error("Failed to create Vulkan pipeline.");
-    }
-
-    if (!create_frame_buffer())
-    {
-        throw std::runtime_error("Failed to create Vulkan frame buffer.");
     }
 
     if (!create_command_pool())
@@ -282,7 +257,7 @@ bool vulkan_sample::create_surface()
 bool vulkan_sample::create_physical_device()
 {
     // vulkan 1.3 features - 用于检查硬件支持
-    vk::PhysicalDeviceVulkan13Features features_13{.synchronization2 = vk::True};
+    vk::PhysicalDeviceVulkan13Features features_13{.synchronization2 = vk::True, .dynamicRendering = vk::True};
 
     auto physical_device_chain = common::physicaldevice::create_physical_device_context(comm_vk_instance) |
                                  common::physicaldevice::set_surface(surface) | common::physicaldevice::require_api_version(1, 3, 0) |
@@ -481,133 +456,26 @@ bool vulkan_sample::create_vma_vra_objects()
     allocator_create_info.device                 = comm_vk_logical_device;
     allocator_create_info.instance               = comm_vk_instance;
 
-    return Logger::LogWithVkResult(vmaCreateAllocator(&allocator_create_info, &vma_allocator),
-                                   "Failed to create Vulkan vra and vma objects",
-                                   "Succeeded in creating Vulkan vra and vma objects");
-}
-
-// 查找支持的深度格式
-vk::Format vulkan_sample::find_supported_depth_format()
-{
-    // 按优先级尝试不同的深度格式
-    std::vector<vk::Format> candidates = {vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint};
-
-    for (vk::Format format : candidates)
+    const auto result = vmaCreateAllocator(&allocator_create_info, &vma_allocator);
+    if (!Logger::LogWithVkResult(result,
+                                 "Failed to create Vulkan vra and vma objects",
+                                 "Succeeded in creating Vulkan vra and vma objects"))
     {
-        vk::FormatProperties props;
-        comm_vk_physical_device.getFormatProperties(format, &props);
-
-        // 检查该格式是否支持作为深度附件的最佳平铺格式
-        if (props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment)
-        {
-            // 如果支持，则返回该格式
-            Logger::LogInfo("Supported depth format found: " + vk::to_string(format));
-            return format;
-        }
-    }
-
-    throw std::runtime_error("Failed to find supported depth format");
-}
-
-// 创建深度资源
-bool vulkan_sample::create_depth_resources()
-{
-    // 获取深度格式
-    depth_format = find_supported_depth_format();
-
-    // 创建深度图像
-    vk::ImageCreateInfo image_info;
-    image_info.setImageType(vk::ImageType::e2D)
-        .setExtent({.width  = comm_vk_swapchain_context.swapchain_info_.extent_.width,
-                    .height = comm_vk_swapchain_context.swapchain_info_.extent_.height,
-                    .depth  = 1})
-        .setMipLevels(1)
-        .setArrayLayers(1)
-        .setFormat(depth_format)
-        .setTiling(vk::ImageTiling::eOptimal)
-        .setInitialLayout(vk::ImageLayout::eUndefined)
-        .setUsage(vk::ImageUsageFlagBits::eDepthStencilAttachment)
-        .setSamples(vk::SampleCountFlagBits::e1)
-        .setSharingMode(vk::SharingMode::eExclusive);
-
-    // 创建图像
-    depth_image = comm_vk_logical_device.createImage(image_info, nullptr);
-    if (!depth_image)
-    {
-        Logger::LogError("Failed to create depth image");
         return false;
     }
-
-    // 获取内存需求
-    vk::MemoryRequirements mem_requirements = comm_vk_logical_device.getImageMemoryRequirements(depth_image);
-
-    // 分配内存
-    vk::MemoryAllocateInfo alloc_info{};
-    alloc_info.setAllocationSize(mem_requirements.size);
-
-    // 查找适合的内存类型
-    uint32_t memory_type_index                        = 0;
-    vk::PhysicalDeviceMemoryProperties mem_properties = comm_vk_physical_device.getMemoryProperties();
-
-    for (uint32_t i = 0; i < mem_properties.memoryTypeCount; i++)
-    {
-        if (((mem_requirements.memoryTypeBits & (1 << i)) != 0U) &&
-            (mem_properties.memoryTypes[i].propertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal))
-        {
-            memory_type_index = i;
-            break;
-        }
-    }
-
-    alloc_info.memoryTypeIndex = memory_type_index;
-
-    // 分配内存
-    depth_memory = comm_vk_logical_device.allocateMemory(alloc_info, nullptr);
-    if (!depth_memory)
-    {
-        Logger::LogError("Failed to allocate depth image memory");
-        return false;
-    }
-
-    // 绑定内存到图像
-    comm_vk_logical_device.bindImageMemory(depth_image, depth_memory, 0);
-
-    // 创建图像视图
-    vk::ImageViewCreateInfo view_info{};
-    view_info.setImage(depth_image)
-        .setViewType(vk::ImageViewType::e2D)
-        .setFormat(depth_format)
-        .setSubresourceRange(vk::ImageSubresourceRange()
-                                 .setAspectMask(vk::ImageAspectFlagBits::eDepth)
-                                 .setBaseMipLevel(0)
-                                 .setLevelCount(1)
-                                 .setBaseArrayLayer(0)
-                                 .setLayerCount(1));
-
-    if (comm_vk_logical_device.createImageView(&view_info, nullptr, &depth_image_view) != vk::Result::eSuccess)
-    {
-        Logger::LogError("Failed to create depth image view");
-        return false;
-    }
-
+    const auto graphics_family = common::logicaldevice::find_optimal_queue_family(
+        comm_vk_logical_device_context, vk::QueueFlagBits::eGraphics).value_or(0);
+    frame_graph = std::make_unique<frame_render_graph>();
+    frame_graph->set_backend_context(static_cast<VkPhysicalDevice>(comm_vk_physical_device),
+                                     static_cast<VkDevice>(comm_vk_logical_device),
+                                     vma_allocator,
+                                     render_graph::vk_queue_family_indices{
+                                         .graphics = graphics_family,
+                                         .compute = graphics_family,
+                                         .copy = graphics_family,
+                                     },
+                                     config.frame_count);
     return true;
-}
-
-bool vulkan_sample::create_frame_buffer()
-{
-    // 创建深度资源
-    if (!create_depth_resources())
-    {
-        throw std::runtime_error("Failed to create depth resources.");
-    }
-
-    // 创建帧缓冲
-    SVulkanFrameBufferConfig framebuffer_config(
-        comm_vk_swapchain_context.swapchain_info_.extent_, comm_vk_swapchain_context.swapchain_image_views_, depth_image_view);
-
-    vk_frame_buffer_helper = std::make_unique<VulkanFrameBufferHelper>(comm_vk_logical_device, framebuffer_config);
-
-    return vk_frame_buffer_helper->CreateFrameBuffer(vk_renderpass_helper->GetRenderpass());
 }
 
 bool vulkan_sample::create_pipeline()
@@ -640,24 +508,13 @@ bool vulkan_sample::create_pipeline()
         }
     }
 
-    // create renderpass
-    SVulkanRenderpassConfig renderpass_config{
-        .color_format = comm_vk_swapchain_context.swapchain_info_.surface_format_.format,
-        .depth_format = vk::Format::eD32Sfloat,     // TODO: Make configurable
-        .sample_count = vk::SampleCountFlagBits::e1 // TODO: Make configurable
-    };
-    vk_renderpass_helper = std::make_unique<VulkanRenderpassHelper>(renderpass_config);
-    if (!vk_renderpass_helper->CreateRenderpass(comm_vk_logical_device))
-    {
-        return false;
-    }
-
     // create pipeline
     SVulkanPipelineConfig pipeline_config{
         .swap_chain_extent                   = comm_vk_swapchain_context.swapchain_info_.extent_,
         .shader_module_map                   = {{EShaderType::kVertexShader, vk_shader_helper->GetShaderModule(EShaderType::kVertexShader)},
                                                 {EShaderType::kFragmentShader, vk_shader_helper->GetShaderModule(EShaderType::kFragmentShader)}},
-        .renderpass                          = vk_renderpass_helper->GetRenderpass(),
+        .color_format                       = comm_vk_swapchain_context.swapchain_info_.surface_format_.format,
+        .depth_format                       = vk::Format::eD32Sfloat,
         .vertex_input_binding_description    = vertex_input_binding_description,
         .vertex_input_attribute_descriptions = vertex_input_attributes,
         .descriptor_set_layouts              = {descriptor_set_layout}};
@@ -775,6 +632,7 @@ void vulkan_sample::draw_frame()
         .pSignalSemaphoreInfos    = &signal_semaphore_info,
     };
     comm_vk_graphics_queue.submit2(submit_info, in_flight_fence);
+    submitted_frame++;
 
     // present the image
     vk::PresentInfoKHR present_info{.waitSemaphoreCount = 1,
@@ -813,7 +671,6 @@ void vulkan_sample::resize_swapchain()
     }
     // Note: Don't destroy swapchain images as they are owned by the swapchain
     comm_vk_logical_device.destroySwapchainKHR(comm_vk_swapchain, nullptr);
-    vk_frame_buffer_helper.reset();
 
     // reset window size
     int width  = 0;
@@ -828,108 +685,235 @@ void vulkan_sample::resize_swapchain()
         throw std::runtime_error("Failed to create Vulkan swap chain.");
     }
 
-    // recreate framebuffers
-    if (!create_frame_buffer())
+    mesh_upload_pending = false;
+    resize_request = false;
+}
+
+bool vulkan_sample::build_render_graph()
+{
+    using setup_context = frame_render_graph::pass_setup_context;
+    using execute_context = frame_render_graph::pass_execute_context;
+
+    const auto completed_frame = submitted_frame > config.frame_count ? submitted_frame - config.frame_count : 0;
+    frame_graph->get_backend_context().begin_frame(submitted_frame, completed_frame);
+    frame_graph->clear();
+
+    const VkBufferCreateInfo staging_desc{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = staging_buffer_allocation_info.size,
+        .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    const VkBufferCreateInfo local_desc{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = local_buffer_allocation_info.size,
+        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    const VkBufferCreateInfo uniform_desc{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = uniform_buffer_allocation_info.size,
+        .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+
+    if (mesh_upload_pending)
     {
-        throw std::runtime_error("Failed to create Vulkan frame buffer.");
+        frame_graph->add_copy_pass("UploadPass", [this, staging_desc, local_desc](setup_context& ctx)
+        {
+            rg_staging = ctx.create_buffer("MeshStaging", staging_desc, render_graph::resource_lifetime_class::imported);
+            rg_local = ctx.create_buffer("MeshLocal", local_desc, render_graph::resource_lifetime_class::imported);
+            const render_graph::buffer_access_desc transfer_src{
+                .usage = render_graph::buffer_usage::TRANSFER_SRC,
+                .domain = render_graph::pipeline_domain::copy,
+            };
+            ctx.set_initial_state(rg_staging,
+                                  transfer_src,
+                                  render_graph::access_type::read,
+                                  render_graph::contents_policy::preserve);
+            ctx.read_buffer(rg_staging, transfer_src);
+            ctx.write_buffer(rg_local,
+                             render_graph::buffer_access_desc{
+                                 .usage = render_graph::buffer_usage::TRANSFER_DST,
+                                 .domain = render_graph::pipeline_domain::copy,
+                             });
+        }, [this](execute_context& ctx)
+        {
+            const VkBufferCopy copy{
+                .srcOffset = 0,
+                .dstOffset = 0,
+                .size = local_host_batch_handle[vra::VraBuiltInBatchIds::CPU_GPU_Rarely].consolidated_data.size(),
+            };
+            vkCmdCopyBuffer(ctx.commands(), ctx.resources.buffer(rg_staging), ctx.resources.buffer(rg_local), 1, &copy);
+        });
     }
 
-    resize_request = false;
+    const auto extent = comm_vk_swapchain_context.swapchain_info_.extent_;
+    const VkImageCreateInfo swapchain_desc{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = static_cast<VkFormat>(comm_vk_swapchain_context.swapchain_info_.surface_format_.format),
+        .extent = {.width = extent.width, .height = extent.height, .depth = 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    const VkImageCreateInfo depth_desc{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = static_cast<VkFormat>(depth_format),
+        .extent = {.width = extent.width, .height = extent.height, .depth = 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+
+    frame_graph->add_raster_pass("DrawPass", [this, local_desc, uniform_desc, swapchain_desc, depth_desc, extent](setup_context& ctx)
+    {
+        const render_graph::buffer_access_desc mesh_read{
+            .usage = render_graph::buffer_usage::VERTEX_BUFFER | render_graph::buffer_usage::INDEX_BUFFER,
+            .domain = render_graph::pipeline_domain::graphics,
+        };
+        if (!mesh_upload_pending)
+        {
+            rg_local = ctx.create_buffer("MeshLocal", local_desc, render_graph::resource_lifetime_class::imported);
+            ctx.set_initial_state(rg_local,
+                                  mesh_read,
+                                  render_graph::access_type::read,
+                                  render_graph::contents_policy::preserve);
+        }
+        ctx.read_buffer(rg_local, mesh_read);
+
+        rg_uniform = ctx.create_buffer("FrameUniform", uniform_desc, render_graph::resource_lifetime_class::imported);
+        const render_graph::buffer_access_desc uniform_read{
+            .usage = render_graph::buffer_usage::UNIFORM_BUFFER,
+            .domain = render_graph::pipeline_domain::graphics,
+        };
+        ctx.set_initial_state(rg_uniform,
+                              uniform_read,
+                              render_graph::access_type::read,
+                              render_graph::contents_policy::preserve);
+        ctx.read_buffer(rg_uniform, uniform_read);
+
+        rg_swapchain = ctx.create_image("Swapchain", swapchain_desc, render_graph::resource_lifetime_class::imported);
+        const render_graph::image_access_desc present{
+            .usage = render_graph::image_usage::PRESENT,
+            .domain = render_graph::pipeline_domain::graphics,
+        };
+        ctx.set_initial_state(rg_swapchain,
+                              present,
+                              render_graph::access_type::read,
+                              render_graph::contents_policy::preserve);
+        ctx.set_final_state(rg_swapchain, present, render_graph::access_type::read);
+
+        rg_depth = ctx.create_image("Depth", depth_desc, render_graph::resource_lifetime_class::transient);
+        ctx.set_render_area({.width = extent.width, .height = extent.height});
+        ctx.add_color_attachment(rg_swapchain,
+                                 render_graph::attachment_load_op::clear,
+                                 render_graph::attachment_store_op::store,
+                                 render_graph::clear_value{.color = {0.1F, 0.1F, 0.1F, 1.0F}});
+        ctx.set_depth_stencil_attachment(rg_depth,
+                                         render_graph::attachment_load_op::clear,
+                                         render_graph::attachment_store_op::dont_care,
+                                         render_graph::clear_value{.depth = 1.0F});
+        ctx.declare_image_output(rg_swapchain);
+    }, [this, extent](execute_context& ctx)
+    {
+        const auto commands = ctx.commands();
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, static_cast<VkPipeline>(vk_pipeline_helper->GetPipeline()));
+
+        const auto offset = uniform_batch_handle[vra::VraBuiltInBatchIds::CPU_GPU_Frequently].offsets[uniform_buffer_id[frame_index]];
+        const auto dynamic_offset = static_cast<uint32_t>(offset);
+        const VkDescriptorSet descriptor_set = static_cast<VkDescriptorSet>(descriptor_sets.front());
+        vkCmdBindDescriptorSets(commands,
+                                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                static_cast<VkPipelineLayout>(vk_pipeline_helper->GetPipelineLayout()),
+                                0,
+                                1,
+                                &descriptor_set,
+                                1,
+                                &dynamic_offset);
+
+        const VkViewport viewport{
+            .x = 0.0F,
+            .y = 0.0F,
+            .width = static_cast<float>(extent.width),
+            .height = static_cast<float>(extent.height),
+            .minDepth = 0.0F,
+            .maxDepth = 1.0F,
+        };
+        vkCmdSetViewport(commands, 0, 1, &viewport);
+        const VkRect2D scissor{.offset = {.x = 0, .y = 0}, .extent = {.width = extent.width, .height = extent.height}};
+        vkCmdSetScissor(commands, 0, 1, &scissor);
+
+        const VkBuffer mesh_buffer = ctx.resources.buffer(rg_local);
+        const VkDeviceSize vertex_offset = local_host_batch_handle[vra::VraBuiltInBatchIds::GPU_Only].offsets[vertex_buffer_id];
+        vkCmdBindVertexBuffers(commands, 0, 1, &mesh_buffer, &vertex_offset);
+        vkCmdBindIndexBuffer(commands,
+                             mesh_buffer,
+                             local_host_batch_handle[vra::VraBuiltInBatchIds::GPU_Only].offsets[index_buffer_id],
+                             VK_INDEX_TYPE_UINT32);
+
+        for (const auto& mesh : mesh_list)
+        {
+            for (const auto& primitive : mesh.primitives)
+            {
+                vkCmdDrawIndexed(commands, primitive.index_count, 1, primitive.first_index, 0, 0);
+            }
+        }
+    });
+
+    const auto result = frame_graph->compile();
+    if (!result.succeeded())
+    {
+        for (const auto& diagnostic : result.diagnostics)
+        {
+            Logger::LogError("Render graph compile failed: " + diagnostic.message);
+        }
+        return false;
+    }
+    return true;
 }
 
 bool vulkan_sample::record_command(uint32_t image_index, const std::string& command_buffer_id)
 {
-    // 更新当前帧的 Uniform Buffer
-    update_uniform_buffer(image_index);
+    update_uniform_buffer(frame_index);
+
+    if (!build_render_graph())
+        return false;
 
     // begin command recording
     if (!vk_command_buffer_helper->BeginCommandBufferRecording(command_buffer_id, vk::CommandBufferUsageFlagBits::eOneTimeSubmit))
         return false;
 
-    // collect needed objects
-    auto command_buffer = vk_command_buffer_helper->GetCommandBuffer(command_buffer_id);
-
-    // 从暂存缓冲区复制到本地缓冲区
-    vk::BufferCopy buffer_copy_info{
-        .srcOffset = 0,
-        .dstOffset = 0,
-        .size      = local_host_batch_handle[vra::VraBuiltInBatchIds::CPU_GPU_Rarely].consolidated_data.size(),
-    };
-    command_buffer.copyBuffer(staging_buffer, local_buffer, 1, &buffer_copy_info);
-
-    // 设置内存屏障以确保复制完成
-    vk::BufferMemoryBarrier2 buffer_memory_barrier{
-        .srcStageMask  = vk::PipelineStageFlagBits2::eTransfer,
-        .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-        .dstStageMask  = vk::PipelineStageFlagBits2::eVertexInput,
-        .dstAccessMask = vk::AccessFlagBits2::eVertexAttributeRead,
-        .buffer        = local_buffer,
-        .offset        = 0,
-        .size          = VK_WHOLE_SIZE,
-    };
-
-    vk::DependencyInfo dependency_info{.bufferMemoryBarrierCount = 1, .pBufferMemoryBarriers = &buffer_memory_barrier};
-    command_buffer.pipelineBarrier2(&dependency_info);
-
-    // begin renderpass
-
-    vk::ClearValue clear_values_color{.color = {std::array<float, 4>{0.1F, 0.1F, 0.1F, 1.0F}}};
-    vk::ClearValue clear_value_depth{.depthStencil = {.depth = 1.0F, .stencil = 0}};
-    std::vector<vk::ClearValue> clear_values = {clear_values_color, clear_value_depth};
-
-    vk::RenderPassBeginInfo renderpass_info{.renderPass  = vk_renderpass_helper->GetRenderpass(),
-                                            .framebuffer = (*vk_frame_buffer_helper->GetFramebuffers())[image_index],
-                                            .renderArea  = {.offset = {.x = 0, .y = 0}, .extent = comm_vk_swapchain_context.swapchain_info_.extent_},
-                                            .clearValueCount = static_cast<uint32_t>(clear_values.size()),
-                                            .pClearValues    = clear_values.data()};
-
-    command_buffer.beginRenderPass(renderpass_info, vk::SubpassContents::eInline);
-
-    // bind pipeline
-    command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, vk_pipeline_helper->GetPipeline());
-
-    // bind descriptor set
-    auto offset         = uniform_batch_handle[vra::VraBuiltInBatchIds::CPU_GPU_Frequently].offsets[uniform_buffer_id[frame_index]];
-    auto dynamic_offset = static_cast<uint32_t>(offset);
-    command_buffer.bindDescriptorSets(
-        vk::PipelineBindPoint::eGraphics, vk_pipeline_helper->GetPipelineLayout(), 0, 1, descriptor_sets.data(), 1, &dynamic_offset);
-
-    // dynamic state update
-    vk::Viewport viewport{.x        = 0.0F,
-                          .y        = 0.0F,
-                          .width    = static_cast<float>(comm_vk_swapchain_context.swapchain_info_.extent_.width),
-                          .height   = static_cast<float>(comm_vk_swapchain_context.swapchain_info_.extent_.height),
-                          .minDepth = 0.0F,
-                          .maxDepth = 1.0F};
-    command_buffer.setViewport(0, 1, &viewport);
-
-    vk::Rect2D scissor{.offset = {.x = 0, .y = 0}, .extent = comm_vk_swapchain_context.swapchain_info_.extent_};
-    command_buffer.setScissor(0, 1, &scissor);
-
-    // 绑定顶点和索引缓冲区
-    command_buffer.bindVertexBuffers(
-        0, 1, &local_buffer, &local_host_batch_handle[vra::VraBuiltInBatchIds::GPU_Only].offsets[vertex_buffer_id]);
-    command_buffer.bindIndexBuffer(
-        local_buffer, local_host_batch_handle[vra::VraBuiltInBatchIds::GPU_Only].offsets[index_buffer_id], vk::IndexType::eUint32);
-
-    // 遍历每个 mesh 进行绘制
-    for (const auto& mesh : mesh_list)
+    frame_graph->bind_imported_buffer(rg_local, static_cast<VkBuffer>(local_buffer));
+    frame_graph->bind_imported_buffer(rg_uniform, static_cast<VkBuffer>(uniform_buffer));
+    if (mesh_upload_pending)
     {
-        for (const auto& primitive : mesh.primitives)
-        {
-            // 绘制当前图元
-            command_buffer.drawIndexed(primitive.index_count,
-                                       // 使用实际的索引数量
-                                       1,
-                                       primitive.first_index,
-                                       // 使用实际的索引偏移量
-                                       0,
-                                       0);
-        }
+        frame_graph->bind_imported_buffer(rg_staging, static_cast<VkBuffer>(staging_buffer));
     }
+    frame_graph->bind_imported_image(rg_swapchain,
+                                     static_cast<VkImage>(comm_vk_swapchain_context.swapchain_images_[image_index]));
 
-    // end renderpass
-    command_buffer.endRenderPass();
+    auto command_buffer = static_cast<VkCommandBuffer>(vk_command_buffer_helper->GetCommandBuffer(command_buffer_id));
+    const auto execute_result = frame_graph->execute(command_buffer);
+    if (!execute_result.succeeded())
+    {
+        for (const auto& diagnostic : execute_result.diagnostics)
+        {
+            Logger::LogError("Render graph execute failed: " + diagnostic.message);
+        }
+        return false;
+    }
+    mesh_upload_pending = false;
 
     // end command recording
     return vk_command_buffer_helper->EndCommandBufferRecording(command_buffer_id);

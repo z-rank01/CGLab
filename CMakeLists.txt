@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(VulkanSample LANGUAGES CXX)
 
+include(CTest)
+
 # 启用 C++23 标准
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -54,9 +56,9 @@ set(RENDER_GRAPH_BUILD_SAMPLES ${CGLAB_BUILD_RENDER_GRAPH_SAMPLES} CACHE BOOL "B
 set(RENDER_GRAPH_BUILD_UNIT_TESTS ${CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS} CACHE BOOL "Build render-graph CTest executable" FORCE)
 set(RENDER_GRAPH_BUILD_SHARED ${CGLAB_RENDER_GRAPH_SHARED} CACHE BOOL "Build render_graph as a shared library (DLL)" FORCE)
 
-if (CGLAB_BUILD_RENDER_GRAPH_SAMPLES)
-    # When opt-in samples are enabled, include them in the default build so users
-    # can build/debug without manually selecting individual sample targets.
+if (CGLAB_BUILD_RENDER_GRAPH_SAMPLES OR CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS)
+    # Opt-in samples/tests must be part of the generated solution so their
+    # executable targets can be built and their CTest entries can run.
     add_subdirectory(third_party/render-graph)
 else()
     add_subdirectory(third_party/render-graph EXCLUDE_FROM_ALL)
