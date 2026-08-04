@@ -467,6 +467,7 @@ bool vulkan_sample::create_vma_vra_objects()
     const auto graphics_family = common::logicaldevice::find_optimal_queue_family(
         comm_vk_logical_device_context, vk::QueueFlagBits::eGraphics).value_or(0);
     frame_graph = std::make_unique<frame_render_graph>();
+    frame_graph->set_queue_availability({.compute = false, .copy = false});
     frame_graph->set_backend_context(static_cast<VkPhysicalDevice>(comm_vk_physical_device),
                                      static_cast<VkDevice>(comm_vk_logical_device),
                                      vma_allocator,
