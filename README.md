@@ -19,6 +19,12 @@
 ## Vulkan SDK
 要使用该框架，需要下载并安装 Vulkan SDK，并将其加入系统环境变量。
 
+## VulkanSample Render Graph
+
+`feature/vulkan_sample_dod` 已将 VulkanSample 的帧内 upload/draw、资源状态、transient depth、Dynamic Rendering 和同步迁移到 Render Graph。平台层仍负责 acquire、submit 和 present。实现边界、帧事务及验证方式见 [VulkanSample Render Graph 迁移说明](docs/VulkanSampleRenderGraphMigration.md)。
+
+启用 `BUILD_VULKAN_SAMPLE` 或 `RENDER_GRAPH_BUILD_UNIT_TESTS` 后，根 CMake 会接入 `third_party/render-graph`。可使用 CTest 运行 Render Graph 的全部回归测试。
+
 ---
 
 # Vulkan Functional Framework

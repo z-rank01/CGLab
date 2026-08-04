@@ -15,10 +15,6 @@ add_library(vulkan_old_class STATIC
     vulkan_shader.h
     vulkan_pipeline.cpp
     vulkan_pipeline.h
-    vulkan_renderpass.cpp
-    vulkan_renderpass.h
-    vulkan_framebuffer.cpp
-    vulkan_framebuffer.h
     vulkan_commandbuffer.cpp
     vulkan_commandbuffer.h
 )
