@@ -46,12 +46,12 @@ add_subdirectory(third_party/digital-content-loader EXCLUDE_FROM_ALL)
 
 # third_party/render-graph
 option(CGLAB_BUILD_RENDER_GRAPH_SAMPLES "Build render-graph sample executables" OFF)
-option(CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS "Build render-graph unit-test object library" OFF)
+option(CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS "Build render-graph CTest executable" OFF)
 option(CGLAB_RENDER_GRAPH_SHARED "Build render_graph as a shared library (DLL)" OFF)
 
 # Pass options into the submodule.
 set(RENDER_GRAPH_BUILD_SAMPLES ${CGLAB_BUILD_RENDER_GRAPH_SAMPLES} CACHE BOOL "Build render-graph sample executables" FORCE)
-set(RENDER_GRAPH_BUILD_UNIT_TESTS ${CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS} CACHE BOOL "Build render-graph unit-test object library" FORCE)
+set(RENDER_GRAPH_BUILD_UNIT_TESTS ${CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS} CACHE BOOL "Build render-graph CTest executable" FORCE)
 set(RENDER_GRAPH_BUILD_SHARED ${CGLAB_RENDER_GRAPH_SHARED} CACHE BOOL "Build render_graph as a shared library (DLL)" FORCE)
 
 if (CGLAB_BUILD_RENDER_GRAPH_SAMPLES)
@@ -77,15 +77,6 @@ set(HEADERS
 
 # 添加可执行文件
 add_executable(VulkanSample ${SOURCES} ${HEADERS})
-
-if (CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS)
-    target_compile_definitions(VulkanSample PRIVATE CGLAB_ENABLE_RENDER_GRAPH_UNIT_TESTS)
-endif()
-
-# Optional: compile render-graph unit-test sources into the main executable.
-if (TARGET render_graph_unit_tests)
-    target_sources(VulkanSample PRIVATE $<TARGET_OBJECTS:render_graph_unit_tests>)
-endif()
 
 # 链接库
 target_link_libraries(VulkanSample
