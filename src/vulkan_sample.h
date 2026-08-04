@@ -87,6 +87,7 @@ private:
 
     // uniform data and buffer
     std::vector<mvp_matrix> mvp_matrices;
+    std::vector<uint64_t> frame_submission_ids;
     void* uniform_buffer_mapped_data;
     vk::Buffer uniform_buffer;
     VmaAllocator vma_allocator;
@@ -191,5 +192,6 @@ private:
     render_graph::buffer_handle rg_local{};
     render_graph::buffer_handle rg_uniform{};
     bool mesh_upload_pending = true;
-    uint64_t submitted_frame = 0;
+    uint64_t submitted_frame = 1;
+    uint64_t completed_frame = 0;
 };

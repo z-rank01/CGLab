@@ -30,6 +30,7 @@ void vulkan_sample::initialize()
     // initialize mvp matrices
     mvp_matrices =
         std::vector<mvp_matrix>(config.frame_count, {.model = glm::mat4(1.0F), .view = glm::mat4(1.0F), .projection = glm::mat4(1.0F)});
+    frame_submission_ids.assign(config.frame_count, 0);
 
     // initialize SDL, vulkan, and camera
     initialize_vulkan_hpp();
@@ -583,6 +584,7 @@ void vulkan_sample::draw_frame()
     // wait for the last frame to finish
     if (!vk_synchronization_helper->WaitForFence(current_fence_id))
         return;
+    completed_frame = std::max(completed_frame, frame_submission_ids[frame_index]);
 
     // get semaphores
     auto image_available_semaphore = vk_synchronization_helper->GetSemaphore(current_image_available_semaphore_id);
@@ -632,7 +634,14 @@ void vulkan_sample::draw_frame()
         .pSignalSemaphoreInfos    = &signal_semaphore_info,
     };
     comm_vk_graphics_queue.submit2(submit_info, in_flight_fence);
+    frame_submission_ids[frame_index] = submitted_frame;
     submitted_frame++;
+    if (!frame_graph->commit_frame())
+    {
+        Logger::LogError("Failed to commit render graph frame");
+        return;
+    }
+    mesh_upload_pending = false;
 
     // present the image
     vk::PresentInfoKHR present_info{.waitSemaphoreCount = 1,
@@ -694,8 +703,17 @@ bool vulkan_sample::build_render_graph()
     using setup_context = frame_render_graph::pass_setup_context;
     using execute_context = frame_render_graph::pass_execute_context;
 
-    const auto completed_frame = submitted_frame > config.frame_count ? submitted_frame - config.frame_count : 0;
-    frame_graph->get_backend_context().begin_frame(submitted_frame, completed_frame);
+    const auto extent = comm_vk_swapchain_context.swapchain_info_.extent_;
+    const auto format = static_cast<uint64_t>(comm_vk_swapchain_context.swapchain_info_.surface_format_.format);
+    const uint64_t graph_cache_key = (static_cast<uint64_t>(extent.width) << 32) ^
+                                     static_cast<uint64_t>(extent.height) ^
+                                     (format << 1) ^
+                                     static_cast<uint64_t>(mesh_upload_pending);
+    frame_graph->begin_frame(submitted_frame, completed_frame, graph_cache_key);
+    if (!frame_graph->needs_recompile())
+    {
+        return true;
+    }
     frame_graph->clear();
 
     const VkBufferCreateInfo staging_desc{
@@ -748,7 +766,6 @@ bool vulkan_sample::build_render_graph()
         });
     }
 
-    const auto extent = comm_vk_swapchain_context.swapchain_info_.extent_;
     const VkImageCreateInfo swapchain_desc{
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
@@ -888,11 +905,17 @@ bool vulkan_sample::record_command(uint32_t image_index, const std::string& comm
     update_uniform_buffer(frame_index);
 
     if (!build_render_graph())
+    {
+        frame_graph->abort_frame();
         return false;
+    }
 
     // begin command recording
     if (!vk_command_buffer_helper->BeginCommandBufferRecording(command_buffer_id, vk::CommandBufferUsageFlagBits::eOneTimeSubmit))
+    {
+        frame_graph->abort_frame();
         return false;
+    }
 
     frame_graph->bind_imported_buffer(rg_local, static_cast<VkBuffer>(local_buffer));
     frame_graph->bind_imported_buffer(rg_uniform, static_cast<VkBuffer>(uniform_buffer));
@@ -913,10 +936,13 @@ bool vulkan_sample::record_command(uint32_t image_index, const std::string& comm
         }
         return false;
     }
-    mesh_upload_pending = false;
-
     // end command recording
-    return vk_command_buffer_helper->EndCommandBufferRecording(command_buffer_id);
+    if (!vk_command_buffer_helper->EndCommandBufferRecording(command_buffer_id))
+    {
+        frame_graph->abort_frame();
+        return false;
+    }
+    return true;
 }
 
 void vulkan_sample::update_uniform_buffer(uint32_t current_frame_index)
