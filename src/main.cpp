@@ -16,6 +16,7 @@
 
 #include "app_sample.h"
 #include "application_options.h"
+#include "smoke_scene.h"
 #include "utility/config_reader.h"
 #include "utility/logger.h"
 
@@ -63,63 +64,66 @@ int main(int argc, char** argv)
     }
 
     const application_options& options = options_result.options;
-    if (options.smoke_test)
-    {
-        Logger::LogError("--smoke-test is reserved for the Step 15 GPU smoke path and is not available yet");
-        return EXIT_FAILURE;
-    }
 
     try
     {
         general_config general;
-        if (!load_general_config(options, general))
+        if (!options.smoke_test && !load_general_config(options, general))
         {
             return EXIT_FAILURE;
         }
 
         const std::filesystem::path source_directory = std::filesystem::path(CGLAB_SOURCE_DIR);
-        general.working_directory = source_directory.string();
-        const std::filesystem::path asset_path = resolve_asset_path(options, general.asset_directory);
-        if (asset_path.empty() || !std::filesystem::is_regular_file(asset_path))
+        if (options.smoke_test)
         {
-            Logger::LogError("A valid glTF asset is required; pass --asset <path> or provide asset_directory in --config");
-            return EXIT_FAILURE;
+            general.app_name = "VulkanSample Smoke Test";
         }
-        general.asset_directory = asset_path.string();
-
-        gltf::GltfLoader loader;
-        auto asset = loader(general.asset_directory);
-
-        gltf::GltfParser parser;
-        auto mesh_list = parser(asset, gltf::RequestMeshList{});
-        auto draw_call_data_list = parser(asset, gltf::RequestDrawCallList{});
-        std::ranges::for_each(draw_call_data_list,
-                              [](gltf::PerDrawCallData& primitive)
-                              {
-                                  const glm::mat4& transform = primitive.transform;
-                                  std::ranges::for_each(primitive.vertices,
-                                                        [&](gltf::Vertex& vertex)
-                                                        {
-                                                            const glm::vec4 transformed = transform * glm::vec4(vertex.position, 1.0F);
-                                                            vertex.position = glm::vec3(transformed);
-                                                        });
-                              });
-
-        const std::size_t index_capacity = std::accumulate(
-            draw_call_data_list.begin(), draw_call_data_list.end(), std::size_t{0},
-            [](std::size_t sum, const gltf::PerDrawCallData& draw) { return sum + draw.indices.size(); });
-        const std::size_t vertex_capacity = std::accumulate(
-            draw_call_data_list.begin(), draw_call_data_list.end(), std::size_t{0},
-            [](std::size_t sum, const gltf::PerDrawCallData& draw) { return sum + draw.vertices.size(); });
-
-        std::vector<std::uint32_t> indices;
-        std::vector<gltf::Vertex> vertices;
-        indices.reserve(index_capacity);
-        vertices.reserve(vertex_capacity);
-        for (const auto& draw_call_data : draw_call_data_list)
+        general.working_directory = source_directory.string();
+        smoke_scene_data scene;
+        if (options.smoke_test)
         {
-            indices.insert(indices.end(), draw_call_data.indices.begin(), draw_call_data.indices.end());
-            vertices.insert(vertices.end(), draw_call_data.vertices.begin(), draw_call_data.vertices.end());
+            scene = make_smoke_scene();
+        }
+        else
+        {
+            const std::filesystem::path asset_path = resolve_asset_path(options, general.asset_directory);
+            if (asset_path.empty() || !std::filesystem::is_regular_file(asset_path))
+            {
+                Logger::LogError("A valid glTF asset is required; pass --asset <path> or provide asset_directory in --config");
+                return EXIT_FAILURE;
+            }
+            general.asset_directory = asset_path.string();
+
+            gltf::GltfLoader loader;
+            auto asset = loader(general.asset_directory);
+            gltf::GltfParser parser;
+            scene.meshes = parser(asset, gltf::RequestMeshList{});
+            scene.draw_calls = parser(asset, gltf::RequestDrawCallList{});
+            std::ranges::for_each(scene.draw_calls,
+                                  [](gltf::PerDrawCallData& primitive)
+                                  {
+                                      const glm::mat4& transform = primitive.transform;
+                                      std::ranges::for_each(primitive.vertices,
+                                                            [&](gltf::Vertex& vertex)
+                                                            {
+                                                                const glm::vec4 transformed = transform * glm::vec4(vertex.position, 1.0F);
+                                                                vertex.position = glm::vec3(transformed);
+                                                            });
+                                  });
+
+            const std::size_t index_capacity = std::accumulate(
+                scene.draw_calls.begin(), scene.draw_calls.end(), std::size_t{0},
+                [](std::size_t sum, const gltf::PerDrawCallData& draw) { return sum + draw.indices.size(); });
+            const std::size_t vertex_capacity = std::accumulate(
+                scene.draw_calls.begin(), scene.draw_calls.end(), std::size_t{0},
+                [](std::size_t sum, const gltf::PerDrawCallData& draw) { return sum + draw.vertices.size(); });
+            scene.indices.reserve(index_capacity);
+            scene.vertices.reserve(vertex_capacity);
+            for (const auto& draw_call : scene.draw_calls)
+            {
+                scene.indices.insert(scene.indices.end(), draw_call.indices.begin(), draw_call.indices.end());
+                scene.vertices.insert(scene.vertices.end(), draw_call.vertices.begin(), draw_call.vertices.end());
+            }
         }
 
         window_config window{.width = 1280, .height = 720, .title = general.app_name};
@@ -131,12 +135,32 @@ int main(int argc, char** argv)
         };
 
         app_sample sample(std::move(engine));
-        sample.set_vertex_index_data(std::move(draw_call_data_list), std::move(indices), std::move(vertices));
-        sample.set_mesh_list(mesh_list);
+        sample.set_vertex_index_data(std::move(scene.draw_calls), std::move(scene.indices), std::move(scene.vertices));
+        sample.set_mesh_list(scene.meshes);
         sample.initialize();
-        if (!sample.tick(options.frame_limit))
+        const std::optional<std::uint64_t> frame_limit =
+            options.smoke_test ? std::optional<std::uint64_t>(options.frame_limit.value_or(3)) : options.frame_limit;
+        const bool run_succeeded = sample.tick(frame_limit);
+        sample.shutdown();
+        if (!run_succeeded)
         {
             return EXIT_FAILURE;
+        }
+        if (options.validation && sample.validation_error_count() != 0)
+        {
+            Logger::LogError("Vulkan validation reported " + std::to_string(sample.validation_error_count()) + " error(s)");
+            return EXIT_FAILURE;
+        }
+        if (options.smoke_test)
+        {
+            const auto statistics = sample.statistics();
+            if (statistics.upload_pass_executions != 1 ||
+                statistics.draw_pass_executions != *frame_limit ||
+                statistics.presented_frames != *frame_limit)
+            {
+                Logger::LogError("GPU smoke counters did not match the requested frame contract");
+                return EXIT_FAILURE;
+            }
         }
         return EXIT_SUCCESS;
     }

@@ -69,6 +69,7 @@ endif()
 set(SOURCES
     src/main.cpp
     src/application_options.cpp
+    src/smoke_scene.cpp
     src/vulkan_sample.cpp
     src/app_sample.cpp
 )
@@ -76,6 +77,8 @@ set(SOURCES
 # 设置头文件
 set(HEADERS
     src/application_options.h
+    src/smoke_scene.h
+    src/swapchain_image_state.h
     src/vulkan_sample.h
     src/app_sample.h
 )
@@ -124,9 +127,22 @@ if(BUILD_TESTING)
     )
     target_include_directories(cglab_application_options_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     if(MSVC)
-        target_compile_options(cglab_application_options_tests PRIVATE /utf-8)
+        target_compile_options(cglab_application_options_tests PRIVATE /FS /utf-8)
     endif()
     add_test(NAME cglab.application_options COMMAND cglab_application_options_tests)
+
+    add_executable(cglab_smoke_scene_tests
+        src/smoke_scene.cpp
+        src/smoke_scene.h
+        src/swapchain_image_state.h
+        src/unit_test/smoke_scene_test.cpp
+    )
+    target_include_directories(cglab_smoke_scene_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(cglab_smoke_scene_tests PRIVATE dcl::gltf glm::glm)
+    if(MSVC)
+        target_compile_options(cglab_smoke_scene_tests PRIVATE /FS /utf-8)
+    endif()
+    add_test(NAME cglab.smoke_scene COMMAND cglab_smoke_scene_tests)
 endif()
 
 # 设置特定于编译器的警告选项

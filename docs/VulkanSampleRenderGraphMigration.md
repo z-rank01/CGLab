@@ -14,7 +14,7 @@ VulkanSample 继续拥有 Vulkan instance/device/surface、swapchain acquire、q
 
 ## 每帧流程
 
-1. acquire swapchain image，并计算由 extent/format 等组成的 graph cache key。
+1. acquire swapchain image，并计算由 extent/format、mesh upload 状态及 acquired image 初始状态组成的 graph cache key。swapchain image 首次使用按 `UNDEFINED/discard` 处理，成功 present 后再次 acquire 才按 `PRESENT/preserve` 处理。
 2. `begin_frame(frame_serial, completed_serial, cache_key)`。
 3. cache key 变化或无有效计划时 compile；兼容 allocation/view 会选择性复用。
 4. 将本帧 acquired image rebind 到 imported image handle。
@@ -37,5 +37,12 @@ acquired swapchain image 每帧 rebind，不要求 recompile。swapchain extent/
 - VulkanSample Debug/Release 编译。
 - Upload→Draw 等价图、final present、depth lifetime、无冗余 upload、frame abort/recovery、resize reuse 和多队列计划单元测试。
 - 固定 seed 的 96-pass DAG/subresource 压力回归与确定性 dump 对比。
+- CLI 参数、相对 asset 路径、内存三角形数据和 swapchain image 状态 tracker 单元测试。
 
-真实 GPU 验收应在启用 sample 启动入口后打开 Vulkan validation layer，运行多帧、不同 swapchain image、resize、最小化恢复，并检查 synchronization/layout/lifetime 错误。当前分支 `src/main.cpp` 的 sample 启动代码保持注释状态，因此该项不由自动化构建替代。
+`src/main.cpp` 已启用。`--smoke-test` 使用内存三角形，不依赖 Sponza；未指定 `--frames` 时默认运行 3 个成功呈现帧。smoke path 会检查 UploadPass 恰好执行一次、DrawPass/present 次数等于目标帧数，并在 `--validation` 下把 validation error 计数作为进程失败条件。建议用 6 帧覆盖每个 swapchain image 的首次使用和重复 acquire：
+
+```powershell
+.\build\Debug\VulkanSample.exe --smoke-test --frames 6 --validation
+```
+
+加载实际模型时可使用 `--config <app_config.json>`，也可用 `--asset <scene.gltf>` 覆盖配置中的 asset 路径。resize、最小化恢复和 Sponza 视觉结果仍建议在目标机器上手动验收。

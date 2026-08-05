@@ -8,6 +8,12 @@
 app_sample::app_sample(engine_config config) : general_config(std::move(config))
 {
     vulkan_instance = std::make_unique<vulkan_sample>(general_config);
+    validation_errors = vulkan_instance->validation_counter();
+}
+
+app_sample::~app_sample()
+{
+    shutdown();
 }
 
 void app_sample::initialize()
@@ -66,6 +72,21 @@ bool app_sample::tick(std::optional<std::uint64_t> frame_limit)
         }
     }
     return true;
+}
+
+void app_sample::shutdown() noexcept
+{
+    if (vulkan_instance)
+    {
+        run_statistics = vulkan_instance->statistics();
+    }
+    vulkan_instance.reset();
+    window.reset();
+}
+
+std::uint32_t app_sample::validation_error_count() const noexcept
+{
+    return validation_errors ? validation_errors->load(std::memory_order_relaxed) : 0;
 }
 
 void app_sample::set_vertex_index_data(std::vector<gltf::PerDrawCallData> per_draw_call_data,

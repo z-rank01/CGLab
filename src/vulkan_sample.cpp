@@ -63,7 +63,14 @@ vulkan_sample::~vulkan_sample()
     // 等待设备空闲，确保没有正在进行的操作
     if (comm_vk_logical_device)
     {
-        (void)comm_vk_logical_device.waitIdle();
+        try
+        {
+            (void)comm_vk_logical_device.waitIdle();
+        }
+        catch (const vk::SystemError& error)
+        {
+            Logger::LogError(std::string("Failed to wait for Vulkan shutdown: ") + error.what());
+        }
     }
 
     // 销毁描述符相关资源
@@ -133,6 +140,7 @@ vulkan_sample::~vulkan_sample()
     {
         vkDestroySurfaceKHR(comm_vk_instance, surface, nullptr);
     }
+    destroy_debug_messenger();
     if (comm_vk_instance)
     {
         vkDestroyInstance(comm_vk_instance, nullptr);
@@ -273,6 +281,7 @@ bool vulkan_sample::create_instance()
     if (config.use_validation_layers)
     {
         validation_layers.push_back("VK_LAYER_KHRONOS_validation");
+        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
     auto instance_chain = common::instance::create_context() | common::instance::set_application_name("My Vulkan App") |
                           common::instance::set_engine_name("My Engine") | common::instance::set_api_version(1, 3, 0) |
@@ -290,8 +299,67 @@ bool vulkan_sample::create_instance()
     auto context      = std::get<templates::common::CommVkInstanceContext>(result);
     comm_vk_instance = context.vk_instance_;
     VULKAN_HPP_DEFAULT_DISPATCHER.init(comm_vk_instance); // a must for loading all other function pointers!
+    if (config.use_validation_layers && !create_debug_messenger())
+    {
+        std::cerr << "Failed to create Vulkan validation debug messenger.\n";
+        return false;
+    }
     std::cout << "Successfully created Vulkan instance." << '\n';
     return true;
+}
+
+bool vulkan_sample::create_debug_messenger()
+{
+    const auto create_messenger = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
+        vkGetInstanceProcAddr(comm_vk_instance, "vkCreateDebugUtilsMessengerEXT"));
+    if (create_messenger == nullptr)
+    {
+        return false;
+    }
+
+    VkDebugUtilsMessengerCreateInfoEXT create_info{};
+    create_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    create_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                              VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                              VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    create_info.pfnUserCallback = &vulkan_sample::validation_callback;
+    create_info.pUserData = this;
+    return create_messenger(comm_vk_instance, &create_info, nullptr, &debug_messenger) == VK_SUCCESS;
+}
+
+void vulkan_sample::destroy_debug_messenger() noexcept
+{
+    if (comm_vk_instance == VK_NULL_HANDLE || debug_messenger == VK_NULL_HANDLE)
+    {
+        return;
+    }
+    const auto destroy_messenger = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+        vkGetInstanceProcAddr(comm_vk_instance, "vkDestroyDebugUtilsMessengerEXT"));
+    if (destroy_messenger != nullptr)
+    {
+        destroy_messenger(comm_vk_instance, debug_messenger, nullptr);
+    }
+    debug_messenger = VK_NULL_HANDLE;
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_sample::validation_callback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
+    VkDebugUtilsMessageTypeFlagsEXT,
+    const VkDebugUtilsMessengerCallbackDataEXT* callback_data,
+    void* user_data)
+{
+    auto* sample = static_cast<vulkan_sample*>(user_data);
+    if ((message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0 && sample != nullptr)
+    {
+        sample->validation_errors->fetch_add(1, std::memory_order_relaxed);
+    }
+    if (callback_data != nullptr && callback_data->pMessage != nullptr)
+    {
+        std::cerr << "[Vulkan Validation] " << callback_data->pMessage << '\n';
+    }
+    return VK_FALSE;
 }
 
 bool vulkan_sample::create_surface()
@@ -386,6 +454,7 @@ bool vulkan_sample::create_swapchain()
     // get final swapchain context
     comm_vk_swapchain_context = std::get<common::CommVkSwapchainContext>(swapchain_image_result);
     comm_vk_swapchain         = comm_vk_swapchain_context.vk_swapchain_;
+    swapchain_image_states.reset(comm_vk_swapchain_context.swapchain_images_.size());
 
     return true;
 }
@@ -760,6 +829,8 @@ vulkan_frame_status vulkan_sample::draw_frame()
         Logger::LogError("Failed to present image");
         return vulkan_frame_status::failed;
     }
+    swapchain_image_states.mark_presented(image_index);
+    ++run_statistics.presented_frames;
     // Logger::LogInfo("Succeeded in presenting image");
 
     // update frame index
@@ -842,17 +913,19 @@ bool vulkan_sample::resize_swapchain()
     return true;
 }
 
-bool vulkan_sample::build_render_graph()
+bool vulkan_sample::build_render_graph(uint32_t image_index)
 {
     using setup_context = frame_render_graph::pass_setup_context;
     using execute_context = frame_render_graph::pass_execute_context;
 
     const auto extent = comm_vk_swapchain_context.swapchain_info_.extent_;
     const auto format = static_cast<uint64_t>(comm_vk_swapchain_context.swapchain_info_.surface_format_.format);
+    const bool swapchain_initialized = swapchain_image_states.is_initialized(image_index);
     const uint64_t graph_cache_key = (static_cast<uint64_t>(extent.width) << 32) ^
                                      static_cast<uint64_t>(extent.height) ^
-                                     (format << 1) ^
-                                     static_cast<uint64_t>(mesh_upload_pending);
+                                     (format << 2) ^
+                                     (static_cast<uint64_t>(mesh_upload_pending) << 1) ^
+                                     static_cast<uint64_t>(swapchain_initialized);
     frame_graph->begin_frame(submitted_frame, completed_frame, graph_cache_key);
     if (!frame_graph->needs_recompile())
     {
@@ -901,6 +974,7 @@ bool vulkan_sample::build_render_graph()
                              });
         }, [this](execute_context& ctx)
         {
+            ++run_statistics.upload_pass_executions;
             const VkBufferCopy copy{
                 .srcOffset = 0,
                 .dstOffset = 0,
@@ -937,7 +1011,7 @@ bool vulkan_sample::build_render_graph()
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
 
-    frame_graph->add_raster_pass("DrawPass", [this, local_desc, uniform_desc, swapchain_desc, depth_desc, extent](setup_context& ctx)
+    frame_graph->add_raster_pass("DrawPass", [this, local_desc, uniform_desc, swapchain_desc, depth_desc, extent, swapchain_initialized](setup_context& ctx)
     {
         const render_graph::buffer_access_desc mesh_read{
             .usage = render_graph::buffer_usage::VERTEX_BUFFER | render_graph::buffer_usage::INDEX_BUFFER,
@@ -969,10 +1043,17 @@ bool vulkan_sample::build_render_graph()
             .usage = render_graph::image_usage::PRESENT,
             .domain = render_graph::pipeline_domain::graphics,
         };
+        const render_graph::image_access_desc initial_swapchain_state = swapchain_initialized
+            ? present
+            : render_graph::image_access_desc{
+                  .usage = render_graph::image_usage::NONE,
+                  .domain = render_graph::pipeline_domain::graphics,
+              };
         ctx.set_initial_state(rg_swapchain,
-                              present,
+                              initial_swapchain_state,
                               render_graph::access_type::read,
-                              render_graph::contents_policy::preserve);
+                              swapchain_initialized ? render_graph::contents_policy::preserve
+                                                    : render_graph::contents_policy::discard);
         ctx.set_final_state(rg_swapchain, present, render_graph::access_type::read);
 
         rg_depth = ctx.create_image("Depth", depth_desc, render_graph::resource_lifetime_class::transient);
@@ -988,6 +1069,7 @@ bool vulkan_sample::build_render_graph()
         ctx.declare_image_output(rg_swapchain);
     }, [this, extent](execute_context& ctx)
     {
+        ++run_statistics.draw_pass_executions;
         const auto commands = ctx.commands();
         vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, static_cast<VkPipeline>(vk_pipeline_helper->GetPipeline()));
 
@@ -1048,7 +1130,7 @@ bool vulkan_sample::record_command(uint32_t image_index, const std::string& comm
 {
     try
     {
-        if (!build_render_graph())
+        if (!build_render_graph(image_index))
         {
             frame_graph->abort_frame();
             return false;

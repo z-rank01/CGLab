@@ -25,6 +25,14 @@
 
 启用 `BUILD_VULKAN_SAMPLE` 或 `RENDER_GRAPH_BUILD_UNIT_TESTS` 后，根 CMake 会接入 `third_party/render-graph`。可使用 CTest 运行 Render Graph 的全部回归测试。
 
+主程序支持 `--config`、`--asset`、`--frames`、`--validation` 和 `--smoke-test`。无需外部模型的串行 GPU 验证可直接运行：
+
+```powershell
+.\build\Debug\VulkanSample.exe --smoke-test --frames 6 --validation
+```
+
+旧版手写实现保存在 `src/legacy_vulkan_sample`，仅在启用 `CGLAB_BUILD_LEGACY_VULKAN_SAMPLE` 时生成 `VulkanSampleLegacy` target。
+
 ---
 
 # Vulkan Functional Framework
