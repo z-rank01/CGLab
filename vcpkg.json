@@ -8,6 +8,7 @@
     "vk-bootstrap",
     "stb",
     "nlohmann-json",
+    "ixwebsocket",
     {
       "name": "vulkan-memory-allocator",
       "version>=": "3.1.0"

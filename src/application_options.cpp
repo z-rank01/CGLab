@@ -86,6 +86,36 @@ application_options_result parse_application_options(std::span<const std::string
             result.options.frame_limit = frame_limit;
             continue;
         }
+        if (argument == "--no-ui")
+        {
+            result.options.no_ui = true;
+            continue;
+        }
+        if (argument == "--ui-open-browser")
+        {
+            result.options.ui_open_browser = true;
+            continue;
+        }
+        if (argument == "--ui-port")
+        {
+            const auto value = consume_value(argument);
+            if (!value)
+            {
+                return result;
+            }
+
+            std::uint32_t port = 0;
+            const char* begin = value->data();
+            const char* end = begin + value->size();
+            const auto [parsed_end, error] = std::from_chars(begin, end, port);
+            if (error != std::errc{} || parsed_end != end || port < 1024 || port > 65535)
+            {
+                return error_result("--ui-port requires an integer in [1024, 65535]");
+            }
+            result.options.ui_port = static_cast<std::uint16_t>(port);
+            result.options.ui_port_specified = true;
+            continue;
+        }
 
         return error_result("Unknown argument: " + std::string(argument));
     }
@@ -95,7 +125,12 @@ application_options_result parse_application_options(std::span<const std::string
 std::string application_usage(std::string_view executable_name)
 {
     return "Usage: " + std::string(executable_name) +
-           " [--config <path>] [--asset <path>] [--frames <count>] [--validation] [--smoke-test]\n";
+           " [--config <path>] [--asset <path>] [--frames <count>] [--validation] [--smoke-test]\n"
+           "           [--no-ui] [--ui-port <port>] [--ui-open-browser]\n"
+           "  --no-ui            Disable the control plane WebSocket server (Web UI backend).\n"
+           "  --ui-port <port>   Control plane port in [1024, 65535] (default 17381); explicit port\n"
+           "                     also enables the control plane under --smoke-test for protocol tests.\n"
+           " --ui-open-browser  Reserved (P3): open the Web UI in the default browser on start.\n";
 }
 
 std::filesystem::path resolve_asset_path(

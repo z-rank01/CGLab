@@ -134,7 +134,14 @@ int main(int argc, char** argv)
             .use_validation_layers = options.validation,
         };
 
-        app_sample sample(std::move(engine));
+        // Control plane 启用规则：交互模式默认启用；--no-ui 关闭；
+        // smoke-test 下默认关闭，显式 --ui-port 时启用（供协议级集成测试）。
+        control_plane::control_plane_config ui_config;
+        ui_config.enabled = !options.no_ui && (!options.smoke_test || options.ui_port_specified);
+        ui_config.port = options.ui_port;
+        ui_config.open_browser = options.ui_open_browser;
+
+        app_sample sample(std::move(engine), ui_config);
         sample.set_vertex_index_data(std::move(scene.draw_calls), std::move(scene.indices), std::move(scene.vertices));
         sample.set_mesh_list(scene.meshes);
         sample.initialize();

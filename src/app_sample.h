@@ -10,11 +10,12 @@
 #include "vulkan_sample.h"
 #include "_interface/camera_component.h"
 #include "_interface/camera_system.h"
+#include "control_plane/control_plane_server.h"
 
 class app_sample
 {
 public:
-    app_sample(engine_config config);
+    app_sample(engine_config config, control_plane::control_plane_config ui_config = {});
     ~app_sample();
     // core public function
     void initialize();
@@ -42,6 +43,17 @@ private:
     // delta time tracking
     std::chrono::high_resolution_clock::time_point last_frame_time;
     float delta_time;
+
+    // control plane (Web UI 控制平面)
+    control_plane::control_plane_config ui_config;
+    std::unique_ptr<control_plane::control_plane_server> control_plane;
+    bool frame_paused = false;
+    std::uint32_t pending_frame_steps = 0;
+    float telemetry_accumulator = 0.0F;
+    float smoothed_frame_time = 1.0F / 60.0F;
+
+    void handle_control_plane_commands();
+    void publish_frame_telemetry();
     
 
     engine_config general_config;

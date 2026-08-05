@@ -33,6 +33,7 @@ add_subdirectory(src/_callable)
 add_subdirectory(src/_vra)
 add_subdirectory(src/_templates)
 add_subdirectory(src/_interface)
+add_subdirectory(src/control_plane)
 # add_subdirectory(src/render_graph)
 
 # third_party/digital-content-loader
@@ -107,6 +108,8 @@ target_link_libraries(VulkanSample
     template                        # 添加模板库
     render_graph                    # 添加渲染图库
     interface                       # 添加平台库
+    control_plane                   # 添加控制平面库（Web UI 后端）
+    $<$<PLATFORM_ID:Windows>:bcrypt>   # mbedtls (ixwebsocket) 需要 BCryptGenRandom
 )
 
 # 包含目录
@@ -153,6 +156,21 @@ if(BUILD_TESTING)
         target_compile_options(cglab_camera_input_tests PRIVATE /FS /utf-8)
     endif()
     add_test(NAME cglab.camera_input COMMAND cglab_camera_input_tests)
+
+    add_executable(cglab_control_plane_protocol_tests
+        src/control_plane/json_rpc.cpp
+        src/unit_test/control_plane_protocol_test.cpp
+    )
+    target_include_directories(cglab_control_plane_protocol_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/control_plane
+    )
+    find_package(nlohmann_json CONFIG REQUIRED)
+    target_link_libraries(cglab_control_plane_protocol_tests PRIVATE nlohmann_json::nlohmann_json)
+    if(MSVC)
+        target_compile_options(cglab_control_plane_protocol_tests PRIVATE /FS /utf-8)
+    endif()
+    add_test(NAME cglab.control_plane_protocol COMMAND cglab_control_plane_protocol_tests)
 endif()
 
 # 设置特定于编译器的警告选项
