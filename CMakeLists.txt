@@ -68,12 +68,14 @@ endif()
 # 设置源文件
 set(SOURCES
     src/main.cpp
+    src/application_options.cpp
     src/vulkan_sample.cpp
     src/app_sample.cpp
 )
 
 # 设置头文件
 set(HEADERS
+    src/application_options.h
     src/vulkan_sample.h
     src/app_sample.h
 )
@@ -112,12 +114,27 @@ target_include_directories(VulkanSample
     ${Vulkan_INCLUDE_DIRS}
 )
 
+target_compile_definitions(VulkanSample PRIVATE CGLAB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+if(BUILD_TESTING)
+    add_executable(cglab_application_options_tests
+        src/application_options.cpp
+        src/application_options.h
+        src/unit_test/application_options_test.cpp
+    )
+    target_include_directories(cglab_application_options_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    if(MSVC)
+        target_compile_options(cglab_application_options_tests PRIVATE /utf-8)
+    endif()
+    add_test(NAME cglab.application_options COMMAND cglab_application_options_tests)
+endif()
+
 # 设置特定于编译器的警告选项
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # Clang 可能的 ID 包括 "Clang", "AppleClang" 等
     target_compile_options(VulkanSample PRIVATE -Wall)
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-    target_compile_options(VulkanSample PRIVATE /W4)
+    target_compile_options(VulkanSample PRIVATE /W4 /FS /utf-8)
 endif()
 
 # 使用生成器表达式为 Debug 构建添加调试信息选项

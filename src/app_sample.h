@@ -1,5 +1,8 @@
 #pragma once
+#include <chrono>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "_interface/window.h"
@@ -13,7 +16,7 @@ public:
     app_sample(engine_config config);
     // core public function
     void initialize();
-    void tick();
+    [[nodiscard]] bool tick(std::optional<std::uint64_t> frame_limit = std::nullopt);
 
     void set_vertex_index_data(std::vector<gltf::PerDrawCallData> per_draw_call_data, std::vector<uint32_t> indices, std::vector<gltf::Vertex> vertices);
     void set_mesh_list(const std::vector<gltf::PerMeshData>& mesh_list);

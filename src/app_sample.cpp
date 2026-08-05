@@ -1,6 +1,7 @@
 #include "app_sample.h"
 
 #include <stdexcept>
+#include <utility>
 
 #include "_interface/sdl_window.h" // For default implementation
 
@@ -30,10 +31,12 @@ void app_sample::initialize()
     vulkan_instance->set_camera_container(&camera_container);
     vulkan_instance->set_camera_index(camera_entity_index);
     vulkan_instance->initialize();
+    last_frame_time = std::chrono::high_resolution_clock::now();
 }
 
-void app_sample::tick()
+bool app_sample::tick(std::optional<std::uint64_t> frame_limit)
 {
+    std::uint64_t rendered_frames = 0;
     interface::input_event event{};
     while (!window->should_close())
     {
@@ -43,9 +46,26 @@ void app_sample::tick()
         last_frame_time   = current_time;
 
         window->tick(event);
+        if (event.type == interface::event_type::resize)
+        {
+            vulkan_instance->request_resize();
+        }
         interface::tick(camera_container, camera_update_context, event, delta_time);
-        vulkan_instance->tick();
+        const vulkan_frame_status status = vulkan_instance->tick();
+        if (status == vulkan_frame_status::failed)
+        {
+            return false;
+        }
+        if (status == vulkan_frame_status::rendered)
+        {
+            ++rendered_frames;
+            if (frame_limit && rendered_frames >= *frame_limit)
+            {
+                return true;
+            }
+        }
     }
+    return true;
 }
 
 void app_sample::set_vertex_index_data(std::vector<gltf::PerDrawCallData> per_draw_call_data,

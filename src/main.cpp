@@ -1,116 +1,148 @@
 #include <vma/vk_mem_alloc.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
+#include <numeric>
+#include <span>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include <gltf/gltf_loader.h>
 #include <gltf/gltf_parser.h>
+
 #include "app_sample.h"
+#include "application_options.h"
 #include "utility/config_reader.h"
 #include "utility/logger.h"
 
-#if defined(CGLAB_ENABLE_RENDER_GRAPH_UNIT_TESTS)
-// #include "render_graph/unit_test/deferred_rendering_compile_test.h"     // unit test
-// #include "render_graph/unit_test/resource_producer_map_compile_test.h"  // unit test
-// #include "render_graph/unit_test/resource_generation_compile_test.h"   // unit test
-// #include "render_graph/unit_test/culling_compile_test.h"   // unit test
-// #include "render_graph/unit_test/validation_compile_test.h"   // unit test
-// #include "render_graph/unit_test/dag_compile_test.h"   // unit test
-// #include "render_graph/unit_test/dag_cycle_compile_test.h"   // unit test
-// #include "render_graph/unit_test/lifetime_aliasing_test.h"   // unit test
-// #include "render_graph/unit_test/barrier_plan_test.h"   // unit test
-#endif
-
-int main()
+namespace
 {
-#if defined(CGLAB_ENABLE_RENDER_GRAPH_UNIT_TESTS)
-    // render_graph::unit_test::deferred_rendering_compile_test();
-    // render_graph::unit_test::resource_producer_map_compile_test();
-    // render_graph::unit_test::resource_generation_compile_test();
-    // render_graph::unit_test::validation_compile_test();
-    // render_graph::unit_test::culling_compile_test();
-    // render_graph::unit_test::dag_compile_test();
-    // render_graph::unit_test::dag_cycle_compile_test();
-    // render_graph::unit_test::lifetime_aliasing_test();
-    // render_graph::unit_test::barrier_plan_test();
-#endif
-    
-    // std::cout << "Hello, World!" << '\n';
-    // std::cout << "This is a Vulkan Sample" << '\n';
+    bool load_general_config(const application_options& options, general_config& config)
+    {
+        config.app_name = "VulkanSample";
+        if (!options.config_path)
+        {
+            return true;
+        }
+        if (!std::filesystem::is_regular_file(*options.config_path))
+        {
+            Logger::LogError("Config file does not exist: " + options.config_path->string());
+            return false;
+        }
 
-    // // general config
+        config_reader reader(options.config_path->string());
+        return reader.try_parse_general_config(config);
+    }
+}
 
-    // config_reader config_reader(R"(D:\Repository\CGLab\config\win64\app_config.json)");
-    // general_config general_config;
-    // if (!config_reader.try_parse_general_config(general_config))
-    // {
-    //     Logger::LogError("Failed to parse general config");
-    //     return -1;
-    // }
+int main(int argc, char** argv)
+{
+    const std::span arguments(argv + 1, static_cast<std::size_t>(argc - 1));
+    std::vector<std::string_view> argument_views;
+    argument_views.reserve(arguments.size());
+    for (const char* argument : arguments)
+    {
+        argument_views.emplace_back(argument);
+    }
 
-    // // read gltf file
+    const auto options_result = parse_application_options(argument_views);
+    if (options_result.status == application_options_status::help)
+    {
+        std::cout << application_usage(argc > 0 ? argv[0] : "VulkanSample");
+        return EXIT_SUCCESS;
+    }
+    if (!options_result.succeeded())
+    {
+        std::cerr << options_result.message << '\n'
+                  << application_usage(argc > 0 ? argv[0] : "VulkanSample");
+        return EXIT_FAILURE;
+    }
 
-    // auto loader = gltf::GltfLoader();
-    // auto asset  = loader(general_config.asset_directory);
+    const application_options& options = options_result.options;
+    if (options.smoke_test)
+    {
+        Logger::LogError("--smoke-test is reserved for the Step 15 GPU smoke path and is not available yet");
+        return EXIT_FAILURE;
+    }
 
-    // // parse gltf file
+    try
+    {
+        general_config general;
+        if (!load_general_config(options, general))
+        {
+            return EXIT_FAILURE;
+        }
 
-    // gltf::GltfParser parser;
-    // auto mesh_list           = parser(asset, gltf::RequestMeshList{});
-    // auto draw_call_data_list = parser(asset, gltf::RequestDrawCallList{});
-    // // Transform vertex positions using the draw call's transform matrix (functional expression)
-    // std::ranges::for_each(draw_call_data_list,
-    //                       [](gltf::PerDrawCallData& primitive)
-    //                       {
-    //                           const glm::mat4& transform = primitive.transform;
-    //                           std::ranges::for_each(primitive.vertices,
-    //                                                 [&](gltf::Vertex& vertex)
-    //                                                 {
-    //                                                     glm::vec4 transformed_position = transform * glm::vec4(vertex.position, 1.0F);
-    //                                                     vertex.position                = glm::vec3(transformed_position);
-    //                                                 });
-    //                       });
+        const std::filesystem::path source_directory = std::filesystem::path(CGLAB_SOURCE_DIR);
+        general.working_directory = source_directory.string();
+        const std::filesystem::path asset_path = resolve_asset_path(options, general.asset_directory);
+        if (asset_path.empty() || !std::filesystem::is_regular_file(asset_path))
+        {
+            Logger::LogError("A valid glTF asset is required; pass --asset <path> or provide asset_directory in --config");
+            return EXIT_FAILURE;
+        }
+        general.asset_directory = asset_path.string();
 
-    // // collect all indices
+        gltf::GltfLoader loader;
+        auto asset = loader(general.asset_directory);
 
-    // std::vector<uint32_t> indices;
-    // std::vector<gltf::Vertex> vertices;
+        gltf::GltfParser parser;
+        auto mesh_list = parser(asset, gltf::RequestMeshList{});
+        auto draw_call_data_list = parser(asset, gltf::RequestDrawCallList{});
+        std::ranges::for_each(draw_call_data_list,
+                              [](gltf::PerDrawCallData& primitive)
+                              {
+                                  const glm::mat4& transform = primitive.transform;
+                                  std::ranges::for_each(primitive.vertices,
+                                                        [&](gltf::Vertex& vertex)
+                                                        {
+                                                            const glm::vec4 transformed = transform * glm::vec4(vertex.position, 1.0F);
+                                                            vertex.position = glm::vec3(transformed);
+                                                        });
+                              });
 
-    // // reserve memory
+        const std::size_t index_capacity = std::accumulate(
+            draw_call_data_list.begin(), draw_call_data_list.end(), std::size_t{0},
+            [](std::size_t sum, const gltf::PerDrawCallData& draw) { return sum + draw.indices.size(); });
+        const std::size_t vertex_capacity = std::accumulate(
+            draw_call_data_list.begin(), draw_call_data_list.end(), std::size_t{0},
+            [](std::size_t sum, const gltf::PerDrawCallData& draw) { return sum + draw.vertices.size(); });
 
-    // auto index_capacity  = std::accumulate(draw_call_data_list.begin(),
-    //                                       draw_call_data_list.end(),
-    //                                       0,
-    //                                       [&](const auto& sum, const auto& draw_call_data) { return sum + draw_call_data.indices.size(); });
-    // auto vertex_capacity = std::accumulate(draw_call_data_list.begin(),
-    //                                        draw_call_data_list.end(),
-    //                                        0,
-    //                                        [&](const auto& sum, const auto& draw_call_data) { return sum + draw_call_data.vertices.size(); });
-    // indices.reserve(index_capacity);
-    // vertices.reserve(vertex_capacity);
+        std::vector<std::uint32_t> indices;
+        std::vector<gltf::Vertex> vertices;
+        indices.reserve(index_capacity);
+        vertices.reserve(vertex_capacity);
+        for (const auto& draw_call_data : draw_call_data_list)
+        {
+            indices.insert(indices.end(), draw_call_data.indices.begin(), draw_call_data.indices.end());
+            vertices.insert(vertices.end(), draw_call_data.vertices.begin(), draw_call_data.vertices.end());
+        }
 
-    // // collect all indices and vertices
+        window_config window{.width = 1280, .height = 720, .title = general.app_name};
+        engine_config engine{
+            .window_config = std::move(window),
+            .general_config = std::move(general),
+            .frame_count = 3,
+            .use_validation_layers = options.validation,
+        };
 
-    // for (const auto& draw_call_data : draw_call_data_list)
-    // {
-    //     indices.insert(indices.end(), draw_call_data.indices.begin(), draw_call_data.indices.end());
-    //     vertices.insert(vertices.end(), draw_call_data.vertices.begin(), draw_call_data.vertices.end());
-    // }
-
-    // // configs
-
-    // window_config window_config = {.width = 1280, .height = 720, .title = "Vulkan Engine"};
-    // engine_config config        = {.window_config = window_config, .general_config = general_config, .frame_count = 3, .use_validation_layers = true};
-
-    // // main loop
-
-    // app_sample sample(config);
-    // sample.set_vertex_index_data(draw_call_data_list, indices, vertices);
-    // sample.set_mesh_list(mesh_list);
-    // sample.initialize();
-    // sample.tick();
-
-    // std::cout << "Goodbye" << '\n';
-
-    // return 0;
+        app_sample sample(std::move(engine));
+        sample.set_vertex_index_data(std::move(draw_call_data_list), std::move(indices), std::move(vertices));
+        sample.set_mesh_list(mesh_list);
+        sample.initialize();
+        if (!sample.tick(options.frame_limit))
+        {
+            return EXIT_FAILURE;
+        }
+        return EXIT_SUCCESS;
+    }
+    catch (const std::exception& error)
+    {
+        Logger::LogError(std::string("VulkanSample failed: ") + error.what());
+        return EXIT_FAILURE;
+    }
 }

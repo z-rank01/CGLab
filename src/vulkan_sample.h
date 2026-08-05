@@ -54,6 +54,13 @@ struct mvp_matrix
     glm::mat4 projection;
 };
 
+enum class vulkan_frame_status
+{
+    rendered,
+    skipped,
+    failed,
+};
+
 class vulkan_sample
 {
 public:
@@ -61,8 +68,9 @@ public:
     vulkan_sample(engine_config config);
     ~vulkan_sample();
 
-    void tick();
-    void draw();
+    [[nodiscard]] vulkan_frame_status tick();
+    [[nodiscard]] vulkan_frame_status draw();
+    void request_resize() noexcept { resize_request = true; }
 
     void initialize();
     void set_vertex_index_data(std::vector<gltf::PerDrawCallData> per_draw_call_data,
@@ -88,11 +96,11 @@ private:
     // uniform data and buffer
     std::vector<mvp_matrix> mvp_matrices;
     std::vector<uint64_t> frame_submission_ids;
-    void* uniform_buffer_mapped_data;
-    vk::Buffer uniform_buffer;
-    VmaAllocator vma_allocator;
-    VmaAllocation uniform_buffer_allocation;
-    VmaAllocationInfo uniform_buffer_allocation_info;
+    void* uniform_buffer_mapped_data = nullptr;
+    vk::Buffer uniform_buffer = VK_NULL_HANDLE;
+    VmaAllocator vma_allocator = VK_NULL_HANDLE;
+    VmaAllocation uniform_buffer_allocation = VK_NULL_HANDLE;
+    VmaAllocationInfo uniform_buffer_allocation_info{};
     std::unique_ptr<vra::VraDataBatcher> vra_data_batcher;
     std::map<vra::BatchId, vra::VraDataBatcher::VraBatchHandle> uniform_batch_handle;
     std::vector<vra::ResourceId> uniform_buffer_id;
@@ -101,8 +109,8 @@ private:
     VkSurfaceKHR surface = VK_NULL_HANDLE;
 
     // descriptor
-    vk::DescriptorPool descriptor_pool;
-    vk::DescriptorSetLayout descriptor_set_layout;
+    vk::DescriptorPool descriptor_pool = VK_NULL_HANDLE;
+    vk::DescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
     std::vector<vk::DescriptorSet> descriptor_sets;
     vk::VertexInputBindingDescription vertex_input_binding_description;
     std::vector<vk::VertexInputAttributeDescription> vertex_input_attributes;
@@ -142,8 +150,8 @@ private:
 
     // --- Vulkan Draw Steps ---
 
-    void draw_frame();
-    void resize_swapchain();
+    [[nodiscard]] vulkan_frame_status draw_frame();
+    [[nodiscard]] bool resize_swapchain();
     bool record_command(uint32_t image_index, const std::string& command_buffer_id);
     bool build_render_graph();
     void update_uniform_buffer(uint32_t current_frame_index);
@@ -152,12 +160,12 @@ private:
 
     // --- Common Templates ---
 
-    vk::Instance comm_vk_instance;
-    vk::PhysicalDevice comm_vk_physical_device;
-    vk::Device comm_vk_logical_device;
-    vk::Queue comm_vk_graphics_queue;
-    vk::Queue comm_vk_transfer_queue;
-    vk::SwapchainKHR comm_vk_swapchain;
+    vk::Instance comm_vk_instance = VK_NULL_HANDLE;
+    vk::PhysicalDevice comm_vk_physical_device = VK_NULL_HANDLE;
+    vk::Device comm_vk_logical_device = VK_NULL_HANDLE;
+    vk::Queue comm_vk_graphics_queue = VK_NULL_HANDLE;
+    vk::Queue comm_vk_transfer_queue = VK_NULL_HANDLE;
+    vk::SwapchainKHR comm_vk_swapchain = VK_NULL_HANDLE;
     templates::common::CommVkInstanceContext comm_vk_instance_context;
     templates::common::CommVkPhysicalDeviceContext comm_vk_physical_device_context;
     templates::common::CommVkLogicalDeviceContext comm_vk_logical_device_context;
@@ -167,13 +175,13 @@ private:
     std::vector<uint32_t> indices;
     std::vector<gltf::Vertex> vertices;
 
-    vk::Buffer local_buffer;
-    vk::Buffer staging_buffer;
+    vk::Buffer local_buffer = VK_NULL_HANDLE;
+    vk::Buffer staging_buffer = VK_NULL_HANDLE;
 
-    VmaAllocation local_buffer_allocation;
-    VmaAllocation staging_buffer_allocation;
-    VmaAllocationInfo local_buffer_allocation_info;
-    VmaAllocationInfo staging_buffer_allocation_info;
+    VmaAllocation local_buffer_allocation = VK_NULL_HANDLE;
+    VmaAllocation staging_buffer_allocation = VK_NULL_HANDLE;
+    VmaAllocationInfo local_buffer_allocation_info{};
+    VmaAllocationInfo staging_buffer_allocation_info{};
 
     vra::ResourceId vertex_buffer_id;
     vra::ResourceId index_buffer_id;
