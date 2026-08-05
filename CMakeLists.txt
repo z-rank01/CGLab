@@ -50,6 +50,7 @@ add_subdirectory(third_party/digital-content-loader EXCLUDE_FROM_ALL)
 option(CGLAB_BUILD_RENDER_GRAPH_SAMPLES "Build render-graph sample executables" OFF)
 option(CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS "Build render-graph CTest executable" OFF)
 option(CGLAB_RENDER_GRAPH_SHARED "Build render_graph as a shared library (DLL)" OFF)
+option(CGLAB_BUILD_LEGACY_VULKAN_SAMPLE "Build the protected pre-render-graph VulkanSample target" OFF)
 
 # Pass options into the submodule.
 set(RENDER_GRAPH_BUILD_SAMPLES ${CGLAB_BUILD_RENDER_GRAPH_SAMPLES} CACHE BOOL "Build render-graph sample executables" FORCE)
@@ -79,6 +80,10 @@ set(HEADERS
 
 # 添加可执行文件
 add_executable(VulkanSample ${SOURCES} ${HEADERS})
+
+if(CGLAB_BUILD_LEGACY_VULKAN_SAMPLE)
+    add_subdirectory(src/legacy_vulkan_sample EXCLUDE_FROM_ALL)
+endif()
 
 # 链接库
 target_link_libraries(VulkanSample
