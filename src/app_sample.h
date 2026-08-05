@@ -54,6 +54,7 @@ private:
 
     void handle_control_plane_commands();
     void publish_frame_telemetry();
+    [[nodiscard]] nlohmann::json current_camera_state() const;
     
 
     engine_config general_config;

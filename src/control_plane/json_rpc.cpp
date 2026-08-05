@@ -85,6 +85,52 @@ namespace control_plane
             command.id        = request.id;
             return command;
         }
+
+        dispatch_result invalid_params(const nlohmann::json& id, const std::string& message)
+        {
+            return immediate(make_error(id, error_invalid_params, message));
+        }
+
+        // 读取可选数值参数：存在时必须为 [min, max] 内的数字。返回 false 表示校验失败。
+        bool read_optional_number(const nlohmann::json& params, const char* name, double min, double max,
+                                  double& out_value, bool& present)
+        {
+            present = false;
+            const auto it = params.find(name);
+            if (it == params.end())
+            {
+                return true;
+            }
+            if (!it->is_number())
+            {
+                return false;
+            }
+            const double value = it->get<double>();
+            if (value < min || value > max)
+            {
+                return false;
+            }
+            out_value = value;
+            present   = true;
+            return true;
+        }
+
+        // 读取 0..7 的 slot 参数（必填）
+        bool read_slot(const nlohmann::json& params, std::uint32_t& slot)
+        {
+            const auto it = params.find("slot");
+            if (it == params.end() || !it->is_number_unsigned())
+            {
+                return false;
+            }
+            const std::uint32_t value = it->get<std::uint32_t>();
+            if (value > 7)
+            {
+                return false;
+            }
+            slot = value;
+            return true;
+        }
     } // namespace
 
     dispatch_result dispatch_request(std::string_view client_id, const rpc_request& request)
@@ -109,7 +155,9 @@ namespace control_plane
                                          {{"protocol_version", protocol_version},
                                           {"server", server_name},
                                           {"capabilities",
-                                           {"telemetry.frame", "debug.echo", "frame.pause", "frame.resume", "frame.step"}}}));
+                                           {"telemetry.frame", "debug.echo", "frame.pause", "frame.resume", "frame.step",
+                                            "camera.set_mode", "camera.set_params", "camera.get_state",
+                                            "camera.bookmark.save", "camera.bookmark.goto"}}}));
         }
 
         if (method == "debug.echo")
@@ -117,11 +165,10 @@ namespace control_plane
             const auto message_it = request.params.find("message");
             if (message_it == request.params.end() || !message_it->is_string())
             {
-                return immediate(make_error(request.id, error_invalid_params,
-                                            "debug.echo requires string \"message\""));
+                return invalid_params(request.id, "debug.echo requires string \"message\"");
             }
             engine_command command = base_command(client_id, request, command_kind::echo);
-            command.message        = message_it->get<std::string>();
+            command.params         = {{"message", message_it->get<std::string>()}};
             return queued(std::move(command));
         }
 
@@ -143,13 +190,93 @@ namespace control_plane
                 if (!count_it->is_number_unsigned() || count_it->get<std::uint32_t>() < 1 ||
                     count_it->get<std::uint32_t>() > 64)
                 {
-                    return immediate(make_error(request.id, error_invalid_params,
-                                                "frame.step \"count\" must be an unsigned integer in [1, 64]"));
+                    return invalid_params(request.id, "frame.step \"count\" must be an unsigned integer in [1, 64]");
                 }
                 count = count_it->get<std::uint32_t>();
             }
             engine_command command = base_command(client_id, request, command_kind::frame_step);
-            command.step_count     = count;
+            command.params         = {{"count", count}};
+            return queued(std::move(command));
+        }
+
+        if (method == "camera.set_mode")
+        {
+            const auto mode_it = request.params.find("mode");
+            if (mode_it == request.params.end() || !mode_it->is_string())
+            {
+                return invalid_params(request.id, "camera.set_mode requires string \"mode\" (\"fly\" | \"orbit\")");
+            }
+            const std::string mode = mode_it->get<std::string>();
+            if (mode != "fly" && mode != "orbit")
+            {
+                return invalid_params(request.id, "camera.set_mode \"mode\" must be \"fly\" or \"orbit\"");
+            }
+            engine_command command = base_command(client_id, request, command_kind::camera_set_mode);
+            command.params         = {{"mode", mode}};
+            return queued(std::move(command));
+        }
+
+        if (method == "camera.set_params")
+        {
+            // 所有字段可选但至少提供一个；存在时按值域校验
+            struct field_rule
+            {
+                const char* name;
+                double min;
+                double max;
+            };
+            static constexpr field_rule rules[] = {
+                {"fov", 1.0, 175.0},
+                {"movement_speed", 0.01, 1000.0},
+                {"mouse_sensitivity", 0.001, 10.0},
+                {"zoom_speed", 0.01, 100.0},
+                {"orbit_distance", 0.1, 10000.0},
+                {"near_plane", 0.0001, 1000.0},
+                {"far_plane", 1.0, 1000000.0},
+            };
+
+            nlohmann::json validated = nlohmann::json::object();
+            bool any                 = false;
+            for (const field_rule& rule : rules)
+            {
+                double value = 0.0;
+                bool present = false;
+                if (!read_optional_number(request.params, rule.name, rule.min, rule.max, value, present))
+                {
+                    return invalid_params(request.id,
+                                          std::string("camera.set_params \"") + rule.name + "\" out of range or not a number");
+                }
+                if (present)
+                {
+                    validated[rule.name] = value;
+                    any                  = true;
+                }
+            }
+            if (!any)
+            {
+                return invalid_params(request.id, "camera.set_params requires at least one known parameter");
+            }
+            engine_command command = base_command(client_id, request, command_kind::camera_set_params);
+            command.params         = std::move(validated);
+            return queued(std::move(command));
+        }
+
+        if (method == "camera.get_state")
+        {
+            return queued(base_command(client_id, request, command_kind::camera_get_state));
+        }
+
+        if (method == "camera.bookmark.save" || method == "camera.bookmark.goto")
+        {
+            std::uint32_t slot = 0;
+            if (!read_slot(request.params, slot))
+            {
+                return invalid_params(request.id, method + " requires unsigned integer \"slot\" in [0, 7]");
+            }
+            engine_command command = base_command(
+                client_id, request,
+                method == "camera.bookmark.save" ? command_kind::camera_bookmark_save : command_kind::camera_bookmark_goto);
+            command.params = {{"slot", slot}};
             return queued(std::move(command));
         }
 

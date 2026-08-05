@@ -76,7 +76,7 @@ void app_sample::handle_control_plane_commands()
         case command_kind::echo:
         {
             control_plane->post_response(command.client_id,
-                                         control_plane::make_result(command.id, {{"message", command.message}}));
+                                         control_plane::make_result(command.id, {{"message", command.params["message"]}}));
             break;
         }
         case command_kind::frame_pause:
@@ -95,13 +95,116 @@ void app_sample::handle_control_plane_commands()
         }
         case command_kind::frame_step:
         {
-            pending_frame_steps += command.step_count;
+            const std::uint32_t steps = command.params["count"].get<std::uint32_t>();
+            pending_frame_steps += steps;
             control_plane->post_response(command.client_id,
-                                         control_plane::make_result(command.id, {{"stepped", command.step_count}}));
+                                         control_plane::make_result(command.id, {{"stepped", steps}}));
+            break;
+        }
+        case command_kind::camera_set_mode:
+        {
+            const std::string mode = command.params["mode"].get<std::string>();
+            interface::set_camera_mode(camera_container, camera_entity_index,
+                                       mode == "orbit" ? interface::camera_mode::orbit : interface::camera_mode::fly);
+            control_plane->post_response(command.client_id,
+                                         control_plane::make_result(command.id, {{"mode", mode}}));
+            break;
+        }
+        case command_kind::camera_set_params:
+        {
+            interface::camera_config& config       = camera_container.configs[camera_entity_index];
+            interface::camera_transform& transform = camera_container.transforms[camera_entity_index];
+            const nlohmann::json& params           = command.params;
+            if (params.contains("fov"))
+            {
+                transform.current_zoom = params["fov"].get<float>();
+                transform.dirty        = true;
+            }
+            if (params.contains("movement_speed"))
+            {
+                config.movement_speed = params["movement_speed"].get<float>();
+            }
+            if (params.contains("mouse_sensitivity"))
+            {
+                config.mouse_sensitivity = params["mouse_sensitivity"].get<float>();
+            }
+            if (params.contains("zoom_speed"))
+            {
+                config.zoom_speed = params["zoom_speed"].get<float>();
+            }
+            if (params.contains("orbit_distance"))
+            {
+                transform.orbit_distance = params["orbit_distance"].get<float>();
+                transform.dirty          = true;
+            }
+            if (params.contains("near_plane"))
+            {
+                config.near_plane = params["near_plane"].get<float>();
+            }
+            if (params.contains("far_plane"))
+            {
+                config.far_plane = params["far_plane"].get<float>();
+            }
+            control_plane->post_response(command.client_id,
+                                         control_plane::make_result(command.id, {{"applied", params}}));
+            break;
+        }
+        case command_kind::camera_get_state:
+        {
+            control_plane->post_response(command.client_id,
+                                         control_plane::make_result(command.id, current_camera_state()));
+            break;
+        }
+        case command_kind::camera_bookmark_save:
+        {
+            const std::uint32_t slot = command.params["slot"].get<std::uint32_t>();
+            const bool saved         = interface::save_bookmark(camera_container, camera_entity_index, slot);
+            control_plane->post_response(command.client_id,
+                                         control_plane::make_result(command.id, {{"saved", saved}, {"slot", slot}}));
+            break;
+        }
+        case command_kind::camera_bookmark_goto:
+        {
+            const std::uint32_t slot = command.params["slot"].get<std::uint32_t>();
+            const bool started       = interface::goto_bookmark(camera_container, camera_entity_index, slot);
+            if (started)
+            {
+                control_plane->post_response(command.client_id,
+                                             control_plane::make_result(command.id, {{"goto", true}, {"slot", slot}}));
+            }
+            else
+            {
+                control_plane->post_response(
+                    command.client_id,
+                    control_plane::make_error(command.id, -32602, "Bookmark slot " + std::to_string(slot) + " is empty"));
+            }
             break;
         }
         }
     }
+}
+
+nlohmann::json app_sample::current_camera_state() const
+{
+    const interface::camera_transform& transform = camera_container.transforms[camera_entity_index];
+    const interface::camera_config& config       = camera_container.configs[camera_entity_index];
+    const interface::camera_bookmarks& bookmarks = camera_container.bookmarks[camera_entity_index];
+    return {
+        {"mode", transform.mode == interface::camera_mode::orbit ? "orbit" : "fly"},
+        {"position", {transform.position.x, transform.position.y, transform.position.z}},
+        {"yaw", transform.yaw},
+        {"pitch", transform.pitch},
+        {"fov", transform.current_zoom},
+        {"orbit_distance", transform.orbit_distance},
+        {"focus_point", {transform.focus_point.x, transform.focus_point.y, transform.focus_point.z}},
+        {"movement_speed", config.movement_speed},
+        {"mouse_sensitivity", config.mouse_sensitivity},
+        {"zoom_speed", config.zoom_speed},
+        {"near_plane", config.near_plane},
+        {"far_plane", config.far_plane},
+        {"bookmarks_valid", bookmarks.valid},
+        {"blending", camera_container.blends[camera_entity_index].active},
+    };
 }
 
 void app_sample::publish_frame_telemetry()
@@ -132,6 +235,7 @@ void app_sample::publish_frame_telemetry()
             {"upload_pass_executions", stats.upload_pass_executions},
             {"validation_errors", validation_error_count()},
             {"paused", frame_paused},
+            {"camera", current_camera_state()},
         }));
 }
 

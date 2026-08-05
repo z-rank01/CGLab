@@ -57,19 +57,23 @@ namespace control_plane
 
     enum class command_kind
     {
-        echo,        // debug.echo：验证命令回环
-        frame_pause, // frame.pause
+        echo,         // debug.echo：验证命令回环
+        frame_pause,  // frame.pause
         frame_resume, // frame.resume
-        frame_step,  // frame.step {count?: 1..64}
+        frame_step,   // frame.step {count?: 1..64}
+        camera_set_mode,      // camera.set_mode {mode: "fly"|"orbit"}
+        camera_set_params,    // camera.set_params {fov?, movement_speed?, ...}
+        camera_get_state,     // camera.get_state
+        camera_bookmark_save, // camera.bookmark.save {slot: 0..7}
+        camera_bookmark_goto, // camera.bookmark.goto {slot: 0..7}
     };
 
     struct engine_command
     {
         command_kind kind;
         std::string client_id;
-        nlohmann::json id;              // 响应用的 rpc id
-        std::string message;            // echo 载荷
-        std::uint32_t step_count = 1;   // frame_step 参数
+        nlohmann::json id;     // 响应用的 rpc id
+        nlohmann::json params; // 已通过校验的参数（方法语义见 command_kind 注释）
     };
 
     enum class dispatch_outcome

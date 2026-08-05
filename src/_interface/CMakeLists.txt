@@ -7,6 +7,7 @@ add_library(interface STATIC
         sdl_window.h
         Window.h
         input.h
+        input_router.h
         camera_component.h
         camera_system.h
 )

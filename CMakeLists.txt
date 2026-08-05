@@ -157,6 +157,16 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME cglab.camera_input COMMAND cglab_camera_input_tests)
 
+    add_executable(cglab_camera_rig_tests
+        src/unit_test/camera_rig_test.cpp
+    )
+    target_include_directories(cglab_camera_rig_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(cglab_camera_rig_tests PRIVATE interface glm::glm)
+    if(MSVC)
+        target_compile_options(cglab_camera_rig_tests PRIVATE /FS /utf-8)
+    endif()
+    add_test(NAME cglab.camera_rig COMMAND cglab_camera_rig_tests)
+
     add_executable(cglab_control_plane_protocol_tests
         src/control_plane/json_rpc.cpp
         src/unit_test/control_plane_protocol_test.cpp
