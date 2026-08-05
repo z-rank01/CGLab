@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
+#include <span>
 
 #include "camera_component.h"
 #include "input.h"
@@ -74,6 +75,21 @@ namespace interface
         case event_type::mouse_wheel:
         {
             ctx.scroll_delta_y += event.mouse_wheel.y;
+            break;
+        }
+        case event_type::focus_lost:
+        {
+            ctx.move_forward = false;
+            ctx.move_backward = false;
+            ctx.move_left = false;
+            ctx.move_right = false;
+            ctx.move_up = false;
+            ctx.move_down = false;
+            ctx.is_free_look_active = false;
+            ctx.is_panning_active = false;
+            ctx.mouse_delta_x = 0.0F;
+            ctx.mouse_delta_y = 0.0F;
+            ctx.scroll_delta_y = 0.0F;
             break;
         }
         case event_type::resize:
@@ -164,6 +180,20 @@ namespace interface
     {
         reset_camera_update_context(context);
         process_event(context, event);
+        update_camera(container, context, delta_time);
+    }
+
+    inline void tick(
+        camera_container& container,
+        camera_update_context& context,
+        std::span<const input_event> events,
+        const float delta_time)
+    {
+        reset_camera_update_context(context);
+        for (const input_event& event : events)
+        {
+            process_event(context, event);
+        }
         update_camera(container, context, delta_time);
     }
 

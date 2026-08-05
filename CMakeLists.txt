@@ -143,6 +143,16 @@ if(BUILD_TESTING)
         target_compile_options(cglab_smoke_scene_tests PRIVATE /FS /utf-8)
     endif()
     add_test(NAME cglab.smoke_scene COMMAND cglab_smoke_scene_tests)
+
+    add_executable(cglab_camera_input_tests
+        src/unit_test/camera_input_test.cpp
+    )
+    target_include_directories(cglab_camera_input_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(cglab_camera_input_tests PRIVATE interface glm::glm)
+    if(MSVC)
+        target_compile_options(cglab_camera_input_tests PRIVATE /FS /utf-8)
+    endif()
+    add_test(NAME cglab.camera_input COMMAND cglab_camera_input_tests)
 endif()
 
 # 设置特定于编译器的警告选项

@@ -49,63 +49,84 @@ namespace interface
         SDL_Event event{};
         while (SDL_PollEvent(&event))
         {
-            if (event.type == SDL_EVENT_QUIT)
+            if (translate_event(event, e))
             {
-                e.type = event_type::quit;
-                should_close_internal = true;
                 return;
             }
-            if (event.type == SDL_EVENT_WINDOW_RESIZED)
-            {
-                e.type = event_type::resize;
-                e.resize.width  = event.window.data1;
-                e.resize.height = event.window.data2;
-                continue;
-            }
-            if (e.type != event_type::none)
-            {
-                continue;
-            }
+        }
+    }
 
-            switch (event.type)
+    void sdl_window::poll_events(std::vector<input_event>& events)
+    {
+        events.clear();
+        SDL_Event source{};
+        while (SDL_PollEvent(&source))
+        {
+            input_event destination{};
+            if (translate_event(source, destination))
             {
-            case SDL_EVENT_KEY_DOWN:
-                e.type = event_type::key_down;
-                e.key.key = translate_key_code(event.key.key);
-                break;
-            case SDL_EVENT_KEY_UP:
-                e.type = event_type::key_up;
-                e.key.key = translate_key_code(event.key.key);
-                break;
-            case SDL_EVENT_MOUSE_MOTION:
-                e.type = event_type::mouse_move;
-                e.mouse_move.x    = event.motion.x;
-                e.mouse_move.y    = event.motion.y;
-                e.mouse_move.xrel = event.motion.xrel;
-                e.mouse_move.yrel = event.motion.yrel;
-                break;
-            case SDL_EVENT_MOUSE_WHEEL:
-                e.type = event_type::mouse_wheel;
-                e.mouse_wheel.x = event.wheel.x;
-                e.mouse_wheel.y = event.wheel.y;
-                break;
-            case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                e.type = event_type::mouse_button_down;
-                e.mouse_button.button  = translate_mouse_button(event.button.button);
-                e.mouse_button.x       = event.button.x;
-                e.mouse_button.y       = event.button.y;
-                e.mouse_button.pressed = true;
-                break;
-            case SDL_EVENT_MOUSE_BUTTON_UP:
-                e.type = event_type::mouse_button_up;
-                e.mouse_button.button  = translate_mouse_button(event.button.button);
-                e.mouse_button.x       = event.button.x;
-                e.mouse_button.y       = event.button.y;
-                e.mouse_button.pressed = false;
-                break;
-            default:
-                break;
+                events.push_back(destination);
             }
+            if (should_close_internal)
+            {
+                return;
+            }
+        }
+    }
+
+    bool sdl_window::translate_event(const SDL_Event& source, input_event& destination)
+    {
+        destination = input_event{};
+        switch (source.type)
+        {
+        case SDL_EVENT_QUIT:
+            destination.type = event_type::quit;
+            should_close_internal = true;
+            return true;
+        case SDL_EVENT_WINDOW_RESIZED:
+            destination.type = event_type::resize;
+            destination.resize.width  = source.window.data1;
+            destination.resize.height = source.window.data2;
+            return true;
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+            destination.type = event_type::focus_lost;
+            return true;
+        case SDL_EVENT_KEY_DOWN:
+            destination.type = event_type::key_down;
+            destination.key.key = translate_key_code(source.key.key);
+            return true;
+        case SDL_EVENT_KEY_UP:
+            destination.type = event_type::key_up;
+            destination.key.key = translate_key_code(source.key.key);
+            return true;
+        case SDL_EVENT_MOUSE_MOTION:
+            destination.type = event_type::mouse_move;
+            destination.mouse_move.x    = source.motion.x;
+            destination.mouse_move.y    = source.motion.y;
+            destination.mouse_move.xrel = source.motion.xrel;
+            destination.mouse_move.yrel = source.motion.yrel;
+            return true;
+        case SDL_EVENT_MOUSE_WHEEL:
+            destination.type = event_type::mouse_wheel;
+            destination.mouse_wheel.x = source.wheel.x;
+            destination.mouse_wheel.y = source.wheel.y;
+            return true;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            destination.type = event_type::mouse_button_down;
+            destination.mouse_button.button  = translate_mouse_button(source.button.button);
+            destination.mouse_button.x       = source.button.x;
+            destination.mouse_button.y       = source.button.y;
+            destination.mouse_button.pressed = true;
+            return true;
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+            destination.type = event_type::mouse_button_up;
+            destination.mouse_button.button  = translate_mouse_button(source.button.button);
+            destination.mouse_button.x       = source.button.x;
+            destination.mouse_button.y       = source.button.y;
+            destination.mouse_button.pressed = false;
+            return true;
+        default:
+            return false;
         }
     }
 

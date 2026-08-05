@@ -21,6 +21,8 @@ namespace interface
 
         void tick(input_event& e) override;
 
+        void poll_events(std::vector<input_event>& events) override;
+
         bool should_close() const override;
 
         // Vulkan integration implementation
@@ -42,6 +44,8 @@ namespace interface
         static key_code translate_key_code(SDL_Keycode key);
 
         static mouse_button translate_mouse_button(uint8_t button);
+
+        bool translate_event(const SDL_Event& source, input_event& destination);
     };
 
 } // namespace interface

@@ -30,6 +30,9 @@ namespace interface
 
         virtual void tick(input_event& e) = 0;
 
+        // Poll every pending platform event into reusable caller-owned storage.
+        virtual void poll_events(std::vector<input_event>& events) = 0;
+
         virtual bool should_close() const = 0;
 
         // Vulkan integration

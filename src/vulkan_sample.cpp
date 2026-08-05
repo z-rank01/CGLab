@@ -4,13 +4,11 @@
 #include "vulkan_sample.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
-#include <thread>
 #include <utility>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_enums.hpp>
@@ -227,6 +225,10 @@ vulkan_frame_status vulkan_sample::tick()
     int current_width = 0;
     int current_height = 0;
     window->get_extent(current_width, current_height);
+    if (current_width == 0 || current_height == 0)
+    {
+        return vulkan_frame_status::skipped;
+    }
     if (current_width != config.window_config.width || current_height != config.window_config.height)
     {
         resize_request = true;
@@ -847,16 +849,8 @@ bool vulkan_sample::resize_swapchain()
     int width = 0;
     int height = 0;
     window->get_extent(width, height);
-    while ((width == 0 || height == 0) && !window->should_close())
+    if (width == 0 || height == 0 || window->should_close())
     {
-        interface::input_event event{};
-        window->tick(event);
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
-        window->get_extent(width, height);
-    }
-    if (window->should_close())
-    {
-        resize_request = false;
         return true;
     }
 

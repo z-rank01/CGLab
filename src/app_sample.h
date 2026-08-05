@@ -32,6 +32,7 @@ private:
     std::unique_ptr<vulkan_sample> vulkan_instance;
     std::shared_ptr<std::atomic_uint32_t> validation_errors;
     vulkan_run_statistics run_statistics;
+    std::vector<interface::input_event> input_events;
 
     // data-oriented camera
     size_t camera_entity_index = 0;

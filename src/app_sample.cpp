@@ -1,6 +1,7 @@
 #include "app_sample.h"
 
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 #include "_interface/sdl_window.h" // For default implementation
@@ -37,13 +38,13 @@ void app_sample::initialize()
     vulkan_instance->set_camera_container(&camera_container);
     vulkan_instance->set_camera_index(camera_entity_index);
     vulkan_instance->initialize();
+    input_events.reserve(32);
     last_frame_time = std::chrono::high_resolution_clock::now();
 }
 
 bool app_sample::tick(std::optional<std::uint64_t> frame_limit)
 {
     std::uint64_t rendered_frames = 0;
-    interface::input_event event{};
     while (!window->should_close())
     {
         // calculate delta time
@@ -51,16 +52,28 @@ bool app_sample::tick(std::optional<std::uint64_t> frame_limit)
         delta_time        = std::chrono::duration<float>(current_time - last_frame_time).count();
         last_frame_time   = current_time;
 
-        window->tick(event);
-        if (event.type == interface::event_type::resize)
+        window->poll_events(input_events);
+        for (const interface::input_event& event : input_events)
         {
-            vulkan_instance->request_resize();
+            if (event.type == interface::event_type::resize)
+            {
+                vulkan_instance->request_resize();
+            }
         }
-        interface::tick(camera_container, camera_update_context, event, delta_time);
+        if (window->should_close())
+        {
+            return true;
+        }
+        interface::tick(camera_container, camera_update_context, input_events, delta_time);
         const vulkan_frame_status status = vulkan_instance->tick();
         if (status == vulkan_frame_status::failed)
         {
             return false;
+        }
+        if (status == vulkan_frame_status::skipped)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(8));
+            continue;
         }
         if (status == vulkan_frame_status::rendered)
         {

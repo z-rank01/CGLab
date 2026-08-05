@@ -38,6 +38,7 @@ namespace interface
         none, 
         quit,
         resize,
+        focus_lost,
         key_down,
         key_up,
         mouse_move,
