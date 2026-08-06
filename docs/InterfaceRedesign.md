@@ -177,10 +177,35 @@ Dear ImGui 对 Vulkan 调试面板是行业标准，但作为**主交互窗口**
 | validation 流 | 即时 | severity/message，UI 侧做成控制台 |
 | 生命周期事件 | 即时 | device lost、swapchain recreate、asset 加载完成/失败 |
 
-### 4.5 渲染画面呈现
+### 4.5 渲染画面呈现（双窗口 → 单窗口的演进路线）
 
-- SDL 窗口保持为**纯 viewport**。UI 是独立窗口（浏览器/壳）。
-- 桌面"单窗口编辑器"体验（可选增强）：webview 壳作为主窗口，SDL 窗口保持独立；真正的"单窗口内嵌"（把 Vulkan swapchain 内容嵌进 webview 面板）需要共享纹理或像素回读，成本高、收益低，**本期明确不做**，在文档中标注为已知取舍。
+**P0–P4 阶段（当前形态）**：SDL 窗口保持为**纯 viewport**，UI 是独立窗口（浏览器/壳）。这是协议优先路线的直接产物，保证渲染路径零侵入。
+
+**最终目标（与主流引擎一致）：渲染视口与 UI 集成在同一个应用窗口内。** 三条候选路线：
+
+| 路线 | 做法 | 代价 | 效果 | 定位 |
+|---|---|---|---|---|
+| **A. 全部进 Web** | swapchain 回读 → 编码推流给浏览器（类 Unreal Pixel Streaming / WebRTC） | GPU→CPU 回读带宽 + 延迟 + 额外编码 pass，工程量最大 | 浏览器内看画面，操控有延迟 | 仅在有远程监看/副屏需求时考虑，**不作为主路线** |
+| **B1. Webview 壳 + 原生视口嵌入** | webview（saucer / CEF / Ultralight）做主窗口承载 React UI；SDL/Vulkan 视口作为子区域嵌入（Windows：HWND 父子；跨平台需各自适配） | 中等 | 单窗口编辑器外观，画面零拷贝零延迟；视口与面板间有"原生接缝"（独立焦点/输入法/滚动区域） | **中期主路线（P5）** |
+| **B2. UI 离屏渲染合成进 swapchain** | Ultralight/CEF OSR 将 UI 渲染为纹理，作为 Render Graph 的一个 overlay pass 合成进最终画面；SDL 输入反向转发给 webview | 最高：动 RG pass 结构与 cache key、输入转发层、焦点管理 | 真正无缝单窗口（游戏引擎主流做法，如 Coherent GT / Ultralight 游戏内 UI） | **最终形态备选（P6，按需）** |
+
+**关键架构保障：三条路线均不需要返工协议层。** P0 起 UI↔引擎就走 WebSocket/JSON-RPC 而非进程内 JS bridge，UI 宿主可自由替换——浏览器（现在）→ 内嵌 webview（B1）只是给同一 WS 端口换壳；B2 也只需新增"输入转发"与"UI 纹理 pass"两个模块，命令/遥测/Schema 原样复用。
+
+### 4.6 单窗口集成设计约束（B1 先行，B2 备选）
+
+**B1（P5）设计要点**：
+
+- webview 壳进程内嵌 Control Plane 客户端（或直连 localhost WS），React 构建产物由壳托管（`--ui-open-browser` 演进为壳内导航）。
+- SDL 视口改为壳窗口的子区域：Windows 上 `SDL_CreateWindowFrom` / HWND 父子嵌入；视口尺寸变化 → resize 事件走现有 `request_resize` 路径，RG cache key 机制天然兼容。
+- 焦点规则：鼠标进入视口区域 → 输入路由到引擎（现有 input_router）；离开 → 归 UI。引擎侧无需感知壳的存在。
+- 降级路径保留：`--no-ui` / 独立浏览器模式继续可用，CI 与 smoke-test 不受影响。
+
+**B2（P6，备选）额外约束**：
+
+- UI 纹理作为 RG imported image 接入 overlay pass：尺寸随窗口变化进 cache key，复用现有 recompile/复用机制；alpha 混合叠加在 DrawPass 之后、present 之前。
+- 输入转发层：SDL 事件 → 坐标系换算 → webview 鼠标/键盘事件注入；命中测试由 UI 提供（"像素是否落在交互面板上"决定事件归 UI 还是相机）。
+- 焦点态进入相机 `camera_update_context` 的上下文栈（input_router 预留的"UI 捕获层"在此落地）。
+- 风险：Ultralight 商业授权 / CEF 体积与多进程——选型决策点在 P5 末，届时以 B1 实际体验为准。
 
 ---
 
@@ -296,9 +321,10 @@ RG 已有 `debug_dump()`（确定性 dump）与 compile diagnostics——这是�
 | **P2 场景系统** | scene_registry、运行时 glTF 加载（异步）、多 draw/per-object uniform、显隐/选中/卸载 | 运行中加载第二个模型不重启；卸载不泄漏（frames-in-flight 延迟销毁） |
 | **P3 Web UI** | React SPA：dock 布局、场景树、检视器、统计图表、console | 浏览器打开即完整可用；UI 关掉引擎无恙 |
 | **P4 RG 可视化** | debug_dump JSON 化、React Flow 图视图、pass timestamp 时序 | recompile 后图自动更新；能定位最慢 pass |
-| **P5 打磨（可选）** | webview/saucer 壳打包单窗口、gizmo、拾取高亮、截图、布局持久化完善 | — |
+| **P5 单窗口集成（B1）** | webview 壳主窗口 + SDL 视口子区域嵌入（§4.5/§4.6）；gizmo、拾取高亮、截图、布局持久化 | 单窗口编辑器外观；画面零拷贝零延迟；`--no-ui`/浏览器模式仍可用 |
+| **P6 无缝单窗口（B2，备选）** | UI 离屏渲染为纹理 → RG overlay pass 合成；SDL 输入反向转发 webview | 视口与面板无缝；以 P5 体验与授权/体积评估为准 |
 
-依赖关系：P0 是一切的地基；P1/P2 可并行；P3 在 P0 后即可起步（先用假数据/帧统计）；P4 依赖 P3。
+依赖关系：P0 是一切的地基；P1/P2 可并行；P3 在 P0 后即可起步（先用假数据/帧统计）；P4 依赖 P3；P5 依赖 P3；P6 依赖 P5 的选型结论。
 
 ---
 
@@ -308,7 +334,7 @@ RG 已有 `debug_dump()`（确定性 dump）与 compile diagnostics——这是�
 |---|---|---|
 | 渲染侧多 draw/per-object 改动波及 RG 图结构 | cache key、uniform 布局、descriptor 都要动 | 放在 P2 独立阶段；保留单模型路径作为回归基线 |
 | WebSocket 库选型 | 引入新 vcpkg 依赖 | 候选：ixwebsocket（轻、活跃）、Boost.Beast（重但稳）、cpp-httplib+自写 WS（最少依赖）；P0 前做一次 spike 决定 |
-| 双窗口体验被吐槽 | "不像一个应用" | P5 用 webview 壳收敛；README 说明取舍 |
+| 双窗口体验被吐槽 | "不像一个应用" | 已在路线图中消解：P5 B1（webview 壳 + 视口嵌入）收敛单窗口，P6 B2（UI 纹理合成）无缝化；协议层无需返工（§4.5） |
 | 浏览器内核差异 | 调试体验不一致 | 开发/CI 统一 Chrome；UI 不用实验性 CSS |
 | 遥测/命令 JSON 开销 | 高频下 CPU 浪费 | 分级节流 + 增量 diff；真有瓶颈再换 MessagePack（协议层预留编码协商字段） |
 | 键码映射膨胀 | 维护成本 | scancode 翻译表集中一处生成，action 层与物理层解耦 |
