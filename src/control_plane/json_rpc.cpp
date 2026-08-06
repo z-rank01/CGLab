@@ -1,5 +1,7 @@
 #include "json_rpc.h"
 
+#include <array>
+
 namespace control_plane
 {
     nlohmann::json make_result(const nlohmann::json& id, const nlohmann::json& result)
@@ -131,6 +133,41 @@ namespace control_plane
             slot = value;
             return true;
         }
+
+        // 读取场景对象 id 参数（必填，无符号整数）
+        bool read_object_id(const nlohmann::json& params, std::uint32_t& id)
+        {
+            const auto it = params.find("id");
+            if (it == params.end() || !it->is_number_unsigned())
+            {
+                return false;
+            }
+            id = it->get<std::uint32_t>();
+            return true;
+        }
+
+        // 读取可选 vec3 参数：存在时必须为 3 个有限数字的数组
+        bool read_optional_vec3(const nlohmann::json& params, const char* name, std::array<double, 3>& out_value)
+        {
+            const auto it = params.find(name);
+            if (it == params.end())
+            {
+                return true;
+            }
+            if (!it->is_array() || it->size() != 3)
+            {
+                return false;
+            }
+            for (std::size_t i = 0; i < 3; ++i)
+            {
+                if (!(*it)[i].is_number())
+                {
+                    return false;
+                }
+                out_value[i] = (*it)[i].get<double>();
+            }
+            return true;
+        }
     } // namespace
 
     dispatch_result dispatch_request(std::string_view client_id, const rpc_request& request)
@@ -155,9 +192,11 @@ namespace control_plane
                                          {{"protocol_version", protocol_version},
                                           {"server", server_name},
                                           {"capabilities",
-                                           {"telemetry.frame", "debug.echo", "frame.pause", "frame.resume", "frame.step",
+                                           {"telemetry.frame", "telemetry.scene", "debug.echo", "frame.pause", "frame.resume", "frame.step",
                                             "camera.set_mode", "camera.set_params", "camera.get_state",
-                                            "camera.bookmark.save", "camera.bookmark.goto"}}}));
+                                            "camera.bookmark.save", "camera.bookmark.goto",
+                                            "scene.load_asset", "scene.unload", "scene.set_visibility",
+                                            "scene.set_transform", "scene.select", "scene.list"}}}));
         }
 
         if (method == "debug.echo")
@@ -278,6 +317,94 @@ namespace control_plane
                 method == "camera.bookmark.save" ? command_kind::camera_bookmark_save : command_kind::camera_bookmark_goto);
             command.params = {{"slot", slot}};
             return queued(std::move(command));
+        }
+
+        if (method == "scene.load_asset")
+        {
+            const auto path_it = request.params.find("path");
+            if (path_it == request.params.end() || !path_it->is_string() || path_it->get<std::string>().empty())
+            {
+                return invalid_params(request.id, "scene.load_asset requires non-empty string \"path\"");
+            }
+            engine_command command = base_command(client_id, request, command_kind::scene_load_asset);
+            command.params         = {{"path", path_it->get<std::string>()}};
+            return queued(std::move(command));
+        }
+
+        if (method == "scene.unload")
+        {
+            std::uint32_t id = 0;
+            if (!read_object_id(request.params, id))
+            {
+                return invalid_params(request.id, "scene.unload requires unsigned integer \"id\"");
+            }
+            engine_command command = base_command(client_id, request, command_kind::scene_unload);
+            command.params         = {{"id", id}};
+            return queued(std::move(command));
+        }
+
+        if (method == "scene.set_visibility")
+        {
+            std::uint32_t id = 0;
+            const auto visible_it = request.params.find("visible");
+            if (!read_object_id(request.params, id) || visible_it == request.params.end() || !visible_it->is_boolean())
+            {
+                return invalid_params(request.id, "scene.set_visibility requires unsigned integer \"id\" and boolean \"visible\"");
+            }
+            engine_command command = base_command(client_id, request, command_kind::scene_set_visibility);
+            command.params         = {{"id", id}, {"visible", visible_it->get<bool>()}};
+            return queued(std::move(command));
+        }
+
+        if (method == "scene.set_transform")
+        {
+            std::uint32_t id = 0;
+            if (!read_object_id(request.params, id))
+            {
+                return invalid_params(request.id, "scene.set_transform requires unsigned integer \"id\"");
+            }
+            nlohmann::json validated = nlohmann::json::object();
+            validated["id"]          = id;
+            bool any                 = false;
+            for (const char* field : {"position", "rotation", "scale"})
+            {
+                std::array<double, 3> value{};
+                if (!read_optional_vec3(request.params, field, value))
+                {
+                    return invalid_params(request.id,
+                                          std::string("scene.set_transform \"") + field + "\" must be an array of 3 numbers");
+                }
+                if (request.params.contains(field))
+                {
+                    validated[field] = {value[0], value[1], value[2]};
+                    any              = true;
+                }
+            }
+            if (!any)
+            {
+                return invalid_params(request.id,
+                                      "scene.set_transform requires at least one of \"position\"/\"rotation\"/\"scale\"");
+            }
+            engine_command command = base_command(client_id, request, command_kind::scene_set_transform);
+            command.params         = std::move(validated);
+            return queued(std::move(command));
+        }
+
+        if (method == "scene.select")
+        {
+            const auto id_it = request.params.find("id");
+            if (id_it == request.params.end() || (!id_it->is_null() && !id_it->is_number_unsigned()))
+            {
+                return invalid_params(request.id, "scene.select requires \"id\" (unsigned integer or null)");
+            }
+            engine_command command = base_command(client_id, request, command_kind::scene_select);
+            command.params         = {{"id", id_it->is_null() ? nlohmann::json(nullptr) : nlohmann::json(id_it->get<std::uint32_t>())}};
+            return queued(std::move(command));
+        }
+
+        if (method == "scene.list")
+        {
+            return queued(base_command(client_id, request, command_kind::scene_list));
         }
 
         return immediate(make_error(request.id, error_method_not_found, "Method not found: " + method));

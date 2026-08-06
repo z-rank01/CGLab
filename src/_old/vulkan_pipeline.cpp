@@ -126,8 +126,8 @@ bool VulkanPipelineHelper::CreatePipeline(vk::Device device)
     {
         .setLayoutCount = static_cast<uint32_t>(config_.descriptor_set_layouts.size()),
         .pSetLayouts = config_.descriptor_set_layouts.data(),
-        .pushConstantRangeCount = 0,
-        .pPushConstantRanges = nullptr
+        .pushConstantRangeCount = static_cast<uint32_t>(config_.push_constant_ranges.size()),
+        .pPushConstantRanges = config_.push_constant_ranges.empty() ? nullptr : config_.push_constant_ranges.data()
     };
 
     pipeline_layout_ = device_.createPipelineLayout(pipelineLayoutInfo);

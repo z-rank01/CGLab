@@ -15,10 +15,16 @@ layout(binding = 0) uniform MvpMatrix {
     mat4 proj;
 } mvp_matrix;
 
+// P2：对象级变换走 push constant（per-draw 更新），
+// uniform 中的 model 保留布局兼容（恒为 identity），view/proj 每帧更新。
+layout(push_constant) uniform ObjectPush {
+    mat4 model;
+} object_push;
+
 void main() 
 {
-    // 正确应用 MVP 变换
-    gl_Position = mvp_matrix.proj * mvp_matrix.view * mvp_matrix.model * vec4(inPosition, 1.0);
+    // proj * view * model（对象级 model 来自 push constant）
+    gl_Position = mvp_matrix.proj * mvp_matrix.view * object_push.model * vec4(inPosition, 1.0);
     
     // 使用顶点法线作为颜色，这样更容易看出几何形状正确性
     // 注意：法线需要归一化到 [0,1] 范围内显示

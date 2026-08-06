@@ -17,6 +17,7 @@ struct SVulkanPipelineConfig
     vk::VertexInputBindingDescription vertex_input_binding_description;
     std::vector<vk::VertexInputAttributeDescription> vertex_input_attribute_descriptions;
     std::vector<vk::DescriptorSetLayout> descriptor_set_layouts;
+    std::vector<vk::PushConstantRange> push_constant_ranges; // P2：对象级 model 矩阵（per-draw push constant）
 };
 
 class VulkanPipelineHelper

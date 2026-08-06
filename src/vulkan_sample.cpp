@@ -100,6 +100,27 @@ vulkan_sample::~vulkan_sample()
         vmaDestroyBuffer(vma_allocator, staging_buffer, staging_buffer_allocation);
         staging_buffer = VK_NULL_HANDLE;
     }
+    // P2：销毁运行时上传批次与 geometry arena
+    for (runtime_upload& upload : queued_uploads)
+    {
+        destroy_runtime_upload(vma_allocator, upload);
+    }
+    queued_uploads.clear();
+    for (auto& [gate, upload] : in_flight_uploads)
+    {
+        destroy_runtime_upload(vma_allocator, upload);
+    }
+    in_flight_uploads.clear();
+    if (vma_allocator != VK_NULL_HANDLE && arena_vertex_buffer != VK_NULL_HANDLE)
+    {
+        vmaDestroyBuffer(vma_allocator, arena_vertex_buffer, arena_vertex_allocation);
+        arena_vertex_buffer = VK_NULL_HANDLE;
+    }
+    if (vma_allocator != VK_NULL_HANDLE && arena_index_buffer != VK_NULL_HANDLE)
+    {
+        vmaDestroyBuffer(vma_allocator, arena_index_buffer, arena_index_allocation);
+        arena_index_buffer = VK_NULL_HANDLE;
+    }
     frame_graph.reset();
     if (vma_allocator != VK_NULL_HANDLE)
     {
@@ -185,6 +206,11 @@ void vulkan_sample::initialize_vulkan()
     if (!create_vma_vra_objects())
     {
         throw std::runtime_error("Failed to create Vulkan vra and vma objects.");
+    }
+
+    if (!create_geometry_arena())
+    {
+        throw std::runtime_error("Failed to create geometry arena.");
     }
 
     create_drawcall_list_buffer();
@@ -635,7 +661,8 @@ bool vulkan_sample::create_pipeline()
         .depth_format                       = vk::Format::eD32Sfloat,
         .vertex_input_binding_description    = vertex_input_binding_description,
         .vertex_input_attribute_descriptions = vertex_input_attributes,
-        .descriptor_set_layouts              = {descriptor_set_layout}};
+        .descriptor_set_layouts              = {descriptor_set_layout},
+        .push_constant_ranges               = {vk::PushConstantRange{vk::ShaderStageFlagBits::eVertex, 0, sizeof(glm::mat4)}}};
     vk_pipeline_helper = std::make_unique<VulkanPipelineHelper>(pipeline_config);
     return vk_pipeline_helper->CreatePipeline(comm_vk_logical_device);
 }
@@ -702,6 +729,7 @@ vulkan_frame_status vulkan_sample::draw_frame()
     if (!vk_synchronization_helper->WaitForFence(current_fence_id))
         return vulkan_frame_status::failed;
     completed_frame = std::max(completed_frame, frame_submission_ids[frame_index]);
+    collect_deferred_resources();
 
     // get semaphores
     auto image_available_semaphore = vk_synchronization_helper->GetSemaphore(current_image_available_semaphore_id);
@@ -798,6 +826,15 @@ vulkan_frame_status vulkan_sample::draw_frame()
         return vulkan_frame_status::failed;
     }
     mesh_upload_pending = false;
+    if (runtime_upload_pending)
+    {
+        for (runtime_upload& upload : queued_uploads)
+        {
+            in_flight_uploads.emplace_back(submitted_frame - 1, std::move(upload));
+        }
+        queued_uploads.clear();
+        runtime_upload_pending = false;
+    }
 
     // present the image
     vk::PresentInfoKHR present_info{.waitSemaphoreCount = 1,
@@ -915,11 +952,15 @@ bool vulkan_sample::build_render_graph(uint32_t image_index)
     const auto extent = comm_vk_swapchain_context.swapchain_info_.extent_;
     const auto format = static_cast<uint64_t>(comm_vk_swapchain_context.swapchain_info_.surface_format_.format);
     const bool swapchain_initialized = swapchain_image_states.is_initialized(image_index);
+    // P2：runtime upload 批次并入 cache key —— 有待上传批次时编译含 RuntimeUploadPass 的图变体；
+    // upload_serial 区分连续批次，避免复用到过期 staging 句柄的旧变体。
     const uint64_t graph_cache_key = (static_cast<uint64_t>(extent.width) << 32) ^
                                      static_cast<uint64_t>(extent.height) ^
                                      (format << 2) ^
                                      (static_cast<uint64_t>(mesh_upload_pending) << 1) ^
-                                     static_cast<uint64_t>(swapchain_initialized);
+                                     static_cast<uint64_t>(swapchain_initialized) ^
+                                     (static_cast<uint64_t>(runtime_upload_pending) << 48) ^
+                                     (upload_serial << 49);
     frame_graph->begin_frame(submitted_frame, completed_frame, graph_cache_key);
     if (!frame_graph->needs_recompile())
     {
@@ -978,6 +1019,81 @@ bool vulkan_sample::build_render_graph(uint32_t image_index)
         });
     }
 
+    const VkBufferCreateInfo arena_vertex_desc{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = arena_vertex_allocation_info.size,
+        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    const VkBufferCreateInfo arena_index_desc{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = arena_index_allocation_info.size,
+        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+
+    // P2：运行时加载对象的上传通道。每个批次一个 copy pass：
+    // 各对象 staging -> geometry arena（与 legacy UploadPass 同一模式，一次性拷贝）。
+    if (runtime_upload_pending)
+    {
+        frame_graph->add_copy_pass("RuntimeUploadPass", [this, arena_vertex_desc, arena_index_desc](setup_context& ctx)
+        {
+            rg_arena_vertex = ctx.create_buffer("ArenaVertex", arena_vertex_desc, render_graph::resource_lifetime_class::imported);
+            rg_arena_index  = ctx.create_buffer("ArenaIndex", arena_index_desc, render_graph::resource_lifetime_class::imported);
+            const render_graph::buffer_access_desc transfer_src{
+                .usage = render_graph::buffer_usage::TRANSFER_SRC,
+                .domain = render_graph::pipeline_domain::copy,
+            };
+            const render_graph::buffer_access_desc transfer_dst{
+                .usage = render_graph::buffer_usage::TRANSFER_DST,
+                .domain = render_graph::pipeline_domain::copy,
+            };
+            rg_runtime_stagings.clear();
+            rg_runtime_stagings.reserve(queued_uploads.size());
+            for (std::size_t i = 0; i < queued_uploads.size(); ++i)
+            {
+                const VkBufferCreateInfo staging_desc_i{
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                    .size = queued_uploads[i].staging_size,
+                    .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                };
+                const render_graph::buffer_handle handle =
+                    ctx.create_buffer(std::string("RuntimeStaging") + std::to_string(i),
+                                      staging_desc_i,
+                                      render_graph::resource_lifetime_class::imported);
+                ctx.set_initial_state(handle,
+                                      transfer_src,
+                                      render_graph::access_type::read,
+                                      render_graph::contents_policy::preserve);
+                ctx.read_buffer(handle, transfer_src);
+                rg_runtime_stagings.push_back(handle);
+            }
+            ctx.write_buffer(rg_arena_vertex, transfer_dst);
+            ctx.write_buffer(rg_arena_index, transfer_dst);
+        }, [this](execute_context& ctx)
+        {
+            ++run_statistics.upload_pass_executions;
+            const VkBuffer arena_v = ctx.resources.buffer(rg_arena_vertex);
+            const VkBuffer arena_i = ctx.resources.buffer(rg_arena_index);
+            for (std::size_t i = 0; i < queued_uploads.size(); ++i)
+            {
+                const runtime_upload& upload = queued_uploads[i];
+                const VkBuffer staging       = ctx.resources.buffer(rg_runtime_stagings[i]);
+                if (!upload.vertex_copies.empty())
+                {
+                    vkCmdCopyBuffer(ctx.commands(), staging, arena_v,
+                                    static_cast<uint32_t>(upload.vertex_copies.size()), upload.vertex_copies.data());
+                }
+                if (!upload.index_copies.empty())
+                {
+                    vkCmdCopyBuffer(ctx.commands(), staging, arena_i,
+                                    static_cast<uint32_t>(upload.index_copies.size()), upload.index_copies.data());
+                }
+            }
+        });
+    }
+
     const VkImageCreateInfo swapchain_desc{
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
@@ -1005,7 +1121,7 @@ bool vulkan_sample::build_render_graph(uint32_t image_index)
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
 
-    frame_graph->add_raster_pass("DrawPass", [this, local_desc, uniform_desc, swapchain_desc, depth_desc, extent, swapchain_initialized](setup_context& ctx)
+    frame_graph->add_raster_pass("DrawPass", [this, local_desc, uniform_desc, swapchain_desc, depth_desc, extent, swapchain_initialized, arena_vertex_desc, arena_index_desc](setup_context& ctx)
     {
         const render_graph::buffer_access_desc mesh_read{
             .usage = render_graph::buffer_usage::VERTEX_BUFFER | render_graph::buffer_usage::INDEX_BUFFER,
@@ -1020,6 +1136,24 @@ bool vulkan_sample::build_render_graph(uint32_t image_index)
                                   render_graph::contents_policy::preserve);
         }
         ctx.read_buffer(rg_local, mesh_read);
+
+        // P2：geometry arena（运行时对象）。无待上传批次时由本 pass 创建句柄并声明初始状态；
+        // 有批次时句柄由 RuntimeUploadPass 创建（初始状态 = 本图内先写后读）。
+        if (!runtime_upload_pending)
+        {
+            rg_arena_vertex = ctx.create_buffer("ArenaVertex", arena_vertex_desc, render_graph::resource_lifetime_class::imported);
+            rg_arena_index  = ctx.create_buffer("ArenaIndex", arena_index_desc, render_graph::resource_lifetime_class::imported);
+            ctx.set_initial_state(rg_arena_vertex,
+                                  mesh_read,
+                                  render_graph::access_type::read,
+                                  render_graph::contents_policy::preserve);
+            ctx.set_initial_state(rg_arena_index,
+                                  mesh_read,
+                                  render_graph::access_type::read,
+                                  render_graph::contents_policy::preserve);
+        }
+        ctx.read_buffer(rg_arena_vertex, mesh_read);
+        ctx.read_buffer(rg_arena_index, mesh_read);
 
         rg_uniform = ctx.create_buffer("FrameUniform", uniform_desc, render_graph::resource_lifetime_class::imported);
         const render_graph::buffer_access_desc uniform_read{
@@ -1099,11 +1233,49 @@ bool vulkan_sample::build_render_graph(uint32_t image_index)
                              local_host_batch_handle[vra::VraBuiltInBatchIds::GPU_Only].offsets[index_buffer_id],
                              VK_INDEX_TYPE_UINT32);
 
+        // P2：对象级 model 走 push constant；legacy 轨道恒为 identity（保持原行为）
+        const glm::mat4 identity_model(1.0F);
+        vkCmdPushConstants(commands,
+                           static_cast<VkPipelineLayout>(vk_pipeline_helper->GetPipelineLayout()),
+                           VK_SHADER_STAGE_VERTEX_BIT,
+                           0,
+                           sizeof(glm::mat4),
+                           &identity_model);
+
         for (const auto& mesh : mesh_list)
         {
             for (const auto& primitive : mesh.primitives)
             {
                 vkCmdDrawIndexed(commands, primitive.index_count, 1, primitive.first_index, 0, 0);
+            }
+        }
+
+        // P2 双轨绘制：可见的运行时对象逐个 push model 后绘制其 arena 区间
+        if (scene_objects != nullptr)
+        {
+            const VkBuffer arena_vertex = ctx.resources.buffer(rg_arena_vertex);
+            const VkBuffer arena_index  = ctx.resources.buffer(rg_arena_index);
+            const VkDeviceSize arena_base_offset = 0;
+            vkCmdBindVertexBuffers(commands, 0, 1, &arena_vertex, &arena_base_offset);
+            vkCmdBindIndexBuffer(commands, arena_index, 0, VK_INDEX_TYPE_UINT32);
+
+            for (const scene::scene_object* object : scene_objects->objects())
+            {
+                if (!object->visible || object->draws.empty())
+                {
+                    continue;
+                }
+                const glm::mat4 model = scene::model_matrix(object->transform);
+                vkCmdPushConstants(commands,
+                                   static_cast<VkPipelineLayout>(vk_pipeline_helper->GetPipelineLayout()),
+                                   VK_SHADER_STAGE_VERTEX_BIT,
+                                   0,
+                                   sizeof(glm::mat4),
+                                   &model);
+                for (const scene::draw_range& range : object->draws)
+                {
+                    vkCmdDrawIndexed(commands, range.index_count, 1, range.first_index, range.vertex_offset, 0);
+                }
             }
         }
     });
@@ -1142,6 +1314,15 @@ bool vulkan_sample::record_command(uint32_t image_index, const std::string& comm
         if (mesh_upload_pending)
         {
             frame_graph->bind_imported_buffer(rg_staging, static_cast<VkBuffer>(staging_buffer));
+        }
+        frame_graph->bind_imported_buffer(rg_arena_vertex, static_cast<VkBuffer>(arena_vertex_buffer));
+        frame_graph->bind_imported_buffer(rg_arena_index, static_cast<VkBuffer>(arena_index_buffer));
+        if (runtime_upload_pending)
+        {
+            for (std::size_t i = 0; i < queued_uploads.size(); ++i)
+            {
+                frame_graph->bind_imported_buffer(rg_runtime_stagings[i], static_cast<VkBuffer>(queued_uploads[i].staging));
+            }
         }
         frame_graph->bind_imported_image(rg_swapchain,
                                          static_cast<VkImage>(comm_vk_swapchain_context.swapchain_images_[image_index]));
@@ -1302,4 +1483,268 @@ void vulkan_sample::create_drawcall_list_buffer()
     // uv1
     vertex_input_attributes.emplace_back(
         vk::VertexInputAttributeDescription{.location = 5, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(gltf::Vertex, uv1)});
+}
+
+
+// ------------------------------------
+// P2 geometry arena / runtime upload
+// ------------------------------------
+
+namespace
+{
+    // 运行时对象的 device-local arena 容量；超出后 stage_runtime_geometry 报错（扩容/碎片整理属后续工作）
+    constexpr VkDeviceSize arena_vertex_capacity = 64ull * 1024 * 1024; // 64 MB
+    constexpr VkDeviceSize arena_index_capacity  = 16ull * 1024 * 1024; // 16 MB
+
+    // bump + 空闲链表（first-fit）分配；失败返回 false
+    bool arena_alloc(VkDeviceSize size,
+                     VkDeviceSize alignment,
+                     VkDeviceSize& cursor,
+                     VkDeviceSize capacity,
+                     std::vector<std::pair<VkDeviceSize, VkDeviceSize>>& free_list,
+                     VkDeviceSize& out_offset)
+    {
+        for (std::size_t i = 0; i < free_list.size(); ++i)
+        {
+            const VkDeviceSize span_end = free_list[i].first + free_list[i].second;
+            const VkDeviceSize aligned  = (free_list[i].first + alignment - 1) / alignment * alignment;
+            if (aligned + size > span_end)
+            {
+                continue;
+            }
+            out_offset                    = aligned;
+            const VkDeviceSize head_bytes = aligned - free_list[i].first;
+            const VkDeviceSize tail_bytes = span_end - (aligned + size);
+            free_list.erase(free_list.begin() + static_cast<std::ptrdiff_t>(i));
+            if (tail_bytes > 0)
+            {
+                free_list.emplace_back(aligned + size, tail_bytes);
+            }
+            if (head_bytes >= alignment)
+            {
+                free_list.emplace_back(aligned - head_bytes, head_bytes);
+            }
+            return true;
+        }
+        const VkDeviceSize aligned = (cursor + alignment - 1) / alignment * alignment;
+        if (aligned + size > capacity)
+        {
+            return false;
+        }
+        out_offset = aligned;
+        cursor     = aligned + size;
+        return true;
+    }
+} // namespace
+
+bool vulkan_sample::create_geometry_arena()
+{
+    VmaAllocationCreateInfo allocation_create_info{};
+    allocation_create_info.usage = VMA_MEMORY_USAGE_AUTO;
+
+    VkBufferCreateInfo vertex_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    vertex_info.size        = arena_vertex_capacity;
+    vertex_info.usage       = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    vertex_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (!Logger::LogWithVkResult(vmaCreateBuffer(vma_allocator,
+                                                 &vertex_info,
+                                                 &allocation_create_info,
+                                                 reinterpret_cast<VkBuffer*>(&arena_vertex_buffer),
+                                                 &arena_vertex_allocation,
+                                                 &arena_vertex_allocation_info),
+                                 "Failed to create geometry arena vertex buffer",
+                                 "Succeeded in creating geometry arena vertex buffer"))
+    {
+        return false;
+    }
+
+    VkBufferCreateInfo index_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    index_info.size        = arena_index_capacity;
+    index_info.usage       = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    index_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    return Logger::LogWithVkResult(vmaCreateBuffer(vma_allocator,
+                                                   &index_info,
+                                                   &allocation_create_info,
+                                                   reinterpret_cast<VkBuffer*>(&arena_index_buffer),
+                                                   &arena_index_allocation,
+                                                   &arena_index_allocation_info),
+                                   "Failed to create geometry arena index buffer",
+                                   "Succeeded in creating geometry arena index buffer");
+}
+
+void vulkan_sample::destroy_runtime_upload(VmaAllocator allocator, runtime_upload& upload) noexcept
+{
+    if (allocator != VK_NULL_HANDLE && upload.staging != VK_NULL_HANDLE)
+    {
+        vmaDestroyBuffer(allocator, upload.staging, upload.staging_allocation);
+    }
+    upload.staging            = VK_NULL_HANDLE;
+    upload.staging_allocation = VK_NULL_HANDLE;
+}
+
+bool vulkan_sample::stage_runtime_geometry(const std::vector<gltf::PerDrawCallData>& primitives, staged_geometry& out)
+{
+    if (primitives.empty())
+    {
+        Logger::LogError("stage_runtime_geometry: empty primitive list");
+        return false;
+    }
+
+    struct primitive_span
+    {
+        VkDeviceSize vertex_offset = 0;
+        VkDeviceSize vertex_bytes  = 0;
+        VkDeviceSize index_offset  = 0;
+        VkDeviceSize index_bytes   = 0;
+    };
+    std::vector<primitive_span> spans(primitives.size());
+    staged_geometry result;
+
+    // 1) 分配 arena 区间；任一失败则回滚本批次已分配区间
+    const auto rollback = [this, &result]()
+    {
+        for (const auto& span : result.vertex_spans)
+        {
+            arena_vertex_free_list.push_back(span);
+        }
+        for (const auto& span : result.index_spans)
+        {
+            arena_index_free_list.push_back(span);
+        }
+    };
+
+    for (std::size_t i = 0; i < primitives.size(); ++i)
+    {
+        spans[i].vertex_bytes = sizeof(gltf::Vertex) * primitives[i].vertices.size();
+        spans[i].index_bytes  = sizeof(uint32_t) * primitives[i].indices.size();
+        if (spans[i].vertex_bytes == 0 || spans[i].index_bytes == 0)
+        {
+            Logger::LogError("stage_runtime_geometry: primitive with empty vertex/index data");
+            rollback();
+            return false;
+        }
+        // 顶点区间按 sizeof(Vertex) 对齐，保证 vertex_offset 可整除换算为顶点下标
+        if (!arena_alloc(spans[i].vertex_bytes, sizeof(gltf::Vertex), arena_vertex_cursor, arena_vertex_capacity,
+                         arena_vertex_free_list, spans[i].vertex_offset) ||
+            !arena_alloc(spans[i].index_bytes, sizeof(uint32_t), arena_index_cursor, arena_index_capacity,
+                         arena_index_free_list, spans[i].index_offset))
+        {
+            Logger::LogError("stage_runtime_geometry: geometry arena capacity exceeded");
+            rollback();
+            return false;
+        }
+        result.vertex_spans.emplace_back(spans[i].vertex_offset, spans[i].vertex_bytes);
+        result.index_spans.emplace_back(spans[i].index_offset, spans[i].index_bytes);
+    }
+
+    // 2) 创建并填充 staging（布局：全部顶点块在前，全部索引块在后）
+    VkDeviceSize total_vertex_bytes = 0;
+    VkDeviceSize total_index_bytes  = 0;
+    for (const primitive_span& span : spans)
+    {
+        total_vertex_bytes += span.vertex_bytes;
+        total_index_bytes += span.index_bytes;
+    }
+
+    runtime_upload upload;
+    upload.staging_size = total_vertex_bytes + total_index_bytes;
+    VkBufferCreateInfo staging_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    staging_info.size        = upload.staging_size;
+    staging_info.usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    staging_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VmaAllocationCreateInfo staging_alloc_info{};
+    staging_alloc_info.usage         = VMA_MEMORY_USAGE_AUTO;
+    staging_alloc_info.flags         = vra_data_batcher->GetSuggestVmaMemoryFlags(vra::VraDataMemoryPattern::CPU_GPU,
+                                                                                  vra::VraDataUpdateRate::RarelyOrNever);
+    staging_alloc_info.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    if (vmaCreateBuffer(vma_allocator,
+                        &staging_info,
+                        &staging_alloc_info,
+                        reinterpret_cast<VkBuffer*>(&upload.staging),
+                        &upload.staging_allocation,
+                        nullptr) != VK_SUCCESS)
+    {
+        Logger::LogError("stage_runtime_geometry: failed to create staging buffer");
+        rollback();
+        return false;
+    }
+
+    void* mapped = nullptr;
+    vmaMapMemory(vma_allocator, upload.staging_allocation, &mapped);
+    auto* staging_bytes = static_cast<uint8_t*>(mapped);
+    VkDeviceSize staging_vertex_cursor = 0;
+    VkDeviceSize staging_index_cursor  = total_vertex_bytes;
+    upload.vertex_copies.reserve(primitives.size());
+    upload.index_copies.reserve(primitives.size());
+    for (std::size_t i = 0; i < primitives.size(); ++i)
+    {
+        std::memcpy(staging_bytes + staging_vertex_cursor, primitives[i].vertices.data(), spans[i].vertex_bytes);
+        upload.vertex_copies.push_back(VkBufferCopy{staging_vertex_cursor, spans[i].vertex_offset, spans[i].vertex_bytes});
+        staging_vertex_cursor += spans[i].vertex_bytes;
+
+        std::memcpy(staging_bytes + staging_index_cursor, primitives[i].indices.data(), spans[i].index_bytes);
+        upload.index_copies.push_back(VkBufferCopy{staging_index_cursor, spans[i].index_offset, spans[i].index_bytes});
+        staging_index_cursor += spans[i].index_bytes;
+    }
+    vmaUnmapMemory(vma_allocator, upload.staging_allocation);
+    vmaFlushAllocation(vma_allocator, upload.staging_allocation, 0, VK_WHOLE_SIZE);
+
+    // 3) 回填 draw ranges（vkCmdDrawIndexed 语义：first_index 单位 index，vertex_offset 单位 vertex）
+    result.draws.reserve(primitives.size());
+    for (std::size_t i = 0; i < primitives.size(); ++i)
+    {
+        result.draws.push_back(scene::draw_range{
+            .first_index   = static_cast<uint32_t>(spans[i].index_offset / sizeof(uint32_t)),
+            .index_count   = static_cast<uint32_t>(primitives[i].indices.size()),
+            .vertex_offset = static_cast<int32_t>(spans[i].vertex_offset / sizeof(gltf::Vertex)),
+        });
+    }
+
+    // 4) 入队，等待并入下一帧的图变体
+    queued_uploads.push_back(std::move(upload));
+    runtime_upload_pending = true;
+    ++upload_serial;
+    out = std::move(result);
+    return true;
+}
+
+void vulkan_sample::retire_runtime_geometry(staged_geometry geometry)
+{
+    if (geometry.vertex_spans.empty() && geometry.index_spans.empty())
+    {
+        return;
+    }
+    deferred_frees.push_back(deferred_arena_free{submitted_frame, std::move(geometry)});
+}
+
+void vulkan_sample::collect_deferred_resources()
+{
+    // staging：对应提交帧完成后销毁（in_flight 按提交顺序入队，front 最旧）
+    while (!in_flight_uploads.empty() && completed_frame >= in_flight_uploads.front().first)
+    {
+        destroy_runtime_upload(vma_allocator, in_flight_uploads.front().second);
+        in_flight_uploads.pop_front();
+    }
+
+    // arena 区间：对应提交帧完成后回到空闲链表
+    std::size_t kept = 0;
+    for (std::size_t i = 0; i < deferred_frees.size(); ++i)
+    {
+        if (completed_frame >= deferred_frees[i].gate_frame)
+        {
+            for (const auto& span : deferred_frees[i].geometry.vertex_spans)
+            {
+                arena_vertex_free_list.push_back(span);
+            }
+            for (const auto& span : deferred_frees[i].geometry.index_spans)
+            {
+                arena_index_free_list.push_back(span);
+            }
+        }
+        else
+        {
+            deferred_frees[kept++] = std::move(deferred_frees[i]);
+        }
+    }
+    deferred_frees.resize(kept);
 }

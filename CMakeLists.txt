@@ -167,6 +167,16 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME cglab.camera_rig COMMAND cglab_camera_rig_tests)
 
+    add_executable(cglab_scene_registry_tests
+        src/unit_test/scene_registry_test.cpp
+    )
+    target_include_directories(cglab_scene_registry_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(cglab_scene_registry_tests PRIVATE glm::glm)
+    if(MSVC)
+        target_compile_options(cglab_scene_registry_tests PRIVATE /FS /utf-8)
+    endif()
+    add_test(NAME cglab.scene_registry COMMAND cglab_scene_registry_tests)
+
     add_executable(cglab_control_plane_protocol_tests
         src/control_plane/json_rpc.cpp
         src/unit_test/control_plane_protocol_test.cpp

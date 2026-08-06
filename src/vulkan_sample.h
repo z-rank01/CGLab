@@ -3,6 +3,8 @@
 #include <VkBootstrap.h>
 
 #include <atomic>
+#include <deque>
+#include <utility>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -23,6 +25,7 @@
 #include "render_graph/system.h"
 #include "render_graph/vk_backend.h"
 #include "swapchain_image_state.h"
+#include "scene/scene_registry.h"
 
 struct window_config
 {
@@ -70,6 +73,31 @@ struct vulkan_run_statistics
     std::uint64_t presented_frames = 0;
 };
 
+// P2：一次运行时几何上传的登记/回收句柄（draws 供 registry 绘制，spans 供 arena 回收）
+struct staged_geometry
+{
+    std::vector<scene::draw_range> draws;
+    std::vector<std::pair<VkDeviceSize, VkDeviceSize>> vertex_spans; // 字节区间（offset, size）
+    std::vector<std::pair<VkDeviceSize, VkDeviceSize>> index_spans;
+};
+
+// 单批次 staging 上传（staging buffer + copy regions）
+struct runtime_upload
+{
+    vk::Buffer staging = VK_NULL_HANDLE;
+    VmaAllocation staging_allocation = VK_NULL_HANDLE;
+    std::vector<VkBufferCopy> vertex_copies; // staging -> arena vertex
+    std::vector<VkBufferCopy> index_copies;  // staging -> arena index
+    VkDeviceSize staging_size = 0;
+};
+
+// frames-in-flight 门控的 arena 区间回收
+struct deferred_arena_free
+{
+    std::uint64_t gate_frame = 0;
+    staged_geometry geometry;
+};
+
 class vulkan_sample
 {
 public:
@@ -92,6 +120,19 @@ public:
     void set_window(interface::window* sdl_window) { this->window = sdl_window; }
     void set_camera_container(interface::camera_container* container) { camera_container = container; }
     void set_camera_index(size_t index) { camera_entity_index = index; }
+
+    // --- P2 scene system ---
+    // 场景注册表由 app_sample 持有；渲染侧只读（仅主线程在帧边界外无并发写）。
+    void set_scene_registry(scene::scene_registry* registry) { scene_objects = registry; }
+
+    // 把一组图元（CPU 数据）staging 进 geometry arena：分配区间、创建 staging、入队待上传批次。
+    // 成功后 draws/spans 回填，对象登记进 registry 后即可被 DrawPass 双轨绘制。
+    // arena 容量不足返回 false（已分配区间会回滚）。
+    [[nodiscard]] bool stage_runtime_geometry(const std::vector<gltf::PerDrawCallData>& primitives, staged_geometry& out);
+
+    // 回收运行时几何区间（frames-in-flight 门控，不立即复用）。
+    void retire_runtime_geometry(staged_geometry geometry);
+
 
 private:
 #define FRAME_INDEX_TO_UNIFORM_BUFFER_ID(frame_index) ((frame_index) + 4)
@@ -174,6 +215,12 @@ private:
     bool build_render_graph(uint32_t image_index);
     void update_uniform_buffer(uint32_t current_frame_index);
 
+    // --- P2 geometry arena / runtime upload ---
+    bool create_geometry_arena();
+    void collect_deferred_resources();
+    static void destroy_runtime_upload(VmaAllocator allocator, runtime_upload& upload) noexcept;
+
+
     // -------------------------
 
     // --- Common Templates ---
@@ -222,6 +269,32 @@ private:
     bool mesh_upload_pending = true;
     swapchain_image_state_tracker swapchain_image_states;
     vulkan_run_statistics run_statistics;
+    // --- P2 scene system / geometry arena ---
+    scene::scene_registry* scene_objects = nullptr;
+
+    // 运行时对象的 device-local 大块显存（bump 分配 + 空闲链表回收）
+    vk::Buffer arena_vertex_buffer = VK_NULL_HANDLE;
+    vk::Buffer arena_index_buffer  = VK_NULL_HANDLE;
+    VmaAllocation arena_vertex_allocation = VK_NULL_HANDLE;
+    VmaAllocation arena_index_allocation  = VK_NULL_HANDLE;
+    VmaAllocationInfo arena_vertex_allocation_info{};
+    VmaAllocationInfo arena_index_allocation_info{};
+    VkDeviceSize arena_vertex_cursor = 0;
+    VkDeviceSize arena_index_cursor  = 0;
+    std::vector<std::pair<VkDeviceSize, VkDeviceSize>> arena_vertex_free_list;
+    std::vector<std::pair<VkDeviceSize, VkDeviceSize>> arena_index_free_list;
+
+    // 待并入下一帧图变体的上传批次；提交后按 completed_frame 延迟销毁 staging
+    std::vector<runtime_upload> queued_uploads;
+    std::deque<std::pair<std::uint64_t, runtime_upload>> in_flight_uploads;
+    bool runtime_upload_pending = false;
+    std::uint64_t upload_serial = 0;
+    std::vector<deferred_arena_free> deferred_frees;
+
+    render_graph::buffer_handle rg_arena_vertex{};
+    render_graph::buffer_handle rg_arena_index{};
+    std::vector<render_graph::buffer_handle> rg_runtime_stagings;
+
     uint64_t submitted_frame = 1;
     uint64_t completed_frame = 0;
 };

@@ -198,6 +198,106 @@ namespace
         check(hello["method"] == "session.hello", "hello method");
         check(hello["params"]["protocol_version"] == control_plane::protocol_version, "hello version");
     }
+
+    void test_dispatch_scene_methods()
+    {
+        using control_plane::command_kind;
+        using control_plane::dispatch_outcome;
+
+        // load_asset：合法 path 入队；空 path / 缺失 path 拒绝
+        const auto load = control_plane::parse_request(R"({"id":30,"method":"scene.load_asset","params":{"path":"assets/a.gltf"}})");
+        const auto load_cmd = control_plane::dispatch_request("c", load.request);
+        check(load_cmd.outcome == dispatch_outcome::queue_command, "load_asset queued");
+        check(load_cmd.command.kind == command_kind::scene_load_asset, "load_asset kind");
+        check(load_cmd.command.params["path"] == "assets/a.gltf", "load_asset path");
+
+        const auto load_empty = control_plane::parse_request(R"({"id":31,"method":"scene.load_asset","params":{"path":""}})");
+        check(control_plane::dispatch_request("c", load_empty.request).response["error"]["code"] ==
+                  control_plane::error_invalid_params,
+              "load_asset empty path rejected");
+
+        // unload：合法 id 入队；字符串 id 拒绝
+        const auto unload = control_plane::parse_request(R"({"id":32,"method":"scene.unload","params":{"id":2}})");
+        const auto unload_cmd = control_plane::dispatch_request("c", unload.request);
+        check(unload_cmd.command.kind == command_kind::scene_unload, "unload kind");
+        check(unload_cmd.command.params["id"] == 2, "unload id");
+
+        const auto unload_bad = control_plane::parse_request(R"({"id":33,"method":"scene.unload","params":{"id":"2"}})");
+        check(control_plane::dispatch_request("c", unload_bad.request).response["error"]["code"] ==
+                  control_plane::error_invalid_params,
+              "unload string id rejected");
+
+        // set_visibility：缺 visible / 非布尔拒绝
+        const auto vis = control_plane::parse_request(R"({"id":34,"method":"scene.set_visibility","params":{"id":1,"visible":false}})");
+        const auto vis_cmd = control_plane::dispatch_request("c", vis.request);
+        check(vis_cmd.command.kind == command_kind::scene_set_visibility, "set_visibility kind");
+        check(vis_cmd.command.params["visible"] == false, "set_visibility value");
+
+        const auto vis_bad = control_plane::parse_request(R"({"id":35,"method":"scene.set_visibility","params":{"id":1}})");
+        check(control_plane::dispatch_request("c", vis_bad.request).response["error"]["code"] ==
+                  control_plane::error_invalid_params,
+              "set_visibility missing visible rejected");
+
+        // set_transform：部分字段；空字段 / 非 3 元数组拒绝
+        const auto tf = control_plane::parse_request(
+            R"({"id":36,"method":"scene.set_transform","params":{"id":1,"position":[0,1,2],"scale":[2,2,2]}})");
+        const auto tf_cmd = control_plane::dispatch_request("c", tf.request);
+        check(tf_cmd.command.kind == command_kind::scene_set_transform, "set_transform kind");
+        check(tf_cmd.command.params["position"][1] == 1.0, "set_transform position");
+        check(!tf_cmd.command.params.contains("rotation"), "set_transform omits absent fields");
+
+        const auto tf_empty = control_plane::parse_request(R"({"id":37,"method":"scene.set_transform","params":{"id":1}})");
+        check(control_plane::dispatch_request("c", tf_empty.request).response["error"]["code"] ==
+                  control_plane::error_invalid_params,
+              "set_transform no fields rejected");
+
+        const auto tf_bad = control_plane::parse_request(
+            R"({"id":38,"method":"scene.set_transform","params":{"id":1,"position":[0,1]}})");
+        check(control_plane::dispatch_request("c", tf_bad.request).response["error"]["code"] ==
+                  control_plane::error_invalid_params,
+              "set_transform short vec3 rejected");
+
+        // select：id 或 null；缺 id / 字符串拒绝
+        const auto sel = control_plane::parse_request(R"({"id":39,"method":"scene.select","params":{"id":3}})");
+        const auto sel_cmd = control_plane::dispatch_request("c", sel.request);
+        check(sel_cmd.command.kind == command_kind::scene_select, "select kind");
+        check(sel_cmd.command.params["id"] == 3, "select id");
+
+        const auto sel_null = control_plane::parse_request(R"({"id":40,"method":"scene.select","params":{"id":null}})");
+        const auto sel_null_cmd = control_plane::dispatch_request("c", sel_null.request);
+        check(sel_null_cmd.command.kind == command_kind::scene_select, "select null kind");
+        check(sel_null_cmd.command.params["id"].is_null(), "select null clears");
+
+        const auto sel_bad = control_plane::parse_request(R"({"id":41,"method":"scene.select","params":{}})");
+        check(control_plane::dispatch_request("c", sel_bad.request).response["error"]["code"] ==
+                  control_plane::error_invalid_params,
+              "select missing id rejected");
+
+        // list
+        const auto list = control_plane::parse_request(R"({"id":42,"method":"scene.list"})");
+        check(control_plane::dispatch_request("c", list.request).command.kind == command_kind::scene_list,
+              "list kind");
+
+        // capabilities 覆盖 scene.*
+        const auto init = control_plane::parse_request(
+            R"({"id":43,"method":"session.init","params":{"protocol_version":1}})");
+        const auto init_resp = control_plane::dispatch_request("c", init.request);
+        const auto& caps = init_resp.response["result"]["capabilities"];
+        const auto has_cap = [&caps](const char* name)
+        {
+            for (const auto& cap : caps)
+            {
+                if (cap == name)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+        check(has_cap("scene.load_asset"), "capabilities include scene.load_asset");
+        check(has_cap("scene.list"), "capabilities include scene.list");
+        check(has_cap("telemetry.scene"), "capabilities include telemetry.scene");
+    }
 } // namespace
 
 int main()
@@ -212,6 +312,7 @@ int main()
     test_dispatch_unknown_method();
     test_dispatch_camera_methods();
     test_hello_notification();
+    test_dispatch_scene_methods();
 
     if (failures != 0)
     {

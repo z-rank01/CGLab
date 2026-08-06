@@ -66,6 +66,12 @@ namespace control_plane
         camera_get_state,     // camera.get_state
         camera_bookmark_save, // camera.bookmark.save {slot: 0..7}
         camera_bookmark_goto, // camera.bookmark.goto {slot: 0..7}
+        scene_load_asset,     // scene.load_asset {path: string}（异步加载，完成时回响应）
+        scene_unload,         // scene.unload {id: uint}
+        scene_set_visibility, // scene.set_visibility {id: uint, visible: bool}
+        scene_set_transform,  // scene.set_transform {id: uint, position?/rotation?/scale?: [x,y,z]}
+        scene_select,         // scene.select {id: uint|null}
+        scene_list,           // scene.list
     };
 
     struct engine_command
