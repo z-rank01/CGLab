@@ -1,13 +1,13 @@
 #include "app_sample.h"
 
+#include <gltf/gltf_loader.h>
+#include <gltf/gltf_parser.h>
+
 #include <algorithm>
 #include <filesystem>
 #include <stdexcept>
 #include <thread>
 #include <utility>
-
-#include <gltf/gltf_loader.h>
-#include <gltf/gltf_parser.h>
 
 #include "_interface/sdl_window.h" // For default implementation
 #include "utility/logger.h"
@@ -18,12 +18,11 @@ namespace
     constexpr float telemetry_interval_seconds = 0.1F;
     // 异步加载队列上限：溢出直接报错，避免 worker 无限积压
     constexpr std::size_t max_pending_loads = 64;
-}
+} // namespace
 
-app_sample::app_sample(engine_config config, control_plane::control_plane_config ui_config)
-    : general_config(std::move(config)), ui_config(ui_config)
+app_sample::app_sample(engine_config config, control_plane::control_plane_config ui_config) : general_config(std::move(config)), ui_config(ui_config)
 {
-    vulkan_instance = std::make_unique<vulkan_sample>(general_config);
+    vulkan_instance   = std::make_unique<vulkan_sample>(general_config);
     validation_errors = vulkan_instance->validation_counter();
 }
 
@@ -83,8 +82,7 @@ void app_sample::enqueue_load(load_job job)
         {
             if (control_plane)
             {
-                control_plane->post_response(job.client_id,
-                                             control_plane::make_error(job.rpc_id, -32000, "Load queue is full"));
+                control_plane->post_response(job.client_id, control_plane::make_error(job.rpc_id, -32000, "Load queue is full"));
             }
             return;
         }
@@ -188,8 +186,7 @@ void app_sample::drain_completed_loads()
         if (!vulkan_instance->stage_runtime_geometry(result.primitives, geometry))
         {
             control_plane->post_response(result.client_id,
-                                         control_plane::make_error(result.rpc_id, -32000,
-                                                                   "scene.load_asset failed: geometry arena staging error"));
+                                         control_plane::make_error(result.rpc_id, -32000, "scene.load_asset failed: geometry arena staging error"));
             continue;
         }
 
@@ -233,32 +230,30 @@ void app_sample::handle_scene_command(const control_plane::engine_command& comma
     {
     case command_kind::scene_load_asset:
     {
-        enqueue_load(load_job{command.params["path"].get<std::string>(), command.client_id, command.id});
+        enqueue_load(load_job{.path = command.params["path"].get<std::string>(), .client_id = command.client_id, .rpc_id = command.id});
         break;
     }
     case command_kind::scene_unload:
     {
-        const scene::object_id id = command.params["id"].get<scene::object_id>();
+        const scene::object_id id         = command.params["id"].get<scene::object_id>();
         const scene::scene_object* object = scene_registry.find(id);
         if (object == nullptr)
         {
             control_plane->post_response(command.client_id,
-                                         control_plane::make_error(command.id, -32602,
-                                                                   "Unknown scene object id " + std::to_string(id)));
+                                         control_plane::make_error(command.id, -32602, "Unknown scene object id " + std::to_string(id)));
             break;
         }
         if (object->read_only)
         {
-            control_plane->post_response(command.client_id,
-                                         control_plane::make_error(command.id, -32602,
-                                                                   "Scene object " + std::to_string(id) + " is read-only (startup asset)"));
+            control_plane->post_response(
+                command.client_id,
+                control_plane::make_error(command.id, -32602, "Scene object " + std::to_string(id) + " is read-only (startup asset)"));
             break;
         }
         if (!scene_registry.unload(id))
         {
             control_plane->post_response(command.client_id,
-                                         control_plane::make_error(command.id, -32602,
-                                                                   "Failed to unload scene object " + std::to_string(id)));
+                                         control_plane::make_error(command.id, -32602, "Failed to unload scene object " + std::to_string(id)));
             break;
         }
         if (id < runtime_geometry_slots.size() && runtime_geometry_slots[id].has_value())
@@ -266,8 +261,7 @@ void app_sample::handle_scene_command(const control_plane::engine_command& comma
             vulkan_instance->retire_runtime_geometry(std::move(*runtime_geometry_slots[id]));
             runtime_geometry_slots[id].reset();
         }
-        control_plane->post_response(command.client_id,
-                                     control_plane::make_result(command.id, {{"unloaded", true}, {"id", id}}));
+        control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"unloaded", true}, {"id", id}}));
         break;
     }
     case command_kind::scene_set_visibility:
@@ -277,41 +271,37 @@ void app_sample::handle_scene_command(const control_plane::engine_command& comma
         if (!scene_registry.set_visibility(id, visible))
         {
             control_plane->post_response(command.client_id,
-                                         control_plane::make_error(command.id, -32602,
-                                                                   "Unknown scene object id " + std::to_string(id)));
+                                         control_plane::make_error(command.id, -32602, "Unknown scene object id " + std::to_string(id)));
             break;
         }
-        control_plane->post_response(command.client_id,
-                                     control_plane::make_result(command.id, {{"id", id}, {"visible", visible}}));
+        control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"id", id}, {"visible", visible}}));
         break;
     }
     case command_kind::scene_set_transform:
     {
-        const scene::object_id id = command.params["id"].get<scene::object_id>();
+        const scene::object_id id         = command.params["id"].get<scene::object_id>();
         const scene::scene_object* object = scene_registry.find(id);
         if (object == nullptr)
         {
             control_plane->post_response(command.client_id,
-                                         control_plane::make_error(command.id, -32602,
-                                                                   "Unknown scene object id " + std::to_string(id)));
+                                         control_plane::make_error(command.id, -32602, "Unknown scene object id " + std::to_string(id)));
             break;
         }
         scene::object_transform transform = object->transform;
-        const auto read_vec3 = [&command](const char* field, glm::vec3& out)
+        const auto read_vec3              = [&command](const char* field, glm::vec3& out)
         {
             if (!command.params.contains(field))
             {
                 return;
             }
             const auto& value = command.params[field];
-            out = glm::vec3(value[0].get<float>(), value[1].get<float>(), value[2].get<float>());
+            out               = glm::vec3(value[0].get<float>(), value[1].get<float>(), value[2].get<float>());
         };
         read_vec3("position", transform.position);
         read_vec3("rotation", transform.rotation_deg);
         read_vec3("scale", transform.scale);
         (void)scene_registry.set_transform(id, transform);
-        control_plane->post_response(command.client_id,
-                                     control_plane::make_result(command.id, {{"id", id}}));
+        control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"id", id}}));
         break;
     }
     case command_kind::scene_select:
@@ -319,26 +309,22 @@ void app_sample::handle_scene_command(const control_plane::engine_command& comma
         if (command.params["id"].is_null())
         {
             (void)scene_registry.set_selected(scene::invalid_object_id);
-            control_plane->post_response(command.client_id,
-                                         control_plane::make_result(command.id, {{"selected", nullptr}}));
+            control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"selected", nullptr}}));
             break;
         }
         const scene::object_id id = command.params["id"].get<scene::object_id>();
         if (!scene_registry.set_selected(id))
         {
             control_plane->post_response(command.client_id,
-                                         control_plane::make_error(command.id, -32602,
-                                                                   "Unknown scene object id " + std::to_string(id)));
+                                         control_plane::make_error(command.id, -32602, "Unknown scene object id " + std::to_string(id)));
             break;
         }
-        control_plane->post_response(command.client_id,
-                                     control_plane::make_result(command.id, {{"selected", id}}));
+        control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"selected", id}}));
         break;
     }
     case command_kind::scene_list:
     {
-        control_plane->post_response(command.client_id,
-                                     control_plane::make_result(command.id, current_scene_state()));
+        control_plane->post_response(command.client_id, control_plane::make_result(command.id, current_scene_state()));
         break;
     }
     default:
@@ -359,39 +345,34 @@ void app_sample::handle_control_plane_commands()
         {
         case command_kind::echo:
         {
-            control_plane->post_response(command.client_id,
-                                         control_plane::make_result(command.id, {{"message", command.params["message"]}}));
+            control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"message", command.params["message"]}}));
             break;
         }
         case command_kind::frame_pause:
         {
             frame_paused = true;
-            control_plane->post_response(command.client_id,
-                                         control_plane::make_result(command.id, {{"paused", true}}));
+            control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"paused", true}}));
             break;
         }
         case command_kind::frame_resume:
         {
             frame_paused = false;
-            control_plane->post_response(command.client_id,
-                                         control_plane::make_result(command.id, {{"paused", false}}));
+            control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"paused", false}}));
             break;
         }
         case command_kind::frame_step:
         {
             const std::uint32_t steps = command.params["count"].get<std::uint32_t>();
             pending_frame_steps += steps;
-            control_plane->post_response(command.client_id,
-                                         control_plane::make_result(command.id, {{"stepped", steps}}));
+            control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"stepped", steps}}));
             break;
         }
         case command_kind::camera_set_mode:
         {
             const std::string mode = command.params["mode"].get<std::string>();
-            interface::set_camera_mode(camera_container, camera_entity_index,
-                                       mode == "orbit" ? interface::camera_mode::orbit : interface::camera_mode::fly);
-            control_plane->post_response(command.client_id,
-                                         control_plane::make_result(command.id, {{"mode", mode}}));
+            interface::set_camera_mode(
+                camera_container, camera_entity_index, mode == "orbit" ? interface::camera_mode::orbit : interface::camera_mode::fly);
+            control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"mode", mode}}));
             break;
         }
         case command_kind::camera_set_params:
@@ -429,22 +410,19 @@ void app_sample::handle_control_plane_commands()
             {
                 config.far_plane = params["far_plane"].get<float>();
             }
-            control_plane->post_response(command.client_id,
-                                         control_plane::make_result(command.id, {{"applied", params}}));
+            control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"applied", params}}));
             break;
         }
         case command_kind::camera_get_state:
         {
-            control_plane->post_response(command.client_id,
-                                         control_plane::make_result(command.id, current_camera_state()));
+            control_plane->post_response(command.client_id, control_plane::make_result(command.id, current_camera_state()));
             break;
         }
         case command_kind::camera_bookmark_save:
         {
             const std::uint32_t slot = command.params["slot"].get<std::uint32_t>();
             const bool saved         = interface::save_bookmark(camera_container, camera_entity_index, slot);
-            control_plane->post_response(command.client_id,
-                                         control_plane::make_result(command.id, {{"saved", saved}, {"slot", slot}}));
+            control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"saved", saved}, {"slot", slot}}));
             break;
         }
         case command_kind::camera_bookmark_goto:
@@ -453,14 +431,12 @@ void app_sample::handle_control_plane_commands()
             const bool started       = interface::goto_bookmark(camera_container, camera_entity_index, slot);
             if (started)
             {
-                control_plane->post_response(command.client_id,
-                                             control_plane::make_result(command.id, {{"goto", true}, {"slot", slot}}));
+                control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"goto", true}, {"slot", slot}}));
             }
             else
             {
-                control_plane->post_response(
-                    command.client_id,
-                    control_plane::make_error(command.id, -32602, "Bookmark slot " + std::to_string(slot) + " is empty"));
+                control_plane->post_response(command.client_id,
+                                             control_plane::make_error(command.id, -32602, "Bookmark slot " + std::to_string(slot) + " is empty"));
             }
             break;
         }
@@ -543,7 +519,7 @@ void app_sample::publish_scene_telemetry_if_changed()
 // fly 模式左键拾取：窗口坐标 → 相机射线 → registry AABB pick
 void app_sample::try_pick_object(float x, float y)
 {
-    int width = 0;
+    int width  = 0;
     int height = 0;
     window->get_extent(width, height);
     if (width <= 0 || height <= 0)
@@ -555,15 +531,15 @@ void app_sample::try_pick_object(float x, float y)
     const interface::camera_config& config       = camera_container.configs[camera_entity_index];
 
     // 注意使用未做 Vulkan Y 翻转的投影做反投影（拾取在标准 NDC 约定下进行）
-    const float ndc_x = (2.0F * x) / static_cast<float>(width) - 1.0F;
-    const float ndc_y = 1.0F - (2.0F * y) / static_cast<float>(height);
-    const glm::mat4 view = interface::get_view_matrix(transform);
-    const glm::mat4 proj = interface::get_projection_matrix(transform, config);
+    const float ndc_x             = (2.0F * x) / static_cast<float>(width) - 1.0F;
+    const float ndc_y             = 1.0F - (2.0F * y) / static_cast<float>(height);
+    const glm::mat4 view          = interface::get_view_matrix(transform);
+    const glm::mat4 proj          = interface::get_projection_matrix(transform, config);
     const glm::mat4 inv_view_proj = glm::inverse(proj * view);
-    const glm::vec4 near_point = inv_view_proj * glm::vec4(ndc_x, ndc_y, -1.0F, 1.0F);
-    const glm::vec4 far_point  = inv_view_proj * glm::vec4(ndc_x, ndc_y, 1.0F, 1.0F);
-    const glm::vec3 near_world = glm::vec3(near_point) / near_point.w;
-    const glm::vec3 far_world  = glm::vec3(far_point) / far_point.w;
+    const glm::vec4 near_point    = inv_view_proj * glm::vec4(ndc_x, ndc_y, -1.0F, 1.0F);
+    const glm::vec4 far_point     = inv_view_proj * glm::vec4(ndc_x, ndc_y, 1.0F, 1.0F);
+    const glm::vec3 near_world    = glm::vec3(near_point) / near_point.w;
+    const glm::vec3 far_world     = glm::vec3(far_point) / far_point.w;
 
     scene::ray pick_ray;
     pick_ray.origin    = transform.position;
@@ -574,8 +550,8 @@ void app_sample::try_pick_object(float x, float y)
     if (hit.id != scene::invalid_object_id)
     {
         const scene::scene_object* object = scene_registry.find(hit.id);
-        Logger::LogInfo("Picked scene object " + std::to_string(hit.id) + " (\"" + (object ? object->name : "?") +
-                        "\") at distance " + std::to_string(hit.distance));
+        Logger::LogInfo("Picked scene object " + std::to_string(hit.id) + " (\"" + (object ? object->name : "?") + "\") at distance " +
+                        std::to_string(hit.distance));
     }
     publish_scene_telemetry_if_changed();
 }
@@ -594,22 +570,21 @@ void app_sample::publish_frame_telemetry()
     telemetry_accumulator = 0.0F;
 
     // 帧时间指数滑动平均，抑制单帧抖动
-    smoothed_frame_time = smoothed_frame_time * 0.9F + delta_time * 0.1F;
+    smoothed_frame_time      = smoothed_frame_time * 0.9F + delta_time * 0.1F;
     const float smoothed_fps = smoothed_frame_time > 0.0F ? 1.0F / smoothed_frame_time : 0.0F;
 
     const vulkan_run_statistics stats = vulkan_instance->statistics();
-    control_plane->publish(control_plane::make_notification(
-        "telemetry.frame",
-        {
-            {"fps", smoothed_fps},
-            {"frame_time_ms", smoothed_frame_time * 1000.0F},
-            {"presented_frames", stats.presented_frames},
-            {"draw_pass_executions", stats.draw_pass_executions},
-            {"upload_pass_executions", stats.upload_pass_executions},
-            {"validation_errors", validation_error_count()},
-            {"paused", frame_paused},
-            {"camera", current_camera_state()},
-        }));
+    control_plane->publish(control_plane::make_notification("telemetry.frame",
+                                                            {
+                                                                {"fps", smoothed_fps},
+                                                                {"frame_time_ms", smoothed_frame_time * 1000.0F},
+                                                                {"presented_frames", stats.presented_frames},
+                                                                {"draw_pass_executions", stats.draw_pass_executions},
+                                                                {"upload_pass_executions", stats.upload_pass_executions},
+                                                                {"validation_errors", validation_error_count()},
+                                                                {"paused", frame_paused},
+                                                                {"camera", current_camera_state()},
+                                                            }));
 
     publish_scene_telemetry_if_changed();
 }
@@ -632,8 +607,7 @@ bool app_sample::tick(std::optional<std::uint64_t> frame_limit)
                 vulkan_instance->request_resize();
             }
             // P2：fly 模式左键 = 拾取（orbit 模式下左键是环绕旋转，不触发拾取）
-            if (event.type == interface::event_type::mouse_button_down &&
-                event.mouse_button.button == interface::mouse_button::left &&
+            if (event.type == interface::event_type::mouse_button_down && event.mouse_button.button == interface::mouse_button::left &&
                 camera_container.transforms[camera_entity_index].mode == interface::camera_mode::fly)
             {
                 try_pick_object(event.mouse_button.x, event.mouse_button.y);
@@ -708,7 +682,8 @@ std::uint32_t app_sample::validation_error_count() const noexcept
 }
 
 void app_sample::set_vertex_index_data(std::vector<gltf::PerDrawCallData> per_draw_call_data,
-                                       std::vector<uint32_t> indices, std::vector<gltf::Vertex> vertices)
+                                       std::vector<uint32_t> indices,
+                                       std::vector<gltf::Vertex> vertices)
 {
     // P2：启动资产登记为只读场景条目（GPU 数据仍走 legacy buffer，draws 为空）
     if (!vertices.empty() && scene_registry.objects().empty())
