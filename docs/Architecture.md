@@ -1,31 +1,59 @@
-## CG Lab 渲染引擎架构
+# CG Lab 渲染引擎架构
 
-> v3（2026-08）：engine runtime / Vulkan renderer 抽取完成后的 as-built 修订。
-> v2 的四层模型与 DoD/函数式准则保持不变。
+> v4（2026-08）：补充多应用组合框架、Render Graph 与渲染后端边界。
+> 本文描述当前代码，而不是目标架构草图；尚未实现的部分会明确标为后续工作。
 
-当前的渲染引擎还没有实现真正的解耦合和高性能，我的理想思维框架图应该是分层分模块，且高性能，极低耦合的。
+当前仓库采用 Vulkan-only 的渐进式架构：应用只做组合，runtime 负责通用生命周期，renderer 负责 Vulkan 和 Render Graph，engine core 保存格式无关的数据与系统。暂不建设完整 RHI。
 
-### 层
+## 文档导航
+
+- [应用层分离与多 App 框架](ApplicationFramework.md)：应用组合点、共享 runner、sample/runtime 服务和新增 App 流程。
+- [Render Graph 与渲染后端边界](RenderGraphAndRHI.md)：当前帧图、资源所有权、`render_backend` 的定位以及未来 RHI 条件。
+- [VulkanSample Render Graph 迁移](VulkanSampleRenderGraphMigration.md)：迁移细节、帧事务与 smoke contract。
+- [交互界面设计](InterfaceRedesign.md)：控制平面、Web UI 和单窗口路线。
+- [基础设施设计](InfrastructureDesign.md)：Job System/benchmark 的触发式路线。
+
+## 当前依赖方向
+
+```text
+VulkanSample / TriangleSample
+        │
+        ├── cglab_application_runner
+        │          └── cglab_framework_runtime
+        │                    ├── cglab_engine_core
+        │                    ├── cglab_platform_sdl
+        │                    ├── cglab_asset_gltf
+        │                    └── control_plane
+        │
+        └── cglab_vulkan_renderer
+                   ├── cglab_engine_core
+                   ├── render_graph
+                   └── Vulkan / SDL surface integration
+```
+
+依赖只能从应用指向框架和 renderer，再指向 engine core。framework/engine 公共接口不得出现 Vulkan、SDL 或 glTF 类型。
+
+## 分层
 
 > v2 改为四层模型：在原三层草图基础上拆出**引擎框架层**。
 > 原因：UI/窗口/IO/帧循环是所有 sample 共享的框架代码，不属于任何一个 app；
 > 若留在应用层，每写一个 sample 就要复制一遍（当前 app_sample 的实际问题）。
 
-**上层 - 应用层（samples）**：主要功能就是我自己可以编写和制作不同的多个 .exe 应用。我会实验性的创建一些 APP 来编写一些特性，比如尝试 Hi-Z 阴影，比如尝试 Ray Tracing 等，都会单独编写一个 hierarchical_z_sample, ray_tracing_vk_sample, ray_tracing_dx_sample 等。
-**应用层的 app 只应提供：场景内容、render pass 组织、专属 UI 面板。**
+**上层 - 应用层（samples）**：每个实验是独立 executable，例如 VulkanSample、TriangleSample，以及未来的 Hi-Z/Ray Tracing sample。应用只提供元数据、启动场景、Vulkan render program 和未来的专属 UI hook，不拥有窗口、帧循环、camera、scene、控制平面或 loader worker。详见 [ApplicationFramework.md](ApplicationFramework.md)。
 
 **引擎框架层（engine runtime，新增）**：被所有 app 复用的运行时骨架——
 - 帧循环与渲染窗口（当前是 SDL 方案）
 - 键鼠 I/O（input_router 路由层）
-- 引擎界面 UI（当前是 web 系框架）与控制平面（UI ↔ 引擎的协议缝）
+- Web UI 控制平面（UI ↔ 引擎的协议缝；正式 UI 尚未实现）
 - 异步资源加载调度
+- 每帧只读 `render_snapshot` 生成与 renderer 调用
 
 **中层 - 业务组件层**: 关乎渲染相关内容，用于实现高效的渲染和方便的管线编辑：
 - render graph component（已独立为子模块）
 - digital content loader component（已独立为子模块）
 - camera component
 - scene component
-- 渲染设备执行模块（swapchain/帧提交/pipeline，当前埋在 vulkan_sample 里，待拆）
+- Vulkan 渲染设备执行模块（位于 `src/renderer/vulkan/`，拥有 device/swapchain/pipeline/geometry arena）
 - 未来可能的其他引擎组件
 
 **下层 - 基础设施层（infrastructure）**：
@@ -34,11 +62,11 @@
 - benchmark 设施
 - 未来可能的其他基础设施
 
-这两个基础设施为业务层服务，提供高性能能力。且和上层完全解耦，意味着可以用于其他仓库和主题的内容。
+这些基础设施为业务层服务，提供高性能能力，并与上层完全解耦，以便未来复用于其他仓库。
 
 分成四层后，每个层之间相互隔离解耦，仅通过必要的 interface 接口去对接，且依赖从上往下，不能有反向的依赖。
 
-### 现状盘点（2026-08，InterfaceRedesign P0–P2 之后）
+## 现状盘点（2026-08）
 
 **已解决**（不要重复劳动，也不要推翻）：
 - 框架复用：`cglab_framework_runtime` 已拥有窗口、显式帧 phase、camera/scene、控制平面与 asset service；应用不再复制帧循环
@@ -46,6 +74,8 @@
 - GPU geometry：启动资产和运行时资产统一走 geometry arena，scene 只保存 opaque handle；上传/延迟回收状态留在 Vulkan renderer
 - 构建边界：已有 `cglab_engine_core`、`cglab_platform_sdl`、`cglab_asset_gltf`、`cglab_framework_runtime`、`cglab_vulkan_renderer`、`cglab_application_runner`
 - Sample 复用：VulkanSample 已迁移到共享 runtime；TriangleSample 以独立 `TrianglePass` 验证第二个 exe（应用文件 100 行以内）
+- 应用入口：`cglab_application_runner` 统一 CLI、runtime/backend 组装、退出码、validation 和 smoke counter 检查
+- 资源服务：framework 只依赖 `asset_service` 接口；`cglab_asset_gltf` 是默认实现，测试可注入 fake service
 - 输入路由：物理输入 → 逻辑动作的绑定表已数据化（`input_router.h`）；wasd 不再定死，未来换成 JSON 序列化驱动是顺手的事
 - 相机 SoA：`camera_container` 已是 SoA + 纯函数（fly/orbit/bookmark 多模式），为未来多相机做的准备已到位
 - 场景：`scene_registry` 为 flat component-based 槽位存储；多对象、运行时异步加载 glTF 已实现
@@ -55,30 +85,31 @@
 **部分解决（欠债清单）**：
 - glTF 节点变换在加载时烘焙进顶点，**层级信息丢失**（静态展示够用；未来动画/局部变换需还这笔债）
 - scene 目前为 flat 结构，无 parent-child 层级
-- Vulkan renderer 已成为独立 target 和 backend façade，但设备/swapchain/pipeline 的内部实现仍集中在 `vulkan_sample.cpp`，后续只做内部拆分，不再影响 framework API
+- Vulkan renderer 已成为独立 target 和 backend façade，但设备/swapchain/pipeline 的内部实现仍集中在 `renderer/vulkan/vulkan_renderer.cpp`，后续只做内部拆分，不再影响 framework API
 
 **未解决**：
 - Vulkan renderer 内部 device/swapchain/pipeline 模块尚未物理拆文件
+- Vulkan `render_program` 目前只能配置 pass name/clear color，尚不能注册复杂多 pass 图
 - 基础设施完全空白（job system、benchmark）
 - DCL 仅支持 ASCII `.gltf`（`.glb`/fbx/obj 未支持）
-- vcpkg 当前使用完整哈希校验通过的 tinygltf 3.0.0；2.9.x registry 源包哈希异常时不允许本地改哈希绕过
 
-### 待决策：RHI（渲染设备抽象）
+## Render Graph 与 RHI 定位
 
-app 清单含 ray_tracing_dx_sample，涉及跨 API：
-- **选项 A（默认）**：本仓库 sample 全部 Vulkan-only，DX RT 放独立仓库。
-- **选项 B**：本仓库多 API——需先划 RHI 抽象层，工作量大，必须在层级图中显式占位后再动工。
+当前采用以下明确约束：
 
-在未做决定前，一切重构不得把 Vulkan 类型泄漏进业务组件层接口（scene/camera 目前已满足）。
+- 仓库保持 Vulkan-only；不因可能的 DX12 需求提前抽象 Vulkan 资源细节。
+- `engine::render_backend` 是 runtime 的生命周期/提交边界，不是完整 RHI。它不提供 buffer、image、pipeline 或 command list 抽象。
+- `engine::vulkan::render_program` 是 Vulkan sample 的扩展点，可以逐步暴露 Render Graph/Vulkan 能力，但不得反向泄漏到 framework 或 engine core。
+- Render Graph 位于 renderer 内部，负责编译 pass/resource DAG、barrier、transient resource 和帧事务；它不拥有应用生命周期。
 
-### 已知问题与计划（重排后）
+完整结构、所有权表和未来 RHI 触发条件见 [RenderGraphAndRHI.md](RenderGraphAndRHI.md)。
 
-对应到前面的层级和模块，当前除了 render graph 和 digital content loader 通过子模块单独分出来以外，其余部分要么没实现、要么耦合在一起。所以我个人的接下来的计划是（v2 重排，理由见每条附注）：
+## 已知问题与计划
 
 **1. 引擎框架层抽取（已完成）**
 - runtime、asset service、backend snapshot/geometry handle 边界和第二个 TriangleSample 已落地。
 - CPU/Render Graph 自动测试覆盖公共头隔离、fake runtime、glTF adapter 与异步 asset service。
-- 剩余工作仅是 Vulkan renderer 内部文件级拆分，以及在装有 validation layer 的机器上补 GPU validation smoke。
+- 剩余工作是 Vulkan renderer 内部文件级拆分、扩展真实多 pass `render_program`，以及在装有 validation layer 的机器上补 GPU validation smoke。
 
 **2. 业务组件层完善**
 - camera 组件：
@@ -101,7 +132,7 @@ app 清单含 ray_tracing_dx_sample，涉及跨 API：
 - 渲染窗口已可用且简单；单窗口集成（B1/B2）在框架层稳定后进行。
 - 键鼠 IO 已接口化（input_router）；后续做 mapping 的 JSON 序列化方案。
 
-### 横切准则（全层适用）
+## 横切准则（全层适用）
 
 数据与线程：
 - 每个 component 数组**单一写者**（主线程）；worker/job 只读快照或写私有结果区，**帧边界合并**（P2 loader 即此模式，上升为准则）。
@@ -110,13 +141,15 @@ app 清单含 ray_tracing_dx_sample，涉及跨 API：
 
 错误处理：统一 result/expected 风格（`_callable` 链为雏形），不吞异常、不用裸 bool 表达失败语义（新代码）。
 
-目录布局目标（随框架层抽取渐进迁移，不搞一次性大搬家）：
-- `src/infra/`（基础设施，稳定后抽 submodule）
-- `src/engine/`（业务组件：camera / scene / device …）
-- `src/framework/`（runtime / control_plane / ui shell）
-- `src/apps/`（samples）
+当前目录职责（旧 camera/scene 物理目录后续再渐进整理，不做一次性搬家）：
+- `src/apps/`：应用入口与共享 application runner；
+- `src/framework/`：runtime、sample/runtime services、asset service interface；
+- `src/engine/`：geometry 和 render backend 等中立核心接口；camera/scene 目前仍在旧物理目录，由 `cglab_engine_core` 聚合；
+- `src/renderer/vulkan/`：Vulkan renderer 和 Vulkan render program；
+- `src/asset/`：glTF adapter 与默认 asset worker；
+- `src/infra/`：尚未创建，满足触发条件后再落地。
 
-### 设计与代码准则
+## 设计与代码准则
 
 大部分代码希望遵循：
 - Data Oriented 风格最最基本
