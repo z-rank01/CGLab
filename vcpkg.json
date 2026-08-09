@@ -36,7 +36,7 @@
     },
     {
       "name": "tinygltf",
-      "version>=": "2.9.4"
+      "version>=": "3.0.0"
     }
   ],
   "builtin-baseline": "f4fc135de213885b8d072203d324976e4aa1f171"
