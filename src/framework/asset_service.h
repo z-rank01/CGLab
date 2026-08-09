@@ -1,0 +1,28 @@
+#pragma once
+
+#include <cstdint>
+#include <filesystem>
+#include <vector>
+
+#include "engine/render_backend.h"
+
+namespace framework
+{
+    using asset_request_id = std::uint64_t;
+
+    struct completed_asset_request
+    {
+        asset_request_id id = 0;
+        engine::result<engine::geometry_asset> result;
+    };
+
+    class asset_service
+    {
+    public:
+        virtual ~asset_service() = default;
+        virtual void start(std::filesystem::path working_directory) = 0;
+        [[nodiscard]] virtual engine::result<asset_request_id> request(std::filesystem::path path) = 0;
+        [[nodiscard]] virtual std::vector<completed_asset_request> drain_completed() = 0;
+        virtual void shutdown() noexcept = 0;
+    };
+} // namespace framework

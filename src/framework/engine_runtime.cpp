@@ -1,44 +1,49 @@
-#include "app_sample.h"
-
-#include <gltf/gltf_loader.h>
-#include <gltf/gltf_parser.h>
+#include "framework/engine_runtime.h"
 
 #include <algorithm>
-#include <filesystem>
 #include <stdexcept>
 #include <thread>
 #include <utility>
 
 #include "_interface/sdl_window.h" // For default implementation
+#include "asset/asset_service.h"
 #include "utility/logger.h"
 
 namespace
 {
     // 遥测推送间隔（秒）：10 Hz，避免每帧全量推 JSON
     constexpr float telemetry_interval_seconds = 0.1F;
-    // 异步加载队列上限：溢出直接报错，避免 worker 无限积压
-    constexpr std::size_t max_pending_loads = 64;
 } // namespace
 
-app_sample::app_sample(engine_config config, control_plane::control_plane_config ui_config) : general_config(std::move(config)), ui_config(ui_config)
+namespace framework
 {
-    vulkan_instance   = std::make_unique<vulkan_sample>(general_config);
-    validation_errors = vulkan_instance->validation_counter();
+engine_runtime::engine_runtime(runtime_config runtime_config,
+                               std::unique_ptr<engine::render_backend> render_backend,
+                               std::unique_ptr<interface::window> platform_window,
+                               std::unique_ptr<asset_service> assets)
+    : window(std::move(platform_window)), renderer(std::move(render_backend)), asset_loader(std::move(assets)),
+      config(std::move(runtime_config))
+{
+    if (!renderer)
+    {
+        throw std::invalid_argument("engine_runtime requires a render backend");
+    }
 }
 
-app_sample::~app_sample()
+engine_runtime::~engine_runtime()
 {
     shutdown();
 }
 
-void app_sample::initialize()
+void engine_runtime::initialize()
 {
     // initialize sdl window
-    window = std::make_unique<interface::sdl_window>();
+    if (!window)
+    {
+        window = std::make_unique<interface::sdl_window>();
+    }
     interface::window_config win_config;
-    win_config.title  = general_config.window_config.title;
-    win_config.width  = general_config.window_config.width;
-    win_config.height = general_config.window_config.height;
+    win_config = config.window;
     if (!window->open(win_config))
     {
         throw std::runtime_error("Failed to open window.");
@@ -48,25 +53,82 @@ void app_sample::initialize()
     camera_entity_index = camera_container.add_camera();
 
     // control plane：失败降级为无 UI 运行，不影响渲染
-    if (ui_config.enabled)
+    if (config.control_plane.enabled)
     {
         control_plane = std::make_unique<control_plane::control_plane_server>();
-        if (!control_plane->start(ui_config))
+        if (!control_plane->start(control_plane::control_plane_config{
+                .enabled = config.control_plane.enabled,
+                .port = config.control_plane.port,
+                .open_browser = config.control_plane.open_browser,
+            }))
         {
             Logger::LogWarning("Control plane unavailable; continuing without Web UI backend.");
             control_plane.reset();
         }
     }
 
-    // setup vulkan sample
-    vulkan_instance->set_window(window.get());
-    vulkan_instance->set_camera_container(&camera_container);
-    vulkan_instance->set_camera_index(camera_entity_index);
-    vulkan_instance->set_scene_registry(&scene_registry);
-    vulkan_instance->initialize();
+    if (!asset_loader)
+    {
+        asset_loader = std::make_unique<asset::asset_service>();
+    }
+    asset_loader->start(config.working_directory);
+    if (required_startup_asset)
+    {
+        const auto requested = asset_loader->request(*required_startup_asset);
+        if (!requested)
+        {
+            throw std::runtime_error("Failed to queue startup asset: " + requested.error);
+        }
+        for (;;)
+        {
+            auto completed = asset_loader->drain_completed();
+            if (!completed.empty())
+            {
+                if (!completed.front().result)
+                {
+                    throw std::runtime_error("Failed to load startup asset: " + completed.front().result.error);
+                }
+                initial_geometry = std::move(completed.front().result.value);
+                break;
+            }
+            std::this_thread::yield();
+        }
+        required_startup_asset.reset();
+    }
 
-    // P2：启动异步加载 worker（仅解析 glTF，纯 CPU，不触碰 Vulkan）
-    load_worker = std::thread(&app_sample::load_worker_loop, this);
+    const engine::backend_config backend_config{
+        .application_name = config.window.title,
+        .working_directory = config.working_directory,
+        .frames_in_flight = config.frames_in_flight,
+        .validation = config.validation,
+    };
+    const auto initialized = renderer->initialize(*window, backend_config);
+    if (!initialized)
+    {
+        throw std::runtime_error("Failed to initialize render backend: " + initialized.error);
+    }
+
+    if (initial_geometry)
+    {
+        const auto uploaded = renderer->upload_geometry(*initial_geometry);
+        if (!uploaded)
+        {
+            throw std::runtime_error("Failed to upload startup geometry: " + uploaded.error);
+        }
+        const scene::aabb bounds{initial_geometry->bounds_min, initial_geometry->bounds_max};
+        const scene::object_id id = scene_registry.register_object(
+            initial_geometry->name.empty() ? "startup" : initial_geometry->name,
+            bounds,
+            {},
+            true,
+            uploaded.value);
+        if (runtime_geometry_slots.size() <= id)
+        {
+            runtime_geometry_slots.resize(id + 1);
+        }
+        runtime_geometry_slots[id] = uploaded.value;
+        initial_geometry.reset();
+    }
 
     input_events.reserve(32);
     last_frame_time = std::chrono::high_resolution_clock::now();
@@ -74,163 +136,88 @@ void app_sample::initialize()
 
 // --- P2 异步加载管线 ---
 
-void app_sample::enqueue_load(load_job job)
+void engine_runtime::enqueue_load(std::string path, std::string client_id, nlohmann::json rpc_id)
 {
+    const auto requested = asset_loader->request(std::move(path));
+    if (!requested)
     {
-        std::lock_guard lock(load_mutex);
-        if (load_queue.size() >= max_pending_loads)
+        if (control_plane)
         {
-            if (control_plane)
-            {
-                control_plane->post_response(job.client_id, control_plane::make_error(job.rpc_id, -32000, "Load queue is full"));
-            }
-            return;
+            control_plane->post_response(client_id, control_plane::make_error(rpc_id, -32000, requested.error));
         }
-        load_queue.push_back(std::move(job));
+        return;
     }
-    load_cv.notify_one();
+    pending_loads.emplace(requested.value,
+                          pending_load{.client_id = std::move(client_id), .rpc_id = std::move(rpc_id), .respond = true});
 }
 
-void app_sample::load_worker_loop() noexcept
+void engine_runtime::drain_completed_loads()
 {
-    for (;;)
+    for (completed_asset_request& completed : asset_loader->drain_completed())
     {
-        load_job job;
-        {
-            std::unique_lock lock(load_mutex);
-            load_cv.wait(lock, [this] { return load_worker_stop || !load_queue.empty(); });
-            if (load_worker_stop && load_queue.empty())
-            {
-                return;
-            }
-            job = std::move(load_queue.front());
-            load_queue.pop_front();
-        }
-
-        load_result result;
-        result.client_id = job.client_id;
-        result.rpc_id    = job.rpc_id;
-        try
-        {
-            // 相对路径以 working_directory 为基准解析
-            std::filesystem::path path(job.path);
-            if (path.is_relative())
-            {
-                path = std::filesystem::path(general_config.general_config.working_directory) / path;
-            }
-            if (!std::filesystem::is_regular_file(path))
-            {
-                throw std::runtime_error("Asset file does not exist: " + path.string());
-            }
-
-            gltf::GltfLoader loader;
-            auto asset = loader(path.string());
-            gltf::GltfParser parser;
-            result.primitives = parser(asset, gltf::RequestDrawCallList{});
-
-            // 节点变换烘焙进顶点（worker 侧 CPU 完成），对象级变换走 push constant
-            glm::vec3 bounds_min(std::numeric_limits<float>::max());
-            glm::vec3 bounds_max(std::numeric_limits<float>::lowest());
-            for (gltf::PerDrawCallData& primitive : result.primitives)
-            {
-                const glm::mat4& node_transform = primitive.transform;
-                for (gltf::Vertex& vertex : primitive.vertices)
-                {
-                    vertex.position = glm::vec3(node_transform * glm::vec4(vertex.position, 1.0F));
-                    bounds_min      = glm::min(bounds_min, vertex.position);
-                    bounds_max      = glm::max(bounds_max, vertex.position);
-                }
-            }
-            if (result.primitives.empty())
-            {
-                throw std::runtime_error("Asset contains no drawable primitives: " + path.string());
-            }
-            result.bounds    = scene::aabb{bounds_min, bounds_max};
-            result.name      = path.filename().string();
-            result.succeeded = true;
-        }
-        catch (const std::exception& error)
-        {
-            result.succeeded = false;
-            result.error     = error.what();
-        }
-
-        {
-            std::lock_guard lock(load_mutex);
-            load_results.push_back(std::move(result));
-        }
-    }
-}
-
-void app_sample::drain_completed_loads()
-{
-    std::deque<load_result> completed;
-    {
-        std::lock_guard lock(load_mutex);
-        completed.swap(load_results);
-    }
-    for (load_result& result : completed)
-    {
-        if (!control_plane)
+        const auto pending = pending_loads.find(completed.id);
+        if (pending == pending_loads.end())
         {
             continue;
         }
-        if (!result.succeeded)
+        pending_load response = std::move(pending->second);
+        pending_loads.erase(pending);
+        if (!completed.result)
         {
-            control_plane->post_response(result.client_id,
-                                         control_plane::make_error(result.rpc_id, -32000, "scene.load_asset failed: " + result.error));
+            if (control_plane && response.respond)
+            {
+                control_plane->post_response(response.client_id,
+                                             control_plane::make_error(response.rpc_id, -32000,
+                                                                       "scene.load_asset failed: " + completed.result.error));
+            }
             continue;
         }
 
-        staged_geometry geometry;
-        if (!vulkan_instance->stage_runtime_geometry(result.primitives, geometry))
+        engine::geometry_asset& loaded_asset = completed.result.value;
+        const auto uploaded = renderer->upload_geometry(loaded_asset);
+        if (!uploaded)
         {
-            control_plane->post_response(result.client_id,
-                                         control_plane::make_error(result.rpc_id, -32000, "scene.load_asset failed: geometry arena staging error"));
+            if (control_plane && response.respond)
+            {
+                control_plane->post_response(response.client_id,
+                                             control_plane::make_error(response.rpc_id, -32000,
+                                                                       "scene.load_asset failed: " + uploaded.error));
+            }
             continue;
         }
 
-        const scene::object_id id = scene_registry.register_object(result.name, result.bounds, geometry.draws);
+        const scene::aabb bounds{loaded_asset.bounds_min, loaded_asset.bounds_max};
+        const scene::object_id id = scene_registry.register_object(loaded_asset.name, bounds, {}, false, uploaded.value);
         if (runtime_geometry_slots.size() <= id)
         {
             runtime_geometry_slots.resize(id + 1);
         }
-        runtime_geometry_slots[id] = std::move(geometry);
-        Logger::LogInfo("Loaded runtime asset \"" + result.name + "\" as scene object " + std::to_string(id));
-        control_plane->post_response(result.client_id,
-                                     control_plane::make_result(result.rpc_id,
-                                                                {{"id", id},
-                                                                 {"name", result.name},
-                                                                 {"primitives", result.primitives.size()},
-                                                                 {"bounds",
-                                                                  {{"min", {result.bounds.min.x, result.bounds.min.y, result.bounds.min.z}},
-                                                                   {"max", {result.bounds.max.x, result.bounds.max.y, result.bounds.max.z}}}}}));
-    }
-}
-
-void app_sample::stop_load_worker() noexcept
-{
-    {
-        std::lock_guard lock(load_mutex);
-        load_worker_stop = true;
-    }
-    load_cv.notify_one();
-    if (load_worker.joinable())
-    {
-        load_worker.join();
+        runtime_geometry_slots[id] = uploaded.value;
+        Logger::LogInfo("Loaded runtime asset \"" + loaded_asset.name + "\" as scene object " + std::to_string(id));
+        if (control_plane && response.respond)
+        {
+            control_plane->post_response(response.client_id,
+                                         control_plane::make_result(response.rpc_id,
+                                                                    {{"id", id},
+                                                                     {"name", loaded_asset.name},
+                                                                     {"primitives", loaded_asset.primitives.size()},
+                                                                     {"bounds",
+                                                                      {{"min", {bounds.min.x, bounds.min.y, bounds.min.z}},
+                                                                       {"max", {bounds.max.x, bounds.max.y, bounds.max.z}}}}}));
+        }
     }
 }
 
 // --- P2 场景命令 ---
 
-void app_sample::handle_scene_command(const control_plane::engine_command& command)
+void engine_runtime::handle_scene_command(const control_plane::engine_command& command)
 {
     using control_plane::command_kind;
     switch (command.kind)
     {
     case command_kind::scene_load_asset:
     {
-        enqueue_load(load_job{.path = command.params["path"].get<std::string>(), .client_id = command.client_id, .rpc_id = command.id});
+        enqueue_load(command.params["path"].get<std::string>(), command.client_id, command.id);
         break;
     }
     case command_kind::scene_unload:
@@ -258,7 +245,7 @@ void app_sample::handle_scene_command(const control_plane::engine_command& comma
         }
         if (id < runtime_geometry_slots.size() && runtime_geometry_slots[id].has_value())
         {
-            vulkan_instance->retire_runtime_geometry(std::move(*runtime_geometry_slots[id]));
+            renderer->retire_geometry(*runtime_geometry_slots[id]);
             runtime_geometry_slots[id].reset();
         }
         control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"unloaded", true}, {"id", id}}));
@@ -332,7 +319,7 @@ void app_sample::handle_scene_command(const control_plane::engine_command& comma
     }
 }
 
-void app_sample::handle_control_plane_commands()
+void engine_runtime::handle_control_plane_commands()
 {
     if (!control_plane)
     {
@@ -377,7 +364,7 @@ void app_sample::handle_control_plane_commands()
         }
         case command_kind::camera_set_params:
         {
-            interface::camera_config& config       = camera_container.configs[camera_entity_index];
+            interface::camera_config& camera_config = camera_container.configs[camera_entity_index];
             interface::camera_transform& transform = camera_container.transforms[camera_entity_index];
             const nlohmann::json& params           = command.params;
             if (params.contains("fov"))
@@ -387,15 +374,15 @@ void app_sample::handle_control_plane_commands()
             }
             if (params.contains("movement_speed"))
             {
-                config.movement_speed = params["movement_speed"].get<float>();
+                camera_config.movement_speed = params["movement_speed"].get<float>();
             }
             if (params.contains("mouse_sensitivity"))
             {
-                config.mouse_sensitivity = params["mouse_sensitivity"].get<float>();
+                camera_config.mouse_sensitivity = params["mouse_sensitivity"].get<float>();
             }
             if (params.contains("zoom_speed"))
             {
-                config.zoom_speed = params["zoom_speed"].get<float>();
+                camera_config.zoom_speed = params["zoom_speed"].get<float>();
             }
             if (params.contains("orbit_distance"))
             {
@@ -404,11 +391,11 @@ void app_sample::handle_control_plane_commands()
             }
             if (params.contains("near_plane"))
             {
-                config.near_plane = params["near_plane"].get<float>();
+                camera_config.near_plane = params["near_plane"].get<float>();
             }
             if (params.contains("far_plane"))
             {
-                config.far_plane = params["far_plane"].get<float>();
+                camera_config.far_plane = params["far_plane"].get<float>();
             }
             control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"applied", params}}));
             break;
@@ -450,10 +437,10 @@ void app_sample::handle_control_plane_commands()
     }
 }
 
-nlohmann::json app_sample::current_camera_state() const
+nlohmann::json engine_runtime::current_camera_state() const
 {
     const interface::camera_transform& transform = camera_container.transforms[camera_entity_index];
-    const interface::camera_config& config       = camera_container.configs[camera_entity_index];
+    const interface::camera_config& camera_config = camera_container.configs[camera_entity_index];
     const interface::camera_bookmarks& bookmarks = camera_container.bookmarks[camera_entity_index];
     return {
         {"mode", transform.mode == interface::camera_mode::orbit ? "orbit" : "fly"},
@@ -463,17 +450,17 @@ nlohmann::json app_sample::current_camera_state() const
         {"fov", transform.current_zoom},
         {"orbit_distance", transform.orbit_distance},
         {"focus_point", {transform.focus_point.x, transform.focus_point.y, transform.focus_point.z}},
-        {"movement_speed", config.movement_speed},
-        {"mouse_sensitivity", config.mouse_sensitivity},
-        {"zoom_speed", config.zoom_speed},
-        {"near_plane", config.near_plane},
-        {"far_plane", config.far_plane},
+        {"movement_speed", camera_config.movement_speed},
+        {"mouse_sensitivity", camera_config.mouse_sensitivity},
+        {"zoom_speed", camera_config.zoom_speed},
+        {"near_plane", camera_config.near_plane},
+        {"far_plane", camera_config.far_plane},
         {"bookmarks_valid", bookmarks.valid},
         {"blending", camera_container.blends[camera_entity_index].active},
     };
 }
 
-nlohmann::json app_sample::current_scene_state() const
+nlohmann::json engine_runtime::current_scene_state() const
 {
     nlohmann::json objects = nlohmann::json::array();
     for (const scene::scene_object* object : scene_registry.objects())
@@ -501,7 +488,7 @@ nlohmann::json app_sample::current_scene_state() const
     };
 }
 
-void app_sample::publish_scene_telemetry_if_changed()
+void engine_runtime::publish_scene_telemetry_if_changed()
 {
     if (!control_plane)
     {
@@ -517,7 +504,7 @@ void app_sample::publish_scene_telemetry_if_changed()
 }
 
 // fly 模式左键拾取：窗口坐标 → 相机射线 → registry AABB pick
-void app_sample::try_pick_object(float x, float y)
+void engine_runtime::try_pick_object(float x, float y)
 {
     int width  = 0;
     int height = 0;
@@ -528,13 +515,13 @@ void app_sample::try_pick_object(float x, float y)
     }
 
     const interface::camera_transform& transform = camera_container.transforms[camera_entity_index];
-    const interface::camera_config& config       = camera_container.configs[camera_entity_index];
+    const interface::camera_config& camera_config = camera_container.configs[camera_entity_index];
 
     // 注意使用未做 Vulkan Y 翻转的投影做反投影（拾取在标准 NDC 约定下进行）
     const float ndc_x             = (2.0F * x) / static_cast<float>(width) - 1.0F;
     const float ndc_y             = 1.0F - (2.0F * y) / static_cast<float>(height);
     const glm::mat4 view          = interface::get_view_matrix(transform);
-    const glm::mat4 proj          = interface::get_projection_matrix(transform, config);
+    const glm::mat4 proj          = interface::get_projection_matrix(transform, camera_config);
     const glm::mat4 inv_view_proj = glm::inverse(proj * view);
     const glm::vec4 near_point    = inv_view_proj * glm::vec4(ndc_x, ndc_y, -1.0F, 1.0F);
     const glm::vec4 far_point     = inv_view_proj * glm::vec4(ndc_x, ndc_y, 1.0F, 1.0F);
@@ -556,7 +543,7 @@ void app_sample::try_pick_object(float x, float y)
     publish_scene_telemetry_if_changed();
 }
 
-void app_sample::publish_frame_telemetry()
+void engine_runtime::publish_frame_telemetry()
 {
     if (!control_plane)
     {
@@ -573,7 +560,7 @@ void app_sample::publish_frame_telemetry()
     smoothed_frame_time      = smoothed_frame_time * 0.9F + delta_time * 0.1F;
     const float smoothed_fps = smoothed_frame_time > 0.0F ? 1.0F / smoothed_frame_time : 0.0F;
 
-    const vulkan_run_statistics stats = vulkan_instance->statistics();
+    const engine::render_statistics stats = renderer->statistics();
     control_plane->publish(control_plane::make_notification("telemetry.frame",
                                                             {
                                                                 {"fps", smoothed_fps},
@@ -589,7 +576,7 @@ void app_sample::publish_frame_telemetry()
     publish_scene_telemetry_if_changed();
 }
 
-bool app_sample::tick(std::optional<std::uint64_t> frame_limit)
+bool engine_runtime::tick(std::optional<std::uint64_t> frame_limit)
 {
     std::uint64_t rendered_frames = 0;
     while (!window->should_close())
@@ -604,7 +591,7 @@ bool app_sample::tick(std::optional<std::uint64_t> frame_limit)
         {
             if (event.type == interface::event_type::resize)
             {
-                vulkan_instance->request_resize();
+                renderer->request_resize();
             }
             // P2：fly 模式左键 = 拾取（orbit 模式下左键是环绕旋转，不触发拾取）
             if (event.type == interface::event_type::mouse_button_down && event.mouse_button.button == interface::mouse_button::left &&
@@ -624,6 +611,37 @@ bool app_sample::tick(std::optional<std::uint64_t> frame_limit)
         drain_completed_loads();
 
         interface::tick(camera_container, camera_update_context, input_events, delta_time);
+        if (sample_definition.update)
+        {
+            runtime_services services{
+                .scene = scene_registry,
+                .cameras = camera_container,
+                .active_camera = camera_entity_index,
+                .request_asset = [this](std::filesystem::path path)
+                {
+                    auto requested = asset_loader->request(std::move(path));
+                    if (requested)
+                    {
+                        pending_loads.emplace(requested.value, pending_load{});
+                    }
+                    return requested;
+                },
+                .post_message = [](std::string_view message) { Logger::LogInfo(std::string(message)); },
+            };
+            sample_definition.update(services, delta_time);
+        }
+
+        render_objects.clear();
+        for (const scene::scene_object* object : scene_registry.objects())
+        {
+            if (object->visible && object->render_geometry != engine::invalid_geometry_handle)
+            {
+                render_objects.push_back(engine::render_object{
+                    .geometry = object->render_geometry,
+                    .model = scene::model_matrix(object->transform),
+                });
+            }
+        }
 
         // 暂停语义：事件泵与 UI 通道保持存活，仅跳过渲染；
         // pending_frame_steps 允许逐帧步进。
@@ -640,18 +658,25 @@ bool app_sample::tick(std::optional<std::uint64_t> frame_limit)
             continue;
         }
 
-        const vulkan_frame_status status = vulkan_instance->tick();
-        if (status == vulkan_frame_status::failed)
+        const engine::render_snapshot snapshot{
+            .frame_serial = frame_serial++,
+            .view = interface::get_view_matrix(camera_container.transforms[camera_entity_index]),
+            .projection = interface::get_projection_matrix(camera_container.transforms[camera_entity_index],
+                                                           camera_container.configs[camera_entity_index]),
+            .objects = render_objects,
+        };
+        const engine::frame_status status = renderer->render(snapshot);
+        if (status == engine::frame_status::failed)
         {
             return false;
         }
-        if (status == vulkan_frame_status::skipped)
+        if (status == engine::frame_status::skipped)
         {
             publish_frame_telemetry();
             std::this_thread::sleep_for(std::chrono::milliseconds(8));
             continue;
         }
-        if (status == vulkan_frame_status::rendered)
+        if (status == engine::frame_status::rendered)
         {
             ++rendered_frames;
             if (frame_limit && rendered_frames >= *frame_limit)
@@ -664,43 +689,54 @@ bool app_sample::tick(std::optional<std::uint64_t> frame_limit)
     return true;
 }
 
-void app_sample::shutdown() noexcept
+void engine_runtime::shutdown() noexcept
 {
-    stop_load_worker();
-    if (vulkan_instance)
+    if (control_plane)
     {
-        run_statistics = vulkan_instance->statistics();
+        control_plane->stop();
+    }
+    if (asset_loader)
+    {
+        asset_loader->shutdown();
     }
     control_plane.reset();
-    vulkan_instance.reset();
+    if (renderer)
+    {
+        run_statistics = renderer->statistics();
+        final_validation_errors = renderer->validation_error_count();
+        renderer->shutdown();
+    }
+    renderer.reset();
     window.reset();
 }
 
-std::uint32_t app_sample::validation_error_count() const noexcept
+std::uint32_t engine_runtime::validation_error_count() const noexcept
 {
-    return validation_errors ? validation_errors->load(std::memory_order_relaxed) : 0;
+    return renderer ? renderer->validation_error_count() : final_validation_errors;
 }
 
-void app_sample::set_vertex_index_data(std::vector<gltf::PerDrawCallData> per_draw_call_data,
-                                       std::vector<uint32_t> indices,
-                                       std::vector<gltf::Vertex> vertices)
+void engine_runtime::set_initial_geometry(engine::geometry_asset asset)
 {
-    // P2：启动资产登记为只读场景条目（GPU 数据仍走 legacy buffer，draws 为空）
-    if (!vertices.empty() && scene_registry.objects().empty())
+    initial_geometry = std::move(asset);
+}
+
+void engine_runtime::set_required_startup_asset(std::filesystem::path path)
+{
+    required_startup_asset = std::move(path);
+}
+
+void engine_runtime::configure_sample(sample definition)
+{
+    sample_definition = std::move(definition);
+    if (sample_definition.startup_geometry)
     {
-        glm::vec3 bounds_min(std::numeric_limits<float>::max());
-        glm::vec3 bounds_max(std::numeric_limits<float>::lowest());
-        for (const gltf::Vertex& vertex : vertices)
-        {
-            bounds_min = glm::min(bounds_min, vertex.position);
-            bounds_max = glm::max(bounds_max, vertex.position);
-        }
-        (void)scene_registry.register_object("startup", scene::aabb{bounds_min, bounds_max}, {}, true);
+        set_initial_geometry(std::move(*sample_definition.startup_geometry));
+        sample_definition.startup_geometry.reset();
     }
-    vulkan_instance->set_vertex_index_data(std::move(per_draw_call_data), std::move(indices), std::move(vertices));
+    if (sample_definition.required_startup_asset)
+    {
+        set_required_startup_asset(std::move(*sample_definition.required_startup_asset));
+        sample_definition.required_startup_asset.reset();
+    }
 }
-
-void app_sample::set_mesh_list(const std::vector<gltf::PerMeshData>& mesh_list)
-{
-    vulkan_instance->set_mesh_list(mesh_list);
-}
+} // namespace framework

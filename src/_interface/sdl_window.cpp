@@ -135,17 +135,9 @@ namespace interface
         return should_close_internal;
     }
 
-    std::vector<const char*> sdl_window::get_required_instance_extensions() const
+    native_window_handle sdl_window::native_handle() const noexcept
     {
-        uint32_t count           = 0;
-        const char* const* names = SDL_Vulkan_GetInstanceExtensions(&count);
-        std::vector<const char*> extensions(names, names + count);
-        return extensions;
-    }
-
-    bool sdl_window::create_vulkan_surface(VkInstance instance, VkSurfaceKHR* surface) const
-    {
-        return SDL_Vulkan_CreateSurface(window, instance, nullptr, surface);
+        return native_window_handle{.kind = native_window_kind::sdl3, .value = window};
     }
 
     void sdl_window::get_extent(int& width, int& height) const

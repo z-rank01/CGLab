@@ -12,8 +12,6 @@
 #include <unordered_set>
 
 #include <gltf/gltf_data.h>
-#include "_interface/camera_system.h"
-#include "_interface/sdl_window.h" // For default implementation
 #include "_interface/window.h"
 #include "_old/vulkan_commandbuffer.h"
 #include "_old/vulkan_pipeline.h"
@@ -21,25 +19,20 @@
 #include "_old/vulkan_synchronization.h"
 #include "_templates/common.hpp"
 #include "_vra/vra.h"
-#include "utility/config_reader.h"
 #include "render_graph/system.h"
 #include "render_graph/vk_backend.h"
 #include "swapchain_image_state.h"
-#include "scene/scene_registry.h"
+#include "engine/render_backend.h"
+#include "renderer/vulkan/render_program.h"
 
-struct window_config
+struct vulkan_renderer_config
 {
-    int width;
-    int height;
-    std::string title;
-};
-
-struct engine_config
-{
-    window_config window_config;
-    general_config general_config;
-    uint8_t frame_count;
-    bool use_validation_layers;
+    int width = 0;
+    int height = 0;
+    std::string application_name;
+    std::string working_directory;
+    uint8_t frame_count = 3;
+    bool use_validation_layers = false;
 };
 
 struct output_frame
@@ -59,24 +52,13 @@ struct mvp_matrix
     glm::mat4 projection;
 };
 
-enum class vulkan_frame_status
-{
-    rendered,
-    skipped,
-    failed,
-};
-
-struct vulkan_run_statistics
-{
-    std::uint64_t upload_pass_executions = 0;
-    std::uint64_t draw_pass_executions = 0;
-    std::uint64_t presented_frames = 0;
-};
+using vulkan_frame_status = engine::frame_status;
+using vulkan_run_statistics = engine::render_statistics;
 
 // P2：一次运行时几何上传的登记/回收句柄（draws 供 registry 绘制，spans 供 arena 回收）
 struct staged_geometry
 {
-    std::vector<scene::draw_range> draws;
+    std::vector<engine::draw_range> draws;
     std::vector<std::pair<VkDeviceSize, VkDeviceSize>> vertex_spans; // 字节区间（offset, size）
     std::vector<std::pair<VkDeviceSize, VkDeviceSize>> index_spans;
 };
@@ -98,52 +80,31 @@ struct deferred_arena_free
     staged_geometry geometry;
 };
 
-class vulkan_sample
+class vulkan_sample final : public engine::render_backend
 {
 public:
-    vulkan_sample() = delete;
-    vulkan_sample(engine_config config);
-    ~vulkan_sample();
+    explicit vulkan_sample(engine::vulkan::render_program program);
+    ~vulkan_sample() override;
+    void request_resize() noexcept override { resize_request = true; }
+    [[nodiscard]] vulkan_run_statistics statistics() const noexcept override { return run_statistics; }
 
-    [[nodiscard]] vulkan_frame_status tick();
-    [[nodiscard]] vulkan_frame_status draw();
-    void request_resize() noexcept { resize_request = true; }
-    [[nodiscard]] std::shared_ptr<std::atomic_uint32_t> validation_counter() const noexcept { return validation_errors; }
-    [[nodiscard]] vulkan_run_statistics statistics() const noexcept { return run_statistics; }
-
-    void initialize();
-    void set_vertex_index_data(std::vector<gltf::PerDrawCallData> per_draw_call_data,
-                               std::vector<uint32_t> indices,
-                               std::vector<gltf::Vertex> vertices);
-    void set_mesh_list(const std::vector<gltf::PerMeshData>& mesh_list);
-
-    void set_window(interface::window* sdl_window) { this->window = sdl_window; }
-    void set_camera_container(interface::camera_container* container) { camera_container = container; }
-    void set_camera_index(size_t index) { camera_entity_index = index; }
-
-    // --- P2 scene system ---
-    // 场景注册表由 app_sample 持有；渲染侧只读（仅主线程在帧边界外无并发写）。
-    void set_scene_registry(scene::scene_registry* registry) { scene_objects = registry; }
-
-    // 把一组图元（CPU 数据）staging 进 geometry arena：分配区间、创建 staging、入队待上传批次。
-    // 成功后 draws/spans 回填，对象登记进 registry 后即可被 DrawPass 双轨绘制。
-    // arena 容量不足返回 false（已分配区间会回滚）。
-    [[nodiscard]] bool stage_runtime_geometry(const std::vector<gltf::PerDrawCallData>& primitives, staged_geometry& out);
-
-    // 回收运行时几何区间（frames-in-flight 门控，不立即复用）。
-    void retire_runtime_geometry(staged_geometry geometry);
-
-
+    [[nodiscard]] engine::result<bool> initialize(interface::window& render_window,
+                                                  const engine::backend_config& backend_config) override;
+    [[nodiscard]] engine::result<engine::geometry_handle> upload_geometry(const engine::geometry_asset& asset) override;
+    void retire_geometry(engine::geometry_handle handle) override;
+    [[nodiscard]] engine::frame_status render(const engine::render_snapshot& snapshot) override;
+    void shutdown() noexcept override;
+    [[nodiscard]] std::uint32_t validation_error_count() const noexcept override
+    {
+        return validation_errors->load(std::memory_order_relaxed);
+    }
 private:
 #define FRAME_INDEX_TO_UNIFORM_BUFFER_ID(frame_index) ((frame_index) + 4)
     // engine members
     uint8_t frame_index = 0;
     bool resize_request = false;
-    engine_config config;
+    vulkan_renderer_config config;
     std::vector<output_frame> output_frames;
-
-    // mesh data members
-    std::vector<gltf::PerMeshData> mesh_list;
 
     // uniform data and buffer
     std::vector<mvp_matrix> mvp_matrices;
@@ -170,8 +131,6 @@ private:
     // vulkan helper members (old oop version)
     // TODO: remove these helper classes with dod version instead in the future
     interface::window* window                     = nullptr;
-    interface::camera_container* camera_container = nullptr;
-    size_t camera_entity_index                    = 0;
     std::unique_ptr<VulkanShaderHelper> vk_shader_helper;
     std::unique_ptr<VulkanPipelineHelper> vk_pipeline_helper;
     std::unique_ptr<VulkanCommandBufferHelper> vk_command_buffer_helper;
@@ -179,6 +138,9 @@ private:
 
     // --- Vulkan Initialization Steps ---
 
+    void initialize();
+    [[nodiscard]] vulkan_frame_status tick();
+    [[nodiscard]] vulkan_frame_status draw();
     void initialize_vulkan_hpp();
     void initialize_vulkan();
 
@@ -219,6 +181,8 @@ private:
     bool create_geometry_arena();
     void collect_deferred_resources();
     static void destroy_runtime_upload(VmaAllocator allocator, runtime_upload& upload) noexcept;
+    [[nodiscard]] bool stage_runtime_geometry(const std::vector<gltf::PerDrawCallData>& primitives, staged_geometry& out);
+    void retire_runtime_geometry(staged_geometry geometry);
 
 
     // -------------------------
@@ -238,7 +202,6 @@ private:
     templates::common::CommVkLogicalDeviceContext comm_vk_logical_device_context;
     templates::common::CommVkSwapchainContext comm_vk_swapchain_context;
 
-    std::vector<gltf::PerDrawCallData> per_draw_call_data_list;
     std::vector<uint32_t> indices;
     std::vector<gltf::Vertex> vertices;
 
@@ -270,7 +233,11 @@ private:
     swapchain_image_state_tracker swapchain_image_states;
     vulkan_run_statistics run_statistics;
     // --- P2 scene system / geometry arena ---
-    scene::scene_registry* scene_objects = nullptr;
+    const engine::render_snapshot* current_snapshot = nullptr;
+    std::map<engine::geometry_handle, staged_geometry> geometry_allocations;
+    engine::geometry_handle next_geometry_handle = 0;
+    bool shutdown_requested = false;
+    engine::vulkan::render_program render_program;
 
     // 运行时对象的 device-local 大块显存（bump 分配 + 空闲链表回收）
     vk::Buffer arena_vertex_buffer = VK_NULL_HANDLE;

@@ -1,7 +1,7 @@
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #define VULKAN_HPP_NO_CONSTRUCTORS
 
-#include "vulkan_sample.h"
+#include "renderer/vulkan/vulkan_renderer.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -12,9 +12,9 @@
 #include <utility>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_enums.hpp>
+#include <SDL3/SDL_vulkan.h>
 
 #include "_callable/callable.h"
-#include "_interface/camera_system.h"
 #include "_templates/common.hpp"
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE;
@@ -23,11 +23,123 @@ using namespace templates;
 
 static vulkan_sample* active_sample = nullptr;
 
-vulkan_sample::vulkan_sample(engine_config in_config) : config(std::move(in_config))
+vulkan_sample::vulkan_sample(engine::vulkan::render_program program) : render_program(std::move(program))
 {
-    // only one engine initialization is allowed with the application.
     assert(active_sample == nullptr);
     active_sample = this;
+}
+
+engine::result<bool> vulkan_sample::initialize(interface::window& render_window,
+                                                const engine::backend_config& backend_config)
+{
+    engine::result<bool> result;
+    try
+    {
+        int width = 0;
+        int height = 0;
+        render_window.get_extent(width, height);
+        config.width = width;
+        config.height = height;
+        config.application_name = backend_config.application_name;
+        config.working_directory = backend_config.working_directory;
+        config.frame_count = backend_config.frames_in_flight;
+        config.use_validation_layers = backend_config.validation;
+        window = &render_window;
+        // Keep a valid imported legacy buffer while the runtime path routes all
+        // real content through the geometry arena. No legacy draw is emitted.
+        vertices.assign(1, gltf::Vertex{});
+        indices.assign(1, 0);
+        mesh_upload_pending = false;
+        initialize();
+        result.value = true;
+    }
+    catch (const std::exception& error)
+    {
+        result.error = error.what();
+    }
+    return result;
+}
+
+engine::result<engine::geometry_handle> vulkan_sample::upload_geometry(const engine::geometry_asset& asset)
+{
+    engine::result<engine::geometry_handle> result;
+    if (asset.empty())
+    {
+        result.error = "Cannot upload an empty geometry asset";
+        return result;
+    }
+
+    std::vector<gltf::PerDrawCallData> primitives;
+    primitives.reserve(asset.primitives.size());
+    for (const engine::geometry_primitive& source : asset.primitives)
+    {
+        gltf::PerDrawCallData destination{};
+        destination.transform = glm::mat4(1.0F);
+        destination.indices = source.indices;
+        destination.material_index = source.material_index;
+        destination.vertices.reserve(source.vertices.size());
+        for (const engine::vertex& vertex : source.vertices)
+        {
+            destination.vertices.push_back(gltf::Vertex{
+                .position = vertex.position,
+                .color = vertex.color,
+                .normal = vertex.normal,
+                .tangent = vertex.tangent,
+                .uv0 = vertex.uv0,
+                .uv1 = vertex.uv1,
+            });
+        }
+        primitives.push_back(std::move(destination));
+    }
+
+    staged_geometry allocation;
+    if (!stage_runtime_geometry(primitives, allocation))
+    {
+        result.error = "Geometry arena staging failed";
+        return result;
+    }
+    const engine::geometry_handle handle = next_geometry_handle++;
+    geometry_allocations.emplace(handle, std::move(allocation));
+    result.value = handle;
+    return result;
+}
+
+void vulkan_sample::retire_geometry(engine::geometry_handle handle)
+{
+    const auto found = geometry_allocations.find(handle);
+    if (found == geometry_allocations.end())
+    {
+        return;
+    }
+    retire_runtime_geometry(std::move(found->second));
+    geometry_allocations.erase(found);
+}
+
+engine::frame_status vulkan_sample::render(const engine::render_snapshot& snapshot)
+{
+    current_snapshot = &snapshot;
+    const engine::frame_status status = tick();
+    current_snapshot = nullptr;
+    return status;
+}
+
+void vulkan_sample::shutdown() noexcept
+{
+    if (shutdown_requested)
+    {
+        return;
+    }
+    shutdown_requested = true;
+    if (comm_vk_logical_device)
+    {
+        try
+        {
+            (void)comm_vk_logical_device.waitIdle();
+        }
+        catch (...)
+        {
+        }
+    }
 }
 
 void vulkan_sample::initialize()
@@ -40,20 +152,6 @@ void vulkan_sample::initialize()
     // initialize SDL, vulkan, and camera
     initialize_vulkan_hpp();
     initialize_vulkan();
-}
-
-void vulkan_sample::set_vertex_index_data(std::vector<gltf::PerDrawCallData> per_draw_call_data,
-                                      std::vector<uint32_t> all_indices,
-                                      std::vector<gltf::Vertex> all_vertices)
-{
-    per_draw_call_data_list = std::move(per_draw_call_data);
-    indices                 = std::move(all_indices);
-    vertices                = std::move(all_vertices);
-}
-
-void vulkan_sample::set_mesh_list(const std::vector<gltf::PerMeshData>& all_mesh_list)
-{
-    this->mesh_list = all_mesh_list;
 }
 
 vulkan_sample::~vulkan_sample()
@@ -255,7 +353,7 @@ vulkan_frame_status vulkan_sample::tick()
     {
         return vulkan_frame_status::skipped;
     }
-    if (current_width != config.window_config.width || current_height != config.window_config.height)
+    if (current_width != config.width || current_height != config.height)
     {
         resize_request = true;
     }
@@ -304,7 +402,15 @@ void vulkan_sample::generate_frame_structs()
 
 bool vulkan_sample::create_instance()
 {
-    auto extensions = window->get_required_instance_extensions();
+    const interface::native_window_handle native = window->native_handle();
+    if (native.kind != interface::native_window_kind::sdl3 || native.value == nullptr)
+    {
+        Logger::LogError("Vulkan renderer requires an SDL3 native window handle");
+        return false;
+    }
+    uint32_t extension_count = 0;
+    const char* const* extension_names = SDL_Vulkan_GetInstanceExtensions(&extension_count);
+    std::vector<const char*> extensions(extension_names, extension_names + extension_count);
     std::vector<const char*> validation_layers;
     if (config.use_validation_layers)
     {
@@ -392,7 +498,12 @@ VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_sample::validation_callback(
 
 bool vulkan_sample::create_surface()
 {
-    return window->create_vulkan_surface(comm_vk_instance, &surface);
+    const interface::native_window_handle native = window->native_handle();
+    if (native.kind != interface::native_window_kind::sdl3 || native.value == nullptr)
+    {
+        return false;
+    }
+    return SDL_Vulkan_CreateSurface(static_cast<SDL_Window*>(native.value), comm_vk_instance, nullptr, &surface);
 }
 
 bool vulkan_sample::create_physical_device()
@@ -451,8 +562,8 @@ bool vulkan_sample::create_swapchain()
     auto swapchain_chain = common::swapchain::create_swapchain_context(comm_vk_logical_device_context, surface) |
                            common::swapchain::set_surface_format(vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear) |
                            common::swapchain::set_present_mode(vk::PresentModeKHR::eFifo) | common::swapchain::set_image_count(2, 3) |
-                           common::swapchain::set_desired_extent(static_cast<uint32_t>(config.window_config.width),
-                                                                 static_cast<uint32_t>(config.window_config.height)) |
+                           common::swapchain::set_desired_extent(static_cast<uint32_t>(config.width),
+                                                                 static_cast<uint32_t>(config.height)) |
                            common::swapchain::query_surface_support() | common::swapchain::select_swapchain_settings() |
                            common::swapchain::create_swapchain();
 
@@ -628,7 +739,7 @@ bool vulkan_sample::create_pipeline()
 
     std::vector<SVulkanShaderConfig> shader_configs;
     const std::filesystem::path shader_path =
-        std::filesystem::path(config.general_config.working_directory) / "src" / "shader";
+        std::filesystem::path(config.working_directory) / "src" / "shader";
     // std::string vertex_shader_path = shader_path + "triangle.vert.spv";
     // std::string fragment_shader_path = shader_path + "triangle.frag.spv";
     std::string vertex_shader_path   = (shader_path / "gltf.vert.spv").string();
@@ -920,8 +1031,8 @@ bool vulkan_sample::resize_swapchain()
     comm_vk_swapchain = VK_NULL_HANDLE;
 
     // reset window size
-    config.window_config.width  = width;
-    config.window_config.height = height;
+    config.width  = width;
+    config.height = height;
 
     // create new swapchain
     if (!create_swapchain())
@@ -1121,7 +1232,7 @@ bool vulkan_sample::build_render_graph(uint32_t image_index)
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
 
-    frame_graph->add_raster_pass("DrawPass", [this, local_desc, uniform_desc, swapchain_desc, depth_desc, extent, swapchain_initialized, arena_vertex_desc, arena_index_desc](setup_context& ctx)
+    frame_graph->add_raster_pass(render_program.pass_name, [this, local_desc, uniform_desc, swapchain_desc, depth_desc, extent, swapchain_initialized, arena_vertex_desc, arena_index_desc](setup_context& ctx)
     {
         const render_graph::buffer_access_desc mesh_read{
             .usage = render_graph::buffer_usage::VERTEX_BUFFER | render_graph::buffer_usage::INDEX_BUFFER,
@@ -1189,7 +1300,10 @@ bool vulkan_sample::build_render_graph(uint32_t image_index)
         ctx.add_color_attachment(rg_swapchain,
                                  render_graph::attachment_load_op::clear,
                                  render_graph::attachment_store_op::store,
-                                 render_graph::clear_value{.color = {0.1F, 0.1F, 0.1F, 1.0F}});
+                                 render_graph::clear_value{.color = {render_program.clear_color.r,
+                                                                     render_program.clear_color.g,
+                                                                     render_program.clear_color.b,
+                                                                     render_program.clear_color.a}});
         ctx.set_depth_stencil_attachment(rg_depth,
                                          render_graph::attachment_load_op::clear,
                                          render_graph::attachment_store_op::dont_care,
@@ -1242,16 +1356,8 @@ bool vulkan_sample::build_render_graph(uint32_t image_index)
                            sizeof(glm::mat4),
                            &identity_model);
 
-        for (const auto& mesh : mesh_list)
-        {
-            for (const auto& primitive : mesh.primitives)
-            {
-                vkCmdDrawIndexed(commands, primitive.index_count, 1, primitive.first_index, 0, 0);
-            }
-        }
-
-        // P2 双轨绘制：可见的运行时对象逐个 push model 后绘制其 arena 区间
-        if (scene_objects != nullptr)
+        // Draw immutable frame data through opaque geometry handles.
+        if (current_snapshot != nullptr)
         {
             const VkBuffer arena_vertex = ctx.resources.buffer(rg_arena_vertex);
             const VkBuffer arena_index  = ctx.resources.buffer(rg_arena_index);
@@ -1259,20 +1365,20 @@ bool vulkan_sample::build_render_graph(uint32_t image_index)
             vkCmdBindVertexBuffers(commands, 0, 1, &arena_vertex, &arena_base_offset);
             vkCmdBindIndexBuffer(commands, arena_index, 0, VK_INDEX_TYPE_UINT32);
 
-            for (const scene::scene_object* object : scene_objects->objects())
+            for (const engine::render_object& object : current_snapshot->objects)
             {
-                if (!object->visible || object->draws.empty())
+                const auto allocation = geometry_allocations.find(object.geometry);
+                if (allocation == geometry_allocations.end())
                 {
                     continue;
                 }
-                const glm::mat4 model = scene::model_matrix(object->transform);
                 vkCmdPushConstants(commands,
                                    static_cast<VkPipelineLayout>(vk_pipeline_helper->GetPipelineLayout()),
                                    VK_SHADER_STAGE_VERTEX_BIT,
                                    0,
                                    sizeof(glm::mat4),
-                                   &model);
-                for (const scene::draw_range& range : object->draws)
+                                   &object.model);
+                for (const engine::draw_range& range : allocation->second.draws)
                 {
                     vkCmdDrawIndexed(commands, range.index_count, 1, range.first_index, range.vertex_offset, 0);
                 }
@@ -1357,8 +1463,9 @@ bool vulkan_sample::record_command(uint32_t image_index, const std::string& comm
 void vulkan_sample::update_uniform_buffer(uint32_t current_frame_index)
 {
     mvp_matrices[current_frame_index].model        = glm::mat4(1.0F);
-    mvp_matrices[current_frame_index].view         = interface::get_view_matrix(camera_container->transforms[camera_entity_index]);
-    mvp_matrices[current_frame_index].projection   = interface::get_projection_matrix(camera_container->transforms[camera_entity_index], camera_container->configs[camera_entity_index]);
+    assert(current_snapshot != nullptr);
+    mvp_matrices[current_frame_index].view = current_snapshot->view;
+    mvp_matrices[current_frame_index].projection = current_snapshot->projection;
     // reverse the Y-axis in Vulkan's NDC coordinate system
     mvp_matrices[current_frame_index].projection[1][1] *= -1;
 
@@ -1693,7 +1800,7 @@ bool vulkan_sample::stage_runtime_geometry(const std::vector<gltf::PerDrawCallDa
     result.draws.reserve(primitives.size());
     for (std::size_t i = 0; i < primitives.size(); ++i)
     {
-        result.draws.push_back(scene::draw_range{
+        result.draws.push_back(engine::draw_range{
             .first_index   = static_cast<uint32_t>(spans[i].index_offset / sizeof(uint32_t)),
             .index_count   = static_cast<uint32_t>(primitives[i].indices.size()),
             .vertex_offset = static_cast<int32_t>(spans[i].vertex_offset / sizeof(gltf::Vertex)),

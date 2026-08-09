@@ -1,8 +1,6 @@
 #pragma once
 
 #include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-
 #include "window.h"
 
 namespace interface
@@ -25,11 +23,7 @@ namespace interface
 
         bool should_close() const override;
 
-        // Vulkan integration implementation
-
-        std::vector<const char*> get_required_instance_extensions() const override;
-
-        bool create_vulkan_surface(VkInstance instance, VkSurfaceKHR* surface) const override;
+        [[nodiscard]] native_window_handle native_handle() const noexcept override;
 
         // Window properties implementation
 

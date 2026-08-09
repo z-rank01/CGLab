@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_enums.hpp>
 
@@ -253,7 +254,14 @@ void vulkan_sample::generate_frame_structs()
 
 bool vulkan_sample::create_instance()
 {
-    auto extensions     = window->get_required_instance_extensions();
+    const interface::native_window_handle native = window->native_handle();
+    if (native.kind != interface::native_window_kind::sdl3 || native.value == nullptr)
+    {
+        return false;
+    }
+    uint32_t extension_count = 0;
+    const char* const* extension_names = SDL_Vulkan_GetInstanceExtensions(&extension_count);
+    std::vector<const char*> extensions(extension_names, extension_names + extension_count);
     auto instance_chain = common::instance::create_context() | common::instance::set_application_name("My Vulkan App") |
                           common::instance::set_engine_name("My Engine") | common::instance::set_api_version(1, 3, 0) |
                           common::instance::add_validation_layers({"VK_LAYER_KHRONOS_validation"}) | common::instance::add_extensions(extensions) |
@@ -276,7 +284,12 @@ bool vulkan_sample::create_instance()
 
 bool vulkan_sample::create_surface()
 {
-    return window->create_vulkan_surface(comm_vk_instance, &surface);
+    const interface::native_window_handle native = window->native_handle();
+    if (native.kind != interface::native_window_kind::sdl3 || native.value == nullptr)
+    {
+        return false;
+    }
+    return SDL_Vulkan_CreateSurface(static_cast<SDL_Window*>(native.value), comm_vk_instance, nullptr, &surface);
 }
 
 bool vulkan_sample::create_physical_device()

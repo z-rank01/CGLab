@@ -1,12 +1,4 @@
 cmake_minimum_required(VERSION 3.20)
-project(VulkanSample LANGUAGES CXX)
-
-include(CTest)
-
-# 启用 C++23 标准
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)  # 避免使用编译器特定扩展
 
 # 设置 vcpkg 工具链文件（如果未通过命令行指定）
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
@@ -16,6 +8,15 @@ endif()
 
 # 设置 vcpkg 清单模式
 set(VCPKG_MANIFEST_MODE ON)
+
+project(VulkanSample LANGUAGES CXX)
+
+include(CTest)
+
+# 启用 C++20 标准
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)  # 避免使用编译器特定扩展
 
 # 查找依赖
 find_package(Vulkan REQUIRED)
@@ -32,6 +33,7 @@ add_subdirectory(src/_old)
 add_subdirectory(src/_callable)
 add_subdirectory(src/_vra)
 add_subdirectory(src/_templates)
+add_subdirectory(src/engine)
 add_subdirectory(src/_interface)
 add_subdirectory(src/control_plane)
 # add_subdirectory(src/render_graph)
@@ -46,6 +48,7 @@ set(DCL_BUILD_SAMPLES ${CGLAB_BUILD_DCL_SAMPLES} CACHE BOOL "Build sample/test e
 # Exclude third-party targets (notably sample executables) from the default ALL build.
 # The required library targets will still be built because VulkanSample links against them.
 add_subdirectory(third_party/digital-content-loader EXCLUDE_FROM_ALL)
+add_subdirectory(src/asset)
 
 # third_party/render-graph
 option(CGLAB_BUILD_RENDER_GRAPH_SAMPLES "Build render-graph sample executables" OFF)
@@ -69,10 +72,7 @@ endif()
 # 设置源文件
 set(SOURCES
     src/main.cpp
-    src/application_options.cpp
     src/smoke_scene.cpp
-    src/vulkan_sample.cpp
-    src/app_sample.cpp
 )
 
 # 设置头文件
@@ -80,12 +80,80 @@ set(HEADERS
     src/application_options.h
     src/smoke_scene.h
     src/swapchain_image_state.h
-    src/vulkan_sample.h
-    src/app_sample.h
 )
+
+add_library(cglab_vulkan_renderer STATIC
+    src/renderer/vulkan/vulkan_renderer.cpp
+    src/renderer/vulkan/vulkan_renderer.h
+    src/swapchain_image_state.h
+    src/renderer/vulkan/create_vulkan_renderer.cpp
+    src/renderer/vulkan/create_vulkan_renderer.h
+    src/renderer/vulkan/render_program.h
+)
+
+target_include_directories(cglab_vulkan_renderer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(cglab_vulkan_renderer
+  PUBLIC cglab_engine_core
+  PRIVATE
+    Vulkan::Vulkan
+    GPUOpen::VulkanMemoryAllocator
+    SDL3::SDL3
+    glm::glm
+    vk-bootstrap::vk-bootstrap
+    utility
+    vulkan_resource_allocator
+    vulkan_old_class
+    callable
+    template
+    render_graph
+    dcl::gltf
+)
+
+add_library(cglab_framework_runtime STATIC
+    src/framework/engine_runtime.cpp
+    src/framework/engine_runtime.h
+    src/framework/asset_service.h
+    src/framework/runtime_config.h
+)
+
+target_include_directories(cglab_framework_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(cglab_framework_runtime
+  PUBLIC cglab_engine_core
+  PRIVATE
+    cglab_platform_sdl
+    cglab_asset_gltf
+    control_plane
+    utility
+    $<$<PLATFORM_ID:Windows>:bcrypt>
+)
+
+add_library(cglab_application_runner STATIC
+    src/apps/application_runner.cpp
+    src/apps/application_runner.h
+    src/application_options.cpp
+    src/application_options.h
+)
+target_include_directories(cglab_application_runner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(cglab_application_runner PUBLIC cglab_framework_runtime PRIVATE utility)
+
+if(MSVC)
+    target_compile_options(cglab_vulkan_renderer PRIVATE /W4 /FS /utf-8)
+    target_compile_options(cglab_framework_runtime PRIVATE /W4 /FS /utf-8)
+    target_compile_options(cglab_application_runner PRIVATE /W4 /FS /utf-8)
+endif()
 
 # 添加可执行文件
 add_executable(VulkanSample ${SOURCES} ${HEADERS})
+
+add_executable(TriangleSample
+    src/apps/triangle_sample.cpp
+)
+target_include_directories(TriangleSample PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(TriangleSample PRIVATE cglab_application_runner cglab_vulkan_renderer)
+target_compile_definitions(TriangleSample PRIVATE CGLAB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+if(MSVC)
+    target_compile_options(TriangleSample PRIVATE /W4 /FS /utf-8)
+endif()
 
 if(CGLAB_BUILD_LEGACY_VULKAN_SAMPLE)
     add_subdirectory(src/legacy_vulkan_sample EXCLUDE_FROM_ALL)
@@ -94,21 +162,11 @@ endif()
 # 链接库
 target_link_libraries(VulkanSample
   PRIVATE
-    Vulkan::Vulkan
-    GPUOpen::VulkanMemoryAllocator
-    SDL3::SDL3
     glm::glm
-    vk-bootstrap::vk-bootstrap
-    imgui::imgui
-    utility                         # 添加 utility 库
-    vulkan_resource_allocator       # 添加 vra 库
-        dcl::gltf                       # glTF loader/parser (third_party/digital-content-loader)
-    vulkan_old_class                # 添加旧的 Vulkan 类库
-    callable                        # 添加可调用库
-    template                        # 添加模板库
-    render_graph                    # 添加渲染图库
-    interface                       # 添加平台库
-    control_plane                   # 添加控制平面库（Web UI 后端）
+    dcl::gltf
+    cglab_application_runner
+    cglab_vulkan_renderer
+    utility
     $<$<PLATFORM_ID:Windows>:bcrypt>   # mbedtls (ixwebsocket) 需要 BCryptGenRandom
 )
 
@@ -151,7 +209,7 @@ if(BUILD_TESTING)
         src/unit_test/camera_input_test.cpp
     )
     target_include_directories(cglab_camera_input_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(cglab_camera_input_tests PRIVATE interface glm::glm)
+    target_link_libraries(cglab_camera_input_tests PRIVATE cglab_platform_sdl)
     if(MSVC)
         target_compile_options(cglab_camera_input_tests PRIVATE /FS /utf-8)
     endif()
@@ -161,7 +219,7 @@ if(BUILD_TESTING)
         src/unit_test/camera_rig_test.cpp
     )
     target_include_directories(cglab_camera_rig_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(cglab_camera_rig_tests PRIVATE interface glm::glm)
+    target_link_libraries(cglab_camera_rig_tests PRIVATE cglab_engine_core)
     if(MSVC)
         target_compile_options(cglab_camera_rig_tests PRIVATE /FS /utf-8)
     endif()
@@ -191,6 +249,42 @@ if(BUILD_TESTING)
         target_compile_options(cglab_control_plane_protocol_tests PRIVATE /FS /utf-8)
     endif()
     add_test(NAME cglab.control_plane_protocol COMMAND cglab_control_plane_protocol_tests)
+
+    add_executable(cglab_engine_runtime_tests
+        src/unit_test/engine_runtime_test.cpp
+    )
+    target_include_directories(cglab_engine_runtime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(cglab_engine_runtime_tests PRIVATE cglab_framework_runtime)
+    if(MSVC)
+        target_compile_options(cglab_engine_runtime_tests PRIVATE /FS /utf-8)
+    endif()
+    add_test(NAME cglab.engine_runtime COMMAND cglab_engine_runtime_tests)
+
+    add_executable(cglab_public_headers_tests src/unit_test/public_headers_test.cpp)
+    target_include_directories(cglab_public_headers_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(cglab_public_headers_tests PRIVATE cglab_framework_runtime)
+    if(MSVC)
+        target_compile_options(cglab_public_headers_tests PRIVATE /FS /utf-8)
+    endif()
+    add_test(NAME cglab.public_headers COMMAND cglab_public_headers_tests)
+
+    add_executable(cglab_asset_gltf_tests src/unit_test/asset_gltf_test.cpp)
+    target_include_directories(cglab_asset_gltf_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(cglab_asset_gltf_tests PRIVATE cglab_asset_gltf)
+    target_compile_definitions(cglab_asset_gltf_tests PRIVATE CGLAB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    if(MSVC)
+        target_compile_options(cglab_asset_gltf_tests PRIVATE /FS /utf-8)
+    endif()
+    add_test(NAME cglab.asset_gltf COMMAND cglab_asset_gltf_tests)
+
+    add_executable(cglab_asset_service_tests src/unit_test/asset_service_test.cpp)
+    target_include_directories(cglab_asset_service_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(cglab_asset_service_tests PRIVATE cglab_asset_gltf)
+    target_compile_definitions(cglab_asset_service_tests PRIVATE CGLAB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    if(MSVC)
+        target_compile_options(cglab_asset_service_tests PRIVATE /FS /utf-8)
+    endif()
+    add_test(NAME cglab.asset_service COMMAND cglab_asset_service_tests)
 endif()
 
 # 设置特定于编译器的警告选项

@@ -1,7 +1,6 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
-
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -10,6 +9,18 @@
 
 namespace interface
 {
+
+    enum class native_window_kind : std::uint8_t
+    {
+        unknown,
+        sdl3,
+    };
+
+    struct native_window_handle
+    {
+        native_window_kind kind = native_window_kind::unknown;
+        void* value = nullptr;
+    };
 
     struct window_config
     {
@@ -35,11 +46,8 @@ namespace interface
 
         virtual bool should_close() const = 0;
 
-        // Vulkan integration
-
-        virtual std::vector<const char*> get_required_instance_extensions() const = 0;
-
-        virtual bool create_vulkan_surface(VkInstance instance, VkSurfaceKHR* surface) const = 0;
+        // Backend-specific integrations consume this opaque, tagged handle.
+        [[nodiscard]] virtual native_window_handle native_handle() const noexcept = 0;
 
         // Window properties
 

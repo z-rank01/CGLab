@@ -2,6 +2,8 @@
 
 #include "logger.h"
 
+#include <vulkan/vulkan.h>
+
 // 全局日志对象
 extern Logger kLogger;
 
@@ -54,7 +56,7 @@ void Logger::LogError(const std::string& message)
 /// @param messageOnFail message content on failure
 /// @param level level of the log message (default is error)
 /// @return true if the result is success, otherwise false
-bool Logger::LogWithVkResult(VkResult result, const std::string& messageOnFail, const std::string& messageOnSuccess)
+bool Logger::LogWithVkResult(std::int32_t result, const std::string& messageOnFail, const std::string& messageOnSuccess)
 {
     if (IsVulkanResultSuccess(result))
     {
@@ -71,7 +73,7 @@ bool Logger::LogWithVkResult(VkResult result, const std::string& messageOnFail, 
 /// @brief convert Vulkan API result to human-readable string
 /// @param result Vulkan API result code
 /// @return human-readable string of the result
-std::string Logger::VulkanResultToString(VkResult result)
+std::string Logger::VulkanResultToString(std::int32_t result)
 {
     switch (result)
     {
@@ -121,7 +123,7 @@ std::string Logger::VulkanResultToString(VkResult result)
 /// @brief check if the Vulkan API result is success
 /// @param result Vulkan API result code
 /// @return true if the result is success, otherwise false
-bool Logger::IsVulkanResultSuccess(VkResult result)
+bool Logger::IsVulkanResultSuccess(std::int32_t result)
 {
     return result == VK_SUCCESS;
 }

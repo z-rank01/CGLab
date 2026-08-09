@@ -13,6 +13,6 @@ target_include_directories(utility
 
 # 链接 Vulkan
 target_link_libraries(utility
-    PUBLIC
+    PRIVATE
         Vulkan::Vulkan
 )

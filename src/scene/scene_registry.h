@@ -10,6 +10,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "engine/geometry.h"
+
 // scene::scene_registry
 // - P2 场景系统核心：场景对象注册表（DoD 风格槽位存储，纯数据，无 Vulkan 依赖，可单测）。
 // - 职责：对象生命周期（注册/卸载）、变换、显隐、选中、射线拾取（AABB）。
@@ -54,6 +56,7 @@ namespace scene
         bool read_only = false;   // 启动资产：可列出/选中，不可卸载
         aabb local_bounds{};
         std::vector<draw_range> draws; // 启动资产为空（走 legacy buffer）
+        engine::geometry_handle render_geometry = engine::invalid_geometry_handle;
     };
 
     struct ray
@@ -102,7 +105,8 @@ namespace scene
     public:
         // 注册对象，返回单调递增的 id。槽位内部复用，id 不复用。
         object_id register_object(std::string name, const aabb& local_bounds, std::vector<draw_range> draws,
-                                  bool read_only = false)
+                                  bool read_only = false,
+                                  engine::geometry_handle geometry = engine::invalid_geometry_handle)
         {
             scene_object object;
             object.id          = next_id++;
@@ -110,6 +114,7 @@ namespace scene
             object.local_bounds = local_bounds;
             object.draws       = std::move(draws);
             object.read_only   = read_only;
+            object.render_geometry = geometry;
 
             std::size_t slot;
             if (!free_slots.empty())
