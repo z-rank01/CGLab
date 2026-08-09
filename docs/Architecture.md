@@ -1,7 +1,7 @@
 ## CG Lab 渲染引擎架构
 
-> v2（2026-08）：根据 InterfaceRedesign P0–P2 落地后的现状修订。
-> v1 的三层思想与 DoD/函数式准则保持不变；本版修正现状盘点、补齐层级图、重排优先级。
+> v3（2026-08）：engine runtime / Vulkan renderer 抽取完成后的 as-built 修订。
+> v2 的四层模型与 DoD/函数式准则保持不变。
 
 当前的渲染引擎还没有实现真正的解耦合和高性能，我的理想思维框架图应该是分层分模块，且高性能，极低耦合的。
 
@@ -41,6 +41,11 @@
 ### 现状盘点（2026-08，InterfaceRedesign P0–P2 之后）
 
 **已解决**（不要重复劳动，也不要推翻）：
+- 框架复用：`cglab_framework_runtime` 已拥有窗口、显式帧 phase、camera/scene、控制平面与 asset service；应用不再复制帧循环
+- 渲染边界：Vulkan-free `engine::render_backend` / `render_snapshot` / `geometry_handle` 已落地；renderer 不再持有可变 camera/scene 指针
+- GPU geometry：启动资产和运行时资产统一走 geometry arena，scene 只保存 opaque handle；上传/延迟回收状态留在 Vulkan renderer
+- 构建边界：已有 `cglab_engine_core`、`cglab_platform_sdl`、`cglab_asset_gltf`、`cglab_framework_runtime`、`cglab_vulkan_renderer`、`cglab_application_runner`
+- Sample 复用：VulkanSample 已迁移到共享 runtime；TriangleSample 以独立 `TrianglePass` 验证第二个 exe（应用文件 100 行以内）
 - 输入路由：物理输入 → 逻辑动作的绑定表已数据化（`input_router.h`）；wasd 不再定死，未来换成 JSON 序列化驱动是顺手的事
 - 相机 SoA：`camera_container` 已是 SoA + 纯函数（fly/orbit/bookmark 多模式），为未来多相机做的准备已到位
 - 场景：`scene_registry` 为 flat component-based 槽位存储；多对象、运行时异步加载 glTF 已实现
@@ -48,15 +53,15 @@
 - 业务组件单测：camera / scene / json_rpc 均不依赖 Vulkan、有 CTest 覆盖
 
 **部分解决（欠债清单）**：
-- camera / scene / loader 的**所有权**仍在 app_sample（组件实体已在，生命周期仍由应用层管理）
 - glTF 节点变换在加载时烘焙进顶点，**层级信息丢失**（静态展示够用；未来动画/局部变换需还这笔债）
 - scene 目前为 flat 结构，无 parent-child 层级
+- Vulkan renderer 已成为独立 target 和 backend façade，但设备/swapchain/pipeline 的内部实现仍集中在 `vulkan_sample.cpp`，后续只做内部拆分，不再影响 framework API
 
 **未解决**：
-- app_sample / vulkan_sample god object：每写一个 sample 都要复制帧循环、窗口、控制平面、异步加载
-- 渲染设备执行模块未独立，RHI 决策未做（见下）
+- Vulkan renderer 内部 device/swapchain/pipeline 模块尚未物理拆文件
 - 基础设施完全空白（job system、benchmark）
 - DCL 仅支持 ASCII `.gltf`（`.glb`/fbx/obj 未支持）
+- vcpkg 当前使用完整哈希校验通过的 tinygltf 3.0.0；2.9.x registry 源包哈希异常时不允许本地改哈希绕过
 
 ### 待决策：RHI（渲染设备抽象）
 
@@ -70,11 +75,10 @@ app 清单含 ray_tracing_dx_sample，涉及跨 API：
 
 对应到前面的层级和模块，当前除了 render graph 和 digital content loader 通过子模块单独分出来以外，其余部分要么没实现、要么耦合在一起。所以我个人的接下来的计划是（v2 重排，理由见每条附注）：
 
-**1. 引擎框架层抽取（最高优先，先于 job system）**
-- app_sample → 可复用 engine_runtime 库：窗口、帧循环、相机容器、控制平面、scene_registry、异步加载调度全部下沉框架层；app 只剩场景内容 + pass + 专属面板。
-- vulkan_sample 拆分为"渲染设备执行模块"（业务组件层）+ app 侧 pass 组织；VulkanSample.exe 变成第一个"瘦 app"，同时作为回归基准。
-- 验收：用 engine_runtime 写一个 <100 行的第二个 sample exe 可运行；现有 CTest / smoke / 端到端验证全绿。
-- 附注：camera/scene"从 app 层摘出来"是这一步的自然结果，不单独立项。
+**1. 引擎框架层抽取（已完成）**
+- runtime、asset service、backend snapshot/geometry handle 边界和第二个 TriangleSample 已落地。
+- CPU/Render Graph 自动测试覆盖公共头隔离、fake runtime、glTF adapter 与异步 asset service。
+- 剩余工作仅是 Vulkan renderer 内部文件级拆分，以及在装有 validation layer 的机器上补 GPU validation smoke。
 
 **2. 业务组件层完善**
 - camera 组件：

@@ -11,7 +11,7 @@
 |---|---|---|
 | **P0 控制平面** | `src/control_plane/`：JSON-RPC 2.0 over WebSocket（localhost:17381，ixwebsocket） | IO 线程解析校验入队、主线程帧边界消费；10Hz `telemetry.frame`；`session.init/debug.echo/frame.pause/resume/step`；CLI `--no-ui/--ui-port/--ui-open-browser` |
 | **P1 相机与输入** | `input_router.h` 绑定表；fly/orbit/bookmark 多模式相机（SoA 不变） | `camera.set_mode/set_params/get_state/bookmark.*`；FOV 钳制修复（min/max_fov 可配） |
-| **P2 场景系统** | `src/scene/scene_registry.h`；geometry arena 双轨绘制；异步 glTF 加载 | `scene.load_asset/unload/set_visibility/set_transform/select/list`；`telemetry.scene`；fly 左键射线拾取；启动资产登记只读条目 |
+| **P2 场景系统** | `src/scene/scene_registry.h`；统一 geometry arena；异步 glTF 加载 | `scene.load_asset/unload/set_visibility/set_transform/select/list`；`telemetry.scene`；fly 左键射线拾取；启动资产登记只读条目 |
 | dev console | `scripts/control_plane_dev_console.html`（非正式 UI，不入库提交） | 帧控制、相机面板、场景面板（列表/加载/显隐/选中/变换） |
 
 **与 v1 设计的偏差（刻意决策，非遗漏）**：
@@ -32,14 +32,14 @@
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **I0 框架层抽取**（架构前置，详见 Architecture.md 计划 1） | app_sample → engine_runtime 库（窗口/帧循环/相机容器/控制平面/scene/加载调度下沉）；VulkanSample.exe 变"瘦 app" | <100 行第二个 sample 可运行；CTest/smoke/端到端全绿 |
+| **I0 框架层抽取（已完成）** | `cglab_framework_runtime` 持有窗口/帧循环/camera/scene/control/asset service；VulkanSample 与 TriangleSample 共享 runtime | TriangleSample 应用文件 100 行以内；runtime 可注入 fake window/backend/asset service 做 CTest |
 | **I1 协议收尾 + UI 托管** | 协议文档化（methods/telemetry 的 JSON Schema 固化进 `docs/`）；控制平面加 HTTP 静态文件服务，`--ui-open-browser` 真正生效 | 启动引擎即开浏览器可用 dev console；协议文档与实现对齐有测试 |
 | **I2 正式 Web UI v1** | `ui/`（Vite+React+TS）：dock 布局（dockview）、场景树/检视器/相机/帧控制/资产加载/console 面板，布局 localStorage 持久化 | 浏览器打开即完整覆盖 dev console 全部能力；UI 关掉引擎无恙 |
 | **I3 RG 可视化** | `debug_dump()` JSON 化（passes/resources/edges）经控制平面下发；React Flow DAG；pass timestamp 时序瀑布 | recompile 后图自动更新；能定位最慢 pass |
 | **I4 单窗口 B1** | webview 壳（saucer/CEF/Ultralight 选型 spike 先行）+ SDL 视口 HWND 子区域嵌入；焦点规则：进视口归引擎、出视口归 UI | 单窗口编辑器外观；画面零拷贝零延迟；`--no-ui`/浏览器模式仍可用 |
 | **I5 按需备选** | B2（UI 纹理 → RG overlay pass + 输入转发）；gizmo 与拾取高亮；截图/倍速；输入 mapping JSON 化 | 以 I4 体验与授权/体积评估为准 |
 
-依赖关系：I0 是一切地基（UI 面板挂在框架层 API 上）；I1 依赖 I0；I2 依赖 I1；I3 依赖 I2；I4 依赖 I2；I5 依赖 I4 选型结论。
+依赖关系：I0 已完成；I1 可直接开始。I2 依赖 I1；I3 依赖 I2；I4 依赖 I2；I5 依赖 I4 选型结论。
 
 **与原 v1 排序的差异**：原 P3（Web UI）前插入 I0/I1。原因——Architecture v2 确认 app_sample god object 是复用的最大瓶颈，且正式 UI 的所有面板都应挂在框架层 API 上而不是 app_sample 的私有结构上；dev console 已够日常调试，UI 正式化不再是最高优先。
 
@@ -54,7 +54,7 @@
 
 ## 5. 还债清单（计入对应阶段）
 
-- I0：camera/scene/loader 所有权从 app_sample 下沉；`vulkan_sample` 拆渲染设备执行模块。
+- I0：已完成 camera/scene/loader 所有权下沉与 Vulkan renderer target/façade；renderer 内部物理拆文件留作不改变接口的维护任务。
 - I1：`docs/` 补协议 JSON Schema（从 `json_rpc.cpp` 的校验逻辑反生成，避免文档漂移）。
 - I2：拾取高亮（选中对象描边/变色需要 shader 或 overlay pass，随正式 UI 一起做）。
 - scene 层级（flat SoA + parent_index + transform 传播 system）属 Architecture 计划 2，完成后 Interface 侧补"场景树按层级显示"（当前 flat 列表）。

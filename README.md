@@ -33,6 +33,24 @@
 
 旧版手写实现保存在 `src/legacy_vulkan_sample`，仅在启用 `CGLAB_BUILD_LEGACY_VULKAN_SAMPLE` 时生成 `VulkanSampleLegacy` target。
 
+## Runtime 与 Samples
+
+当前构建拆分为 `cglab_engine_core`、`cglab_platform_sdl`、`cglab_asset_gltf`、`cglab_framework_runtime`、`cglab_vulkan_renderer` 和 `cglab_application_runner`。framework/engine 公共头不暴露 Vulkan、SDL 或 glTF 类型；应用通过 `engine::render_backend`、`render_snapshot` 和 opaque `geometry_handle` 与 renderer 交互。共享 runner 统一 CLI、退出码、validation 与 smoke counter 检查。
+
+默认生成两个应用：
+
+- `VulkanSample`：支持配置/资产加载、控制平面与 smoke contract 的主示例。
+- `TriangleSample`：最小内存三角形，用于验证第二个应用复用同一 runtime。
+
+```powershell
+cmake -S . -B build -DCGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS=ON
+cmake --build build --config Debug
+ctest --test-dir build -C Debug --output-on-failure
+./build/TriangleSample.exe --smoke-test --frames 6 --no-ui
+```
+
+依赖清单使用 vcpkg 已验证的 `tinygltf 3.0.0`。旧的 2.9.x registry 源包哈希已无法通过官方校验，因此没有采用修改哈希或跳过校验的方式继续使用它。GPU validation smoke 需要系统安装 `VK_LAYER_KHRONOS_validation`。
+
 ---
 
 # Vulkan Functional Framework
