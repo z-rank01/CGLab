@@ -9,7 +9,7 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
 endif()
 set(VCPKG_MANIFEST_MODE ON)
 
-project(VulkanSample LANGUAGES CXX)
+project(CGLab LANGUAGES CXX)
 
 include(CTest)
 
@@ -25,7 +25,7 @@ option(CGLAB_BUILD_DCL_SAMPLES "Build digital-content-loader sample executables"
 option(CGLAB_BUILD_RENDER_GRAPH_SAMPLES "Build render-graph sample executables" OFF)
 option(CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS "Build render-graph CTest executable" OFF)
 option(CGLAB_RENDER_GRAPH_SHARED "Build render_graph as a shared library (DLL)" OFF)
-option(CGLAB_BUILD_LEGACY_VULKAN_SAMPLE "Build the protected pre-render-graph VulkanSample target" OFF)
+option(CGLAB_BUILD_LEGACY_VULKAN_SAMPLE "Build the protected pre-render-graph legacy snapshot" OFF)
 
 set(DCL_BUILD_SAMPLES ${CGLAB_BUILD_DCL_SAMPLES}
     CACHE BOOL "Build sample/test executables (digital-content-loader)" FORCE

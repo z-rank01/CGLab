@@ -1,6 +1,6 @@
 #include "asset/asset_service.h"
 
-#include "asset/gltf_adapter.h"
+#include "asset/geometry_loader.h"
 
 #include <iterator>
 
@@ -92,7 +92,7 @@ namespace asset
             {
                 resolved = base_directory / resolved;
             }
-            completed_request output{.id = request.id, .result = load_gltf(resolved)};
+            completed_request output{.id = request.id, .result = load_geometry(resolved)};
             {
                 std::lock_guard lock(mutex);
                 completed.push_back(std::move(output));

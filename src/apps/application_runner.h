@@ -7,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-#include "application_options.h"
+#include "apps/application_options.h"
 #include "engine/render_backend.h"
 #include "framework/runtime_config.h"
 #include "framework/sample.h"
@@ -36,5 +36,6 @@ namespace apps
     [[nodiscard]] int run_application(int argc,
                                       char** argv,
                                       std::string_view executable_name,
-                                      const application_setup& setup);
+                                      const application_setup& setup,
+                                      application_cli cli = {});
 }

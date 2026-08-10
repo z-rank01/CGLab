@@ -26,6 +26,7 @@ namespace control_plane
         bool enabled = true;
         std::uint16_t port = default_port;
         bool open_browser = false; // P3 预留：当前无 HTTP 静态服务，暂为空操作
+        std::string server_name = "CGLab";
     };
 
     struct control_plane_statistics
@@ -66,6 +67,8 @@ namespace control_plane
         void post_response(const std::string& client_id, const nlohmann::json& response);
 
     private:
+        [[nodiscard]] std::string_view server_name() const noexcept { return server_name_value; }
+
         // IO 线程入口：解析 + 校验 + 入队/即时响应
         void handle_message(const std::string& client_id, const std::string& text);
 
@@ -77,6 +80,7 @@ namespace control_plane
 
         mutable std::mutex statistics_mutex;
         control_plane_statistics counters;
+        std::string server_name_value = "CGLab";
 
         static constexpr std::size_t max_pending_commands = 256;
     };

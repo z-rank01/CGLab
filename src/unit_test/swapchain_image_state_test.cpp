@@ -1,4 +1,3 @@
-#include "smoke_scene.h"
 #include "swapchain_image_state.h"
 
 #include <cstdlib>
@@ -20,19 +19,6 @@ namespace
 
 int main()
 {
-    const smoke_scene_data scene = make_smoke_scene();
-    CHECK(scene.vertices.size() == 3);
-    CHECK(scene.indices.size() == 3);
-    CHECK(scene.indices[0] == 0);
-    CHECK(scene.indices[1] == 1);
-    CHECK(scene.indices[2] == 2);
-    CHECK(scene.draw_calls.size() == 1);
-    CHECK(scene.draw_calls.front().index_count == 3);
-    CHECK(scene.draw_calls.front().vertex_count == 3);
-    CHECK(scene.meshes.size() == 1);
-    CHECK(scene.meshes.front().primitives.size() == 1);
-    CHECK(scene.meshes.front().primitives.front().index_count == 3);
-
     swapchain_image_state_tracker swapchain_states;
     swapchain_states.reset(3);
     CHECK(swapchain_states.size() == 3);

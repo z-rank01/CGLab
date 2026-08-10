@@ -1,9 +1,13 @@
 #include "asset/gltf_adapter.h"
 
+#include <algorithm>
+#include <cctype>
+#include <iostream>
 #include <limits>
+#include <string>
 
-#include <gltf/gltf_loader.h>
 #include <gltf/gltf_parser.h>
+#include <tiny_gltf.h>
 
 namespace asset
 {
@@ -18,9 +22,28 @@ namespace asset
                 return result;
             }
 
-            gltf::GltfLoader loader;
             gltf::GltfParser parser;
-            auto model = loader(path.string());
+            tinygltf::TinyGLTF loader;
+            tinygltf::Model model;
+            std::string error;
+            std::string warning;
+            std::string extension = path.extension().string();
+            std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character)
+            {
+                return static_cast<char>(std::tolower(character));
+            });
+            const bool loaded = extension == ".glb"
+                                    ? loader.LoadBinaryFromFile(&model, &error, &warning, path.string())
+                                    : loader.LoadASCIIFromFile(&model, &error, &warning, path.string());
+            if (!warning.empty())
+            {
+                std::cerr << "glTF warning: " << warning << '\n';
+            }
+            if (!loaded)
+            {
+                result.error = "Failed to load glTF asset: " + error;
+                return result;
+            }
             auto source = parser(model, gltf::RequestDrawCallList{});
             if (source.empty())
             {

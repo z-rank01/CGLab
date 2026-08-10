@@ -1,0 +1,421 @@
+#include "renderer/vulkan/vulkan_backend_internal.h"
+
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE;
+
+vulkan_backend::vulkan_backend(engine::vulkan::render_program program) : render_program(std::move(program))
+{
+}
+engine::result<bool> vulkan_backend::initialize(interface::window& render_window,
+                                                const engine::backend_config& backend_config)
+{
+    engine::result<bool> result;
+    try
+    {
+        int width = 0;
+        int height = 0;
+        render_window.get_extent(width, height);
+        config.width = width;
+        config.height = height;
+        config.application_name = backend_config.application_name;
+        config.working_directory = backend_config.working_directory;
+        config.frame_count = backend_config.frames_in_flight;
+        config.use_validation_layers = backend_config.validation;
+        window = &render_window;
+        // Keep a valid imported legacy buffer while the runtime path routes all
+        // real content through the geometry arena. No legacy draw is emitted.
+        vertices.assign(1, engine::vertex{});
+        indices.assign(1, 0);
+        mesh_upload_pending = false;
+        initialize();
+        result.value = true;
+    }
+    catch (const std::exception& error)
+    {
+        shutdown();
+        result.error = error.what();
+    }
+    return result;
+}
+
+engine::result<engine::geometry_handle> vulkan_backend::upload_geometry(const engine::geometry_asset& asset)
+{
+    engine::result<engine::geometry_handle> result;
+    if (asset.empty())
+    {
+        result.error = "Cannot upload an empty geometry asset";
+        return result;
+    }
+
+    staged_geometry allocation;
+    if (!stage_runtime_geometry(asset.primitives, allocation))
+    {
+        result.error = "Geometry arena staging failed";
+        return result;
+    }
+    const engine::geometry_handle handle = next_geometry_handle++;
+    geometry_allocations.emplace(handle, std::move(allocation));
+    result.value = handle;
+    return result;
+}
+
+void vulkan_backend::retire_geometry(engine::geometry_handle handle)
+{
+    const auto found = geometry_allocations.find(handle);
+    if (found == geometry_allocations.end())
+    {
+        return;
+    }
+    retire_runtime_geometry(std::move(found->second));
+    geometry_allocations.erase(found);
+}
+
+engine::frame_status vulkan_backend::render(const engine::render_snapshot& snapshot)
+{
+    current_snapshot = &snapshot;
+    const engine::frame_status status = tick();
+    current_snapshot = nullptr;
+    return status;
+}
+
+void vulkan_backend::shutdown() noexcept
+{
+    if (shutdown_requested)
+    {
+        return;
+    }
+    shutdown_requested = true;
+    if (comm_vk_logical_device)
+    {
+        try
+        {
+            (void)comm_vk_logical_device.waitIdle();
+        }
+        catch (...)
+        {
+        }
+    }
+}
+
+void vulkan_backend::initialize()
+{
+    // initialize mvp matrices
+    mvp_matrices =
+        std::vector<mvp_matrix>(config.frame_count, {.model = glm::mat4(1.0F), .view = glm::mat4(1.0F), .projection = glm::mat4(1.0F)});
+    frame_submission_ids.assign(config.frame_count, 0);
+
+    // initialize SDL, vulkan, and camera
+    initialize_vulkan_hpp();
+    initialize_vulkan();
+}
+
+vulkan_backend::~vulkan_backend()
+{
+    // 等待设备空闲，确保没有正在进行的操作
+    if (comm_vk_logical_device)
+    {
+        try
+        {
+            (void)comm_vk_logical_device.waitIdle();
+        }
+        catch (const vk::SystemError& error)
+        {
+            Logger::LogError(std::string("Failed to wait for Vulkan shutdown: ") + error.what());
+        }
+    }
+
+    // 销毁描述符相关资源
+    if (descriptor_pool != VK_NULL_HANDLE)
+    {
+        comm_vk_logical_device.destroyDescriptorPool(descriptor_pool);
+        descriptor_pool = VK_NULL_HANDLE;
+    }
+
+    if (descriptor_set_layout != VK_NULL_HANDLE)
+    {
+        comm_vk_logical_device.destroyDescriptorSetLayout(descriptor_set_layout);
+        descriptor_set_layout = VK_NULL_HANDLE;
+    }
+
+    // destroy vma relatives
+    if (vma_allocator != VK_NULL_HANDLE && uniform_buffer != VK_NULL_HANDLE)
+    {
+        vmaDestroyBuffer(vma_allocator, uniform_buffer, uniform_buffer_allocation);
+        uniform_buffer = VK_NULL_HANDLE;
+    }
+    if (vma_allocator != VK_NULL_HANDLE && local_buffer != VK_NULL_HANDLE)
+    {
+        vmaDestroyBuffer(vma_allocator, local_buffer, local_buffer_allocation);
+        local_buffer = VK_NULL_HANDLE;
+    }
+    if (vma_allocator != VK_NULL_HANDLE && staging_buffer != VK_NULL_HANDLE)
+    {
+        vmaDestroyBuffer(vma_allocator, staging_buffer, staging_buffer_allocation);
+        staging_buffer = VK_NULL_HANDLE;
+    }
+    // P2：销毁运行时上传批次与 geometry arena
+    for (runtime_upload& upload : queued_uploads)
+    {
+        destroy_runtime_upload(vma_allocator, upload);
+    }
+    queued_uploads.clear();
+    for (auto& [gate, upload] : in_flight_uploads)
+    {
+        destroy_runtime_upload(vma_allocator, upload);
+    }
+    in_flight_uploads.clear();
+    if (vma_allocator != VK_NULL_HANDLE && arena_vertex_buffer != VK_NULL_HANDLE)
+    {
+        vmaDestroyBuffer(vma_allocator, arena_vertex_buffer, arena_vertex_allocation);
+        arena_vertex_buffer = VK_NULL_HANDLE;
+    }
+    if (vma_allocator != VK_NULL_HANDLE && arena_index_buffer != VK_NULL_HANDLE)
+    {
+        vmaDestroyBuffer(vma_allocator, arena_index_buffer, arena_index_allocation);
+        arena_index_buffer = VK_NULL_HANDLE;
+    }
+    frame_graph.reset();
+    if (vma_allocator != VK_NULL_HANDLE)
+    {
+        vmaDestroyAllocator(vma_allocator);
+        vma_allocator = VK_NULL_HANDLE;
+    }
+
+    // destroy swapchain related resources
+
+    for (auto image_view : comm_vk_swapchain_context.swapchain_image_views_)
+    {
+        if (comm_vk_logical_device)
+        {
+            comm_vk_logical_device.destroyImageView(image_view);
+        }
+    }
+    if (comm_vk_logical_device && comm_vk_swapchain)
+    {
+        comm_vk_logical_device.destroySwapchainKHR(comm_vk_swapchain);
+    }
+
+    // release unique pointer
+
+    vk_shader_helper.reset();
+    vk_pipeline_helper.reset();
+    vk_command_buffer_helper.reset();
+    vk_synchronization_helper.reset();
+
+    // destroy comm test data
+
+    if (comm_vk_logical_device)
+    {
+        vkDestroyDevice(comm_vk_logical_device, nullptr);
+    }
+    if (comm_vk_instance && surface != VK_NULL_HANDLE)
+    {
+        vkDestroySurfaceKHR(comm_vk_instance, surface, nullptr);
+    }
+    destroy_debug_messenger();
+    if (comm_vk_instance)
+    {
+        vkDestroyInstance(comm_vk_instance, nullptr);
+    }
+
+}
+
+vulkan_frame_status vulkan_backend::tick()
+{
+    int current_width = 0;
+    int current_height = 0;
+    window->get_extent(current_width, current_height);
+    if (current_width == 0 || current_height == 0)
+    {
+        return vulkan_frame_status::skipped;
+    }
+    if (current_width != config.width || current_height != config.height)
+    {
+        resize_request = true;
+    }
+    if (resize_request)
+    {
+        if (!resize_swapchain())
+        {
+            return vulkan_frame_status::failed;
+        }
+        if (window->should_close())
+        {
+            return vulkan_frame_status::skipped;
+        }
+    }
+
+    // update the view matrix
+    update_uniform_buffer(frame_index);
+
+    // render a frame
+    return draw();
+}
+
+vulkan_frame_status vulkan_backend::draw()
+{
+    return draw_frame();
+}
+
+vulkan_frame_status vulkan_backend::draw_frame()
+{
+    // get current resource
+    auto current_fence_id                     = output_frames[frame_index].fence_id;
+    auto current_image_available_semaphore_id = output_frames[frame_index].image_available_semaphore_id;
+    // REMOVE or IGNORE the per-frame render_finished_semaphore_id
+    auto current_command_buffer_id = output_frames[frame_index].command_buffer_id;
+
+    // wait for the last frame to finish
+    if (!vk_synchronization_helper->WaitForFence(current_fence_id))
+        return vulkan_frame_status::failed;
+    completed_frame = std::max(completed_frame, frame_submission_ids[frame_index]);
+    collect_deferred_resources();
+
+    // get semaphores
+    auto image_available_semaphore = vk_synchronization_helper->GetSemaphore(current_image_available_semaphore_id);
+    auto in_flight_fence           = vk_synchronization_helper->GetFence(current_fence_id);
+
+    uint32_t image_index = 0;
+    bool acquire_was_suboptimal = false;
+    try
+    {
+        const auto acquire_result =
+            comm_vk_logical_device.acquireNextImageKHR(comm_vk_swapchain, UINT64_MAX, image_available_semaphore, VK_NULL_HANDLE);
+        if (acquire_result.result == vk::Result::eErrorOutOfDateKHR)
+        {
+            resize_request = true;
+            return vulkan_frame_status::skipped;
+        }
+        if (acquire_result.result != vk::Result::eSuccess && acquire_result.result != vk::Result::eSuboptimalKHR)
+        {
+            Logger::LogError("Failed to acquire a swapchain image");
+            return vulkan_frame_status::failed;
+        }
+        acquire_was_suboptimal = acquire_result.result == vk::Result::eSuboptimalKHR;
+        image_index = acquire_result.value;
+    }
+    catch (const vk::OutOfDateKHRError&)
+    {
+        resize_request = true;
+        return vulkan_frame_status::skipped;
+    }
+    catch (const vk::SystemError& error)
+    {
+        Logger::LogError(std::string("Failed to acquire a swapchain image: ") + error.what());
+        return vulkan_frame_status::failed;
+    }
+
+    // [FIX] Get the semaphore associated with the ACQUIRED IMAGE INDEX
+    std::string render_finished_sem_id = "render_finished_semaphore_image_" + std::to_string(image_index);
+    auto render_finished_semaphore     = vk_synchronization_helper->GetSemaphore(render_finished_sem_id);
+
+    // record command buffer
+    if (!vk_command_buffer_helper->ResetCommandBuffer(current_command_buffer_id))
+        return vulkan_frame_status::failed;
+    if (!record_command(image_index, current_command_buffer_id))
+        return vulkan_frame_status::failed;
+
+    // Keep the fence signaled until command recording succeeds. From this point
+    // onward every failure must abort the active graph frame.
+    if (!vk_synchronization_helper->ResetFence(current_fence_id))
+    {
+        frame_graph->abort_frame();
+        return vulkan_frame_status::failed;
+    }
+
+    // submit command buffer
+    vk::CommandBufferSubmitInfo command_buffer_submit_info{.commandBuffer = vk_command_buffer_helper->GetCommandBuffer(current_command_buffer_id)};
+
+    vk::SemaphoreSubmitInfo wait_semaphore_info{
+        .semaphore = image_available_semaphore,
+        .value = 0,
+        .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+    };
+
+    // Use the per-image semaphore here
+    vk::SemaphoreSubmitInfo signal_semaphore_info{
+        .semaphore = render_finished_semaphore,
+        .value = 0,
+        .stageMask = vk::PipelineStageFlagBits2::eAllCommands,
+    };
+
+    vk::SubmitInfo2 submit_info{
+        .waitSemaphoreInfoCount   = 1,
+        .pWaitSemaphoreInfos      = &wait_semaphore_info,
+        .commandBufferInfoCount   = 1,
+        .pCommandBufferInfos      = &command_buffer_submit_info,
+        .signalSemaphoreInfoCount = 1,
+        .pSignalSemaphoreInfos    = &signal_semaphore_info,
+    };
+    try
+    {
+        comm_vk_graphics_queue.submit2(submit_info, in_flight_fence);
+    }
+    catch (const vk::SystemError& error)
+    {
+        Logger::LogError(std::string("Failed to submit frame: ") + error.what());
+        frame_graph->abort_frame();
+        resize_request = true;
+        return vulkan_frame_status::failed;
+    }
+    frame_submission_ids[frame_index] = submitted_frame;
+    submitted_frame++;
+    if (!frame_graph->commit_frame())
+    {
+        Logger::LogError("Failed to commit render graph frame");
+        return vulkan_frame_status::failed;
+    }
+    mesh_upload_pending = false;
+    if (runtime_upload_pending)
+    {
+        for (runtime_upload& upload : queued_uploads)
+        {
+            in_flight_uploads.emplace_back(submitted_frame - 1, std::move(upload));
+        }
+        queued_uploads.clear();
+        runtime_upload_pending = false;
+    }
+
+    // present the image
+    vk::PresentInfoKHR present_info{.waitSemaphoreCount = 1,
+                                    .pWaitSemaphores    = &render_finished_semaphore, // Use the per-image semaphore here too
+                                    .swapchainCount     = 1,
+                                    .pSwapchains        = &comm_vk_swapchain,
+                                    .pImageIndices      = &image_index};
+
+    vk::Result res = vk::Result::eErrorUnknown;
+    try
+    {
+        res = comm_vk_graphics_queue.presentKHR(&present_info);
+    }
+    catch (const vk::OutOfDateKHRError&)
+    {
+        resize_request = true;
+        return vulkan_frame_status::skipped;
+    }
+    catch (const vk::SystemError& error)
+    {
+        Logger::LogError(std::string("Failed to present image: ") + error.what());
+        return vulkan_frame_status::failed;
+    }
+    if (res == vk::Result::eErrorOutOfDateKHR || res == vk::Result::eSuboptimalKHR)
+    {
+        resize_request = true;
+        return vulkan_frame_status::skipped;
+    }
+    if (res != vk::Result::eSuccess)
+    {
+        Logger::LogError("Failed to present image");
+        return vulkan_frame_status::failed;
+    }
+    swapchain_image_states.mark_presented(image_index);
+    ++run_statistics.presented_frames;
+    // Logger::LogInfo("Succeeded in presenting image");
+
+    // update frame index
+    frame_index = (frame_index + 1) % config.frame_count;
+    if (acquire_was_suboptimal)
+    {
+        resize_request = true;
+    }
+    return vulkan_frame_status::rendered;
+}

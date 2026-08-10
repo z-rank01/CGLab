@@ -49,12 +49,13 @@ App executable
 |---|---|---|
 | `cglab_engine_core` | geometry、snapshot、camera/input/scene 等格式无关数据与系统 | 标准库、GLM |
 | `cglab_platform_sdl` | SDL 窗口实现与事件转换 | engine core、SDL3 |
-| `cglab_asset_gltf` | glTF adapter 和专用 worker | engine core；DCL 为私有实现依赖 |
+| `cglab_asset_gltf` | glTF/GLB adapter | engine core；DCL 为私有实现依赖 |
+| `cglab_asset_runtime` | 异步 asset service 和格式分发 | cglab_asset_gltf |
 | `cglab_framework_runtime` | 通用生命周期、帧 phase 和服务所有权 | engine core；platform/asset/control 为实现依赖 |
-| `cglab_vulkan_renderer` | Vulkan device/swapchain、geometry arena、Render Graph 执行 | engine core；Vulkan/Render Graph 为实现依赖 |
+| `cglab_vulkan_backend` | Vulkan device/swapchain、geometry arena、Render Graph 执行 | engine core；Vulkan/Render Graph 为实现依赖 |
 | `cglab_application_runner` | CLI、组装、退出码与 smoke 检查 | framework runtime |
 
-应用 executable 通常只链接 `cglab_application_runner` 和 `cglab_vulkan_renderer`。
+应用 executable 通常只链接 `cglab_application_runner` 和 `cglab_vulkan_backend`。
 
 ## 3. 公共组合接口
 
@@ -134,14 +135,14 @@ renderer 的 GPU idle 和资源销毁属于 backend 的 `shutdown()` 实现，�
 1. 在 `src/apps/` 新建一个入口文件。
 2. 调用 `apps::run_application(argc, argv, name, setup)`，复用共享 CLI。
 3. 在 setup 中创建 `runtime_config`、`sample` 和 Vulkan `render_program`。
-4. 通过 `engine::vulkan::create_renderer(program)` 创建 backend。
-5. 在根 CMake 中新增 executable，只链接 runner 与 Vulkan renderer。
+4. 通过 `engine::vulkan::create_backend(program)` 创建 backend。
+5. 在根 CMake 中新增 executable，只链接 runner 与 Vulkan backend。
 6. 添加至少一个有限帧数测试或 smoke 验收，确保不会复制帧循环。
 
 简化后的组合形态：
 
 ```cpp
-return apps::run_application(argc, argv, "MySample", [](const application_options& options)
+return apps::run_application(argc, argv, "MySample", [](const apps::application_options& options)
 {
     framework::runtime_config runtime{/* neutral runtime settings */};
     framework::sample sample{.name = "MySample", .startup_geometry = make_scene()};
@@ -149,7 +150,7 @@ return apps::run_application(argc, argv, "MySample", [](const application_option
     return apps::application_setup_result{.request = apps::application_run_request{
         .runtime = std::move(runtime),
         .sample = std::move(sample),
-        .renderer = engine::vulkan::create_renderer(std::move(program)),
+        .renderer = engine::vulkan::create_backend(std::move(program)),
         .frame_limit = options.frame_limit,
         .require_validation_clean = options.validation,
     }};

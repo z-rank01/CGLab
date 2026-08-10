@@ -2,33 +2,41 @@
 #include "apps/application_runner.h"
 #include "renderer/vulkan/create_vulkan_backend.h"
 
+#include <filesystem>
+
 namespace
 {
-    engine::geometry_asset make_triangle()
+    std::filesystem::path startup_asset(const apps::application_options& options)
     {
-        engine::geometry_asset asset{
-            .name = "Triangle",
-            .bounds_min = {-1.0F, -1.0F, 0.0F},
-            .bounds_max = {1.0F, 1.0F, 0.0F},
-        };
-        engine::geometry_primitive primitive;
-        primitive.indices = {0, 1, 2};
-        primitive.vertices = {
-            {.position = {-1.0F, -1.0F, 0.0F}, .color = {1.0F, 0.0F, 0.0F, 1.0F}},
-            {.position = {1.0F, -1.0F, 0.0F}, .color = {0.0F, 1.0F, 0.0F, 1.0F}},
-            {.position = {0.0F, 1.0F, 0.0F}, .color = {0.0F, 0.0F, 1.0F, 1.0F}},
-        };
-        asset.primitives.push_back(std::move(primitive));
-        return asset;
+        if (options.asset_path)
+        {
+            const std::filesystem::path path = *options.asset_path;
+            return path.is_relative()
+                       ? (std::filesystem::path(CGLAB_SOURCE_DIR) / path).lexically_normal()
+                       : path.lexically_normal();
+        }
+        if (options.smoke_test)
+        {
+            return std::filesystem::path(CGLAB_SOURCE_DIR) / "assets" / "triangle.gltf";
+        }
+        return {};
     }
 }
 
 int main(int argc, char** argv)
 {
-    return apps::run_application(argc, argv, "TriangleSample", [](const apps::application_options& options)
+    return apps::run_application(argc, argv, "GltfSponzaSample", [](const apps::application_options& options)
     {
+        const std::filesystem::path asset_path = startup_asset(options);
+        if (asset_path.empty() || !std::filesystem::is_regular_file(asset_path))
+        {
+            return apps::application_setup_result{
+                .error = "A valid .gltf or .glb asset is required; pass --asset <path>",
+            };
+        }
+
         framework::runtime_config config{
-            .window = {.title = "TriangleSample", .width = 1280, .height = 720},
+            .window = {.title = "GltfSponzaSample", .width = 1280, .height = 720},
             .working_directory = CGLAB_SOURCE_DIR,
             .frames_in_flight = 3,
             .validation = options.validation,
@@ -39,7 +47,7 @@ int main(int argc, char** argv)
             },
         };
         engine::vulkan::render_program program{
-            .pass_name = "TrianglePass",
+            .pass_name = "GltfSponzaPass",
             .clear_color = {0.03F, 0.04F, 0.08F, 1.0F},
         };
         const auto frames = options.smoke_test
@@ -47,11 +55,13 @@ int main(int argc, char** argv)
                                 : options.frame_limit;
         return apps::application_setup_result{.request = apps::application_run_request{
                                                   .runtime = std::move(config),
-                                                  .sample = {.name = "TriangleSample", .startup_geometry = make_triangle()},
+                                                  .sample = {.name = "GltfSponzaSample",
+                                                             .required_startup_asset = asset_path.string()},
                                                   .renderer = engine::vulkan::create_backend(std::move(program)),
                                                   .frame_limit = frames,
                                                   .require_validation_clean = options.validation,
                                                   .enforce_smoke_contract = options.smoke_test,
                                               }};
-    });
+    },
+                                {.accepts_asset = true});
 }

@@ -7,5 +7,5 @@
 
 namespace engine::vulkan
 {
-    [[nodiscard]] std::unique_ptr<render_backend> create_renderer(render_program program = {});
+    [[nodiscard]] std::unique_ptr<render_backend> create_backend(render_program program = {});
 }

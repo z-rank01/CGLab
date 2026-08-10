@@ -60,6 +60,7 @@ void engine_runtime::initialize()
                 .enabled = config.control_plane.enabled,
                 .port = config.control_plane.port,
                 .open_browser = config.control_plane.open_browser,
+                .server_name = config.window.title,
             }))
         {
             Logger::LogWarning("Control plane unavailable; continuing without Web UI backend.");

@@ -69,4 +69,4 @@
 
 - 落地位置：`src/infra/`（新），CMake 独立 target `infra` + `cglab.infra_*` CTest。
 - 稳定后（I2 完成且有两个以上真实用户）抽为独立子模块仓库，与 render-graph / DCL 同级。
-- loader 迁移路径：当前 `cglab_asset_gltf` 的 `asset_service` 专用 worker → I1 job system 的一个真实负载，request ID/result 行为与控制平面协议保持不变。
+- loader 迁移路径：当前 `cglab_asset_runtime` 的专用 worker → I1 job system 的一个真实负载，request ID/result 行为与控制平面协议保持不变。

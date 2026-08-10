@@ -15,7 +15,7 @@
 // scene::scene_registry
 // - P2 场景系统核心：场景对象注册表（DoD 风格槽位存储，纯数据，无 Vulkan 依赖，可单测）。
 // - 职责：对象生命周期（注册/卸载）、变换、显隐、选中、射线拾取（AABB）。
-// - 不负责 GPU 资源：draw_range 由渲染侧（vulkan_sample 的 geometry arena）分配后回填，
+// - 不负责 GPU 资源：draw_range 由渲染侧（Vulkan backend 的 geometry arena）分配后回填，
 //   注册表只保存"画哪些区间"的描述。
 // - 启动资产登记为 read_only 条目（draws 为空，走 legacy buffer），可列出/选中，不可卸载。
 // - revision：任何场景变更单调递增，供控制平面做场景快照的增量推送判定。

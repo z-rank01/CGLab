@@ -76,6 +76,9 @@ namespace
               "session.init version echo");
         check(dispatched.response["result"]["capabilities"].is_array(), "session.init capabilities");
 
+        const auto custom_name = control_plane::dispatch_request("client-a", parsed.request, "TriangleSample");
+        check(custom_name.response["result"]["server"] == "TriangleSample", "session.init custom server name");
+
         const auto bad_version = control_plane::parse_request(
             R"({"id":3,"method":"session.init","params":{"protocol_version":999}})");
         const auto rejected = control_plane::dispatch_request("client-a", bad_version.request);
@@ -197,6 +200,8 @@ namespace
         const auto hello = control_plane::make_hello_notification();
         check(hello["method"] == "session.hello", "hello method");
         check(hello["params"]["protocol_version"] == control_plane::protocol_version, "hello version");
+        const auto named_hello = control_plane::make_hello_notification("GltfSponzaSample");
+        check(named_hello["params"]["server"] == "GltfSponzaSample", "hello custom server name");
     }
 
     void test_dispatch_scene_methods()

@@ -9,23 +9,24 @@
 
 - [应用层分离与多 App 框架](ApplicationFramework.md)：应用组合点、共享 runner、sample/runtime 服务和新增 App 流程。
 - [Render Graph 与渲染后端边界](RenderGraphAndRHI.md)：当前帧图、资源所有权、`render_backend` 的定位以及未来 RHI 条件。
-- [VulkanSample Render Graph 迁移](VulkanSampleRenderGraphMigration.md)：迁移细节、帧事务与 smoke contract。
+- [GltfSponzaSample Render Graph 迁移](GltfSponzaSampleRenderGraphMigration.md)：迁移细节、帧事务与 smoke contract。
 - [交互界面设计](InterfaceRedesign.md)：控制平面、Web UI 和单窗口路线。
 - [基础设施设计](InfrastructureDesign.md)：Job System/benchmark 的触发式路线。
 
 ## 当前依赖方向
 
 ```text
-VulkanSample / TriangleSample
+GltfSponzaSample / TriangleSample
         │
         ├── cglab_application_runner
         │          └── cglab_framework_runtime
         │                    ├── cglab_engine_core
         │                    ├── cglab_platform_sdl
-        │                    ├── cglab_asset_gltf
+        │                    ├── cglab_asset_runtime
+        │                    │       └── cglab_asset_gltf
         │                    └── control_plane
         │
-        └── cglab_vulkan_renderer
+        └── cglab_vulkan_backend
                    ├── cglab_engine_core
                    ├── render_graph
                    └── Vulkan / SDL surface integration
@@ -39,7 +40,7 @@ VulkanSample / TriangleSample
 > 原因：UI/窗口/IO/帧循环是所有 sample 共享的框架代码，不属于任何一个 app；
 > 若留在应用层，每写一个 sample 就要复制一遍（当前 app_sample 的实际问题）。
 
-**上层 - 应用层（samples）**：每个实验是独立 executable，例如 VulkanSample、TriangleSample，以及未来的 Hi-Z/Ray Tracing sample。应用只提供元数据、启动场景、Vulkan render program 和未来的专属 UI hook，不拥有窗口、帧循环、camera、scene、控制平面或 loader worker。详见 [ApplicationFramework.md](ApplicationFramework.md)。
+**上层 - 应用层（samples）**：每个实验是独立 executable，例如 GltfSponzaSample、TriangleSample，以及未来的 Hi-Z/Ray Tracing sample。应用只提供元数据、启动场景、Vulkan render program 和未来的专属 UI hook，不拥有窗口、帧循环、camera、scene、控制平面或 loader worker。详见 [ApplicationFramework.md](ApplicationFramework.md)。
 
 **引擎框架层（engine runtime，新增）**：被所有 app 复用的运行时骨架——
 - 帧循环与渲染窗口（当前是 SDL 方案）
@@ -72,10 +73,10 @@ VulkanSample / TriangleSample
 - 框架复用：`cglab_framework_runtime` 已拥有窗口、显式帧 phase、camera/scene、控制平面与 asset service；应用不再复制帧循环
 - 渲染边界：Vulkan-free `engine::render_backend` / `render_snapshot` / `geometry_handle` 已落地；renderer 不再持有可变 camera/scene 指针
 - GPU geometry：启动资产和运行时资产统一走 geometry arena，scene 只保存 opaque handle；上传/延迟回收状态留在 Vulkan renderer
-- 构建边界：已有 `cglab_engine_core`、`cglab_platform_sdl`、`cglab_asset_gltf`、`cglab_framework_runtime`、`cglab_vulkan_renderer`、`cglab_application_runner`
-- Sample 复用：VulkanSample 已迁移到共享 runtime；TriangleSample 以独立 `TrianglePass` 验证第二个 exe（应用文件 100 行以内）
+- 构建边界：已有 `cglab_engine_core`、`cglab_platform_sdl`、`cglab_asset_gltf`、`cglab_asset_runtime`、`cglab_framework_runtime`、`cglab_vulkan_backend`、`cglab_application_runner`
+- Sample 复用：GltfSponzaSample 已迁移到共享 runtime；TriangleSample 以独立 `TrianglePass` 验证第二个 exe（应用文件 100 行以内）
 - 应用入口：`cglab_application_runner` 统一 CLI、runtime/backend 组装、退出码、validation 和 smoke counter 检查
-- 资源服务：framework 只依赖 `asset_service` 接口；`cglab_asset_gltf` 是默认实现，测试可注入 fake service
+- 资源服务：framework 只依赖 `asset_service` 接口；`cglab_asset_runtime` 是默认实现，测试可注入 fake service
 - 输入路由：物理输入 → 逻辑动作的绑定表已数据化（`input_router.h`）；wasd 不再定死，未来换成 JSON 序列化驱动是顺手的事
 - 相机 SoA：`camera_container` 已是 SoA + 纯函数（fly/orbit/bookmark 多模式），为未来多相机做的准备已到位
 - 场景：`scene_registry` 为 flat component-based 槽位存储；多对象、运行时异步加载 glTF 已实现
@@ -85,13 +86,13 @@ VulkanSample / TriangleSample
 **部分解决（欠债清单）**：
 - glTF 节点变换在加载时烘焙进顶点，**层级信息丢失**（静态展示够用；未来动画/局部变换需还这笔债）
 - scene 目前为 flat 结构，无 parent-child 层级
-- Vulkan renderer 已成为独立 target 和 backend façade，但设备/swapchain/pipeline 的内部实现仍集中在 `renderer/vulkan/vulkan_renderer.cpp`，后续只做内部拆分，不再影响 framework API
+- Vulkan backend 已成为独立 target 和 backend façade；context/swapchain/frame/geometry/graph 已拆成 backend 内部源文件，不影响 framework API
 
 **未解决**：
-- Vulkan renderer 内部 device/swapchain/pipeline 模块尚未物理拆文件
+- Vulkan backend 内部仍可继续把共享状态收敛为更细的组件类；当前已完成职责级源文件拆分
 - Vulkan `render_program` 目前只能配置 pass name/clear color，尚不能注册复杂多 pass 图
 - 基础设施完全空白（job system、benchmark）
-- DCL 仅支持 ASCII `.gltf`（`.glb`/fbx/obj 未支持）
+- 当前 asset 分发支持 ASCII `.gltf` 和 Binary `.glb`；fbx/obj 仅保留 adapter 扩展点
 
 ## Render Graph 与 RHI 定位
 
@@ -109,7 +110,7 @@ VulkanSample / TriangleSample
 **1. 引擎框架层抽取（已完成）**
 - runtime、asset service、backend snapshot/geometry handle 边界和第二个 TriangleSample 已落地。
 - CPU/Render Graph 自动测试覆盖公共头隔离、fake runtime、glTF adapter 与异步 asset service。
-- 剩余工作是 Vulkan renderer 内部文件级拆分、扩展真实多 pass `render_program`，以及在装有 validation layer 的机器上补 GPU validation smoke。
+- 剩余工作是把 Vulkan backend 的共享状态进一步收敛为组件类、扩展真实多 pass `render_program`，以及在装有 validation layer 的机器上补 GPU validation smoke。
 
 **2. 业务组件层完善**
 - camera 组件：

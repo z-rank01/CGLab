@@ -170,7 +170,9 @@ namespace control_plane
         }
     } // namespace
 
-    dispatch_result dispatch_request(std::string_view client_id, const rpc_request& request)
+    dispatch_result dispatch_request(std::string_view client_id,
+                                     const rpc_request& request,
+                                     std::string_view server)
     {
         const std::string& method = request.method;
 
@@ -190,7 +192,7 @@ namespace control_plane
             }
             return immediate(make_result(request.id,
                                          {{"protocol_version", protocol_version},
-                                          {"server", server_name},
+                                          {"server", server},
                                           {"capabilities",
                                            {"telemetry.frame", "telemetry.scene", "debug.echo", "frame.pause", "frame.resume", "frame.step",
                                             "camera.set_mode", "camera.set_params", "camera.get_state",
@@ -410,10 +412,10 @@ namespace control_plane
         return immediate(make_error(request.id, error_method_not_found, "Method not found: " + method));
     }
 
-    nlohmann::json make_hello_notification()
+    nlohmann::json make_hello_notification(std::string_view server)
     {
         return make_notification("session.hello",
-                                 {{"protocol_version", protocol_version}, {"server", server_name}});
+                                 {{"protocol_version", protocol_version}, {"server", server}});
     }
 
 } // namespace control_plane

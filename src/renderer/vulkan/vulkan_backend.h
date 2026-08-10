@@ -11,7 +11,6 @@
 #include <memory>
 #include <unordered_set>
 
-#include <gltf/gltf_data.h>
 #include "_interface/window.h"
 #include "_old/vulkan_commandbuffer.h"
 #include "_old/vulkan_pipeline.h"
@@ -25,7 +24,7 @@
 #include "engine/render_backend.h"
 #include "renderer/vulkan/render_program.h"
 
-struct vulkan_renderer_config
+struct vulkan_backend_config
 {
     int width = 0;
     int height = 0;
@@ -80,11 +79,11 @@ struct deferred_arena_free
     staged_geometry geometry;
 };
 
-class vulkan_sample final : public engine::render_backend
+class vulkan_backend final : public engine::render_backend
 {
 public:
-    explicit vulkan_sample(engine::vulkan::render_program program);
-    ~vulkan_sample() override;
+    explicit vulkan_backend(engine::vulkan::render_program program);
+    ~vulkan_backend() override;
     void request_resize() noexcept override { resize_request = true; }
     [[nodiscard]] vulkan_run_statistics statistics() const noexcept override { return run_statistics; }
 
@@ -103,7 +102,7 @@ private:
     // engine members
     uint8_t frame_index = 0;
     bool resize_request = false;
-    vulkan_renderer_config config;
+    vulkan_backend_config config;
     std::vector<output_frame> output_frames;
 
     // uniform data and buffer
@@ -181,7 +180,8 @@ private:
     bool create_geometry_arena();
     void collect_deferred_resources();
     static void destroy_runtime_upload(VmaAllocator allocator, runtime_upload& upload) noexcept;
-    [[nodiscard]] bool stage_runtime_geometry(const std::vector<gltf::PerDrawCallData>& primitives, staged_geometry& out);
+    [[nodiscard]] bool stage_runtime_geometry(const std::vector<engine::geometry_primitive>& primitives,
+                                              staged_geometry& out);
     void retire_runtime_geometry(staged_geometry geometry);
 
 
@@ -203,7 +203,7 @@ private:
     templates::common::CommVkSwapchainContext comm_vk_swapchain_context;
 
     std::vector<uint32_t> indices;
-    std::vector<gltf::Vertex> vertices;
+    std::vector<engine::vertex> vertices;
 
     vk::Buffer local_buffer = VK_NULL_HANDLE;
     vk::Buffer staging_buffer = VK_NULL_HANDLE;

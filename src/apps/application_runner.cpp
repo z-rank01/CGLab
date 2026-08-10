@@ -55,7 +55,8 @@ namespace apps
     int run_application(int argc,
                         char** argv,
                         std::string_view executable_name,
-                        const application_setup& setup)
+                        const application_setup& setup,
+                        application_cli cli)
     {
         const std::span arguments(argv + 1, static_cast<std::size_t>(argc - 1));
         std::vector<std::string_view> views;
@@ -65,15 +66,15 @@ namespace apps
             views.emplace_back(argument);
         }
 
-        const application_options_result parsed = parse_application_options(views);
+        const application_options_result parsed = parse_application_options(views, cli);
         if (parsed.status == application_options_status::help)
         {
-            std::cout << application_usage(argc > 0 ? argv[0] : executable_name);
+            std::cout << application_usage(argc > 0 ? argv[0] : executable_name, cli);
             return EXIT_SUCCESS;
         }
         if (!parsed.succeeded())
         {
-            std::cerr << parsed.message << '\n' << application_usage(argc > 0 ? argv[0] : executable_name);
+            std::cerr << parsed.message << '\n' << application_usage(argc > 0 ? argv[0] : executable_name, cli);
             return EXIT_FAILURE;
         }
 

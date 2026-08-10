@@ -15,7 +15,7 @@
 namespace control_plane
 {
     inline constexpr std::uint32_t protocol_version = 1;
-    inline constexpr std::string_view server_name   = "VulkanSample";
+    inline constexpr std::string_view default_server_name = "CGLab";
 
     // JSON-RPC 2.0 标准错误码
     inline constexpr int error_parse_error     = -32700;
@@ -96,9 +96,11 @@ namespace control_plane
     };
 
     // 分派一个已解析的请求。client_id 仅用于命令路由，不参与校验。
-    [[nodiscard]] dispatch_result dispatch_request(std::string_view client_id, const rpc_request& request);
+    [[nodiscard]] dispatch_result dispatch_request(std::string_view client_id,
+                                                   const rpc_request& request,
+                                                   std::string_view server = default_server_name);
 
     // 连接建立时服务端主动推送的握手通知
-    [[nodiscard]] nlohmann::json make_hello_notification();
+    [[nodiscard]] nlohmann::json make_hello_notification(std::string_view server = default_server_name);
 
 } // namespace control_plane

@@ -19,34 +19,35 @@
 ## Vulkan SDK
 要使用该框架，需要下载并安装 Vulkan SDK，并将其加入系统环境变量。
 
-## VulkanSample Render Graph
+## GltfSponzaSample Render Graph
 
-`feature/vulkan_sample_dod` 已将 VulkanSample 的帧内 upload/draw、资源状态、transient depth、Dynamic Rendering 和同步迁移到 Render Graph。平台层仍负责 acquire、submit 和 present。实现边界、帧事务及验证方式见 [VulkanSample Render Graph 迁移说明](docs/VulkanSampleRenderGraphMigration.md)。
+`feature/vulkan_sample_dod` 已将 GltfSponzaSample 的帧内 upload/draw、资源状态、transient depth、Dynamic Rendering 和同步迁移到 Render Graph。平台层仍负责 acquire、submit 和 present。实现边界、帧事务及验证方式见 [GltfSponzaSample Render Graph 迁移说明](docs/GltfSponzaSampleRenderGraphMigration.md)。
 
 启用 `BUILD_VULKAN_SAMPLE` 或 `RENDER_GRAPH_BUILD_UNIT_TESTS` 后，根 CMake 会接入 `third_party/render-graph`。可使用 CTest 运行 Render Graph 的全部回归测试。
 
-主程序支持 `--config`、`--asset`、`--frames`、`--validation` 和 `--smoke-test`。无需外部模型的串行 GPU 验证可直接运行：
+TriangleSample 支持 `--frames`、`--validation` 和 `--smoke-test`；GltfSponzaSample 额外支持 `--asset <path>`。无需外部模型的串行 GPU 验证可直接运行：
 
 ```powershell
-.\build\Debug\VulkanSample.exe --smoke-test --frames 6 --validation
+.\build\Debug\GltfSponzaSample.exe --smoke-test --frames 6 --validation
 ```
 
 旧版手写实现保存在 `src/legacy_vulkan_sample`，仅在启用 `CGLAB_BUILD_LEGACY_VULKAN_SAMPLE` 时生成 `VulkanSampleLegacy` target。
 
 ## Runtime 与 Samples
 
-当前构建拆分为 `cglab_engine_core`、`cglab_platform_sdl`、`cglab_asset_gltf`、`cglab_framework_runtime`、`cglab_vulkan_renderer` 和 `cglab_application_runner`。framework/engine 公共头不暴露 Vulkan、SDL 或 glTF 类型；应用通过 `engine::render_backend`、`render_snapshot` 和 opaque `geometry_handle` 与 renderer 交互。共享 runner 统一 CLI、退出码、validation 与 smoke counter 检查。
+当前构建拆分为 `cglab_engine_core`、`cglab_platform_sdl`、`cglab_asset_gltf`、`cglab_asset_runtime`、`cglab_framework_runtime`、`cglab_vulkan_backend` 和 `cglab_application_runner`。framework/engine 公共头不暴露 Vulkan、SDL 或 glTF 类型；应用通过 `engine::render_backend`、`render_snapshot` 和 opaque `geometry_handle` 与 backend 交互。共享 runner 统一 CLI、退出码、validation 与 smoke counter 检查。
 
 默认生成两个应用：
 
-- `VulkanSample`：支持配置/资产加载、控制平面与 smoke contract 的主示例。
+- `GltfSponzaSample`：支持 `.gltf/.glb` 资产加载、控制平面与 smoke contract 的模型示例。
 - `TriangleSample`：最小内存三角形，用于验证第二个应用复用同一 runtime。
 
 ```powershell
-cmake -S . -B build -DCGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS=ON
+cmake -S . -B build -DBUILD_TESTING=ON
 cmake --build build --config Debug
 ctest --test-dir build -C Debug --output-on-failure
 ./build/TriangleSample.exe --smoke-test --frames 6 --no-ui
+./build/GltfSponzaSample.exe --asset path/to/Sponza.gltf --frames 6 --no-ui
 ```
 
 依赖清单使用 vcpkg 已验证的 `tinygltf 3.0.0`。旧的 2.9.x registry 源包哈希已无法通过官方校验，因此没有采用修改哈希或跳过校验的方式继续使用它。GPU validation smoke 需要系统安装 `VK_LAYER_KHRONOS_validation`。

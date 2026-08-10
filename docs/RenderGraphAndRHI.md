@@ -33,7 +33,7 @@ scene + camera (runtime-owned)
 engine::render_backend
           │
           ▼
-cglab_vulkan_renderer
+cglab_vulkan_backend
   ├─ resolve geometry_handle -> private arena ranges
   ├─ acquire swapchain image
   ├─ build/reuse Render Graph plan
@@ -92,7 +92,7 @@ scene 只保存数值 handle。以下信息全部是 Vulkan renderer 私有状�
 
 ## 5. Vulkan Renderer 所有权
 
-`cglab_vulkan_renderer` 当前拥有：
+`cglab_vulkan_backend` 当前拥有：
 
 | 模块 | 所有资源/职责 |
 |---|---|
@@ -104,7 +104,7 @@ scene 只保存数值 handle。以下信息全部是 Vulkan renderer 私有状�
 | Geometry store | device-local vertex/index arena、staging batch、opaque handle map、延迟回收 |
 | Render Graph bridge | graph 构建、imported resource binding、Vulkan lowering、frame commit/abort |
 
-这些实现目前主要集中在 `src/renderer/vulkan/vulkan_renderer.cpp`。目标边界已经稳定，后续可以把 device、swapchain、geometry store、frame submission 和 graph orchestration 物理拆文件，而不改变 framework API。
+这些实现位于 `src/renderer/vulkan/` 下的 context、swapchain、frame、geometry 和 graph 源文件中。目标边界已经稳定，后续可以继续收敛组件类和 RAII 所有权，而不改变 framework API。
 
 ## 6. 当前 Render Graph
 
@@ -122,7 +122,7 @@ DrawPass 或 TrianglePass (raster)
 final PRESENT state
 ```
 
-无待上传批次时，renderer 复用不含 upload pass 的图变体。`render_program.pass_name` 决定 raster pass 名称；VulkanSample 使用 `DrawPass`，TriangleSample 使用 `TrianglePass`。
+无待上传批次时，renderer 复用不含 upload pass 的图变体。`render_program.pass_name` 决定 raster pass 名称；GltfSponzaSample 使用 `DrawPass`，TriangleSample 使用 `TrianglePass`。
 
 ### Resource 类型
 
@@ -195,7 +195,7 @@ GPU validation smoke 需要目标机器安装 `VK_LAYER_KHRONOS_validation`；la
 
 ## 11. 当前技术债
 
-- Vulkan renderer 内部仍是较大的实现文件，需要按 device/swapchain/geometry/submission/graph orchestration 拆分。
+- Vulkan backend 已按 context/swapchain/frame/geometry/graph orchestration 拆成内部源文件；后续可继续收敛共享状态和 RAII 所有权。
 - `render_program` 还不是可注册多 pass 的真正扩展接口。
 - glTF hierarchy 尚未保留，node transform 仍在 worker 中烘焙。
 - geometry arena 容量和回收策略已有实现，但仍需更完整的容量不足、上传失败和长时间 churn GPU 测试。

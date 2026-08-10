@@ -14,7 +14,7 @@ target_link_libraries(cglab_framework_runtime
         cglab_engine_core
     PRIVATE
         cglab_platform_sdl
-        cglab_asset_gltf
+        cglab_asset_runtime
         control_plane
         utility
         $<$<PLATFORM_ID:Windows>:bcrypt>

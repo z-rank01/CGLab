@@ -10,27 +10,24 @@ function(cglab_register_test target_name test_name)
     endif()
 
     set_target_properties(${target_name} PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests"
     )
 
     add_test(NAME ${test_name} COMMAND ${target_name})
 endfunction()
 
 add_executable(cglab_application_options_tests
-    ${PROJECT_SOURCE_DIR}/src/application_options.cpp
-    ${PROJECT_SOURCE_DIR}/src/application_options.h
+    ${PROJECT_SOURCE_DIR}/src/apps/application_options.cpp
+    ${PROJECT_SOURCE_DIR}/src/apps/application_options.h
     application_options_test.cpp
 )
 cglab_register_test(cglab_application_options_tests cglab.application_options)
 
-add_executable(cglab_smoke_scene_tests
-    ${PROJECT_SOURCE_DIR}/src/smoke_scene.cpp
-    ${PROJECT_SOURCE_DIR}/src/smoke_scene.h
+add_executable(cglab_swapchain_image_state_tests
     ${PROJECT_SOURCE_DIR}/src/swapchain_image_state.h
-    smoke_scene_test.cpp
+    swapchain_image_state_test.cpp
 )
-target_link_libraries(cglab_smoke_scene_tests PRIVATE dcl::gltf glm::glm)
-cglab_register_test(cglab_smoke_scene_tests cglab.smoke_scene)
+cglab_register_test(cglab_swapchain_image_state_tests cglab.swapchain_image_state)
 
 add_executable(cglab_camera_input_tests camera_input_test.cpp)
 target_link_libraries(cglab_camera_input_tests PRIVATE cglab_platform_sdl)
@@ -63,14 +60,14 @@ target_link_libraries(cglab_public_headers_tests PRIVATE cglab_framework_runtime
 cglab_register_test(cglab_public_headers_tests cglab.public_headers)
 
 add_executable(cglab_asset_gltf_tests asset_gltf_test.cpp)
-target_link_libraries(cglab_asset_gltf_tests PRIVATE cglab_asset_gltf)
+target_link_libraries(cglab_asset_gltf_tests PRIVATE cglab_asset_runtime dcl::gltf)
 target_compile_definitions(cglab_asset_gltf_tests
     PRIVATE CGLAB_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
 )
 cglab_register_test(cglab_asset_gltf_tests cglab.asset_gltf)
 
 add_executable(cglab_asset_service_tests asset_service_test.cpp)
-target_link_libraries(cglab_asset_service_tests PRIVATE cglab_asset_gltf)
+target_link_libraries(cglab_asset_service_tests PRIVATE cglab_asset_runtime)
 target_compile_definitions(cglab_asset_service_tests
     PRIVATE CGLAB_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
 )

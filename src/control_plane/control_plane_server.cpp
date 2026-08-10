@@ -64,7 +64,7 @@ namespace control_plane
         case ix::WebSocketMessageType::Open:
         {
             track_client_open(client_id, web_socket);
-            const std::string hello = make_hello_notification().dump();
+            const std::string hello = make_hello_notification(owner.server_name()).dump();
             web_socket.sendText(hello);
             Logger::LogInfo("Control plane client connected: " + client_id);
             break;
@@ -143,6 +143,8 @@ namespace control_plane
             return server_impl->ws_server != nullptr;
         }
 
+        server_name_value = config.server_name.empty() ? std::string(default_server_name) : config.server_name;
+
         // Windows 必须先初始化 Winsock（WSAStartup），否则 socket 调用静默失败
         if (!ix::initNetSystem())
         {
@@ -218,7 +220,7 @@ namespace control_plane
             return;
         }
 
-        const dispatch_result dispatched = dispatch_request(client_id, parsed.request);
+        const dispatch_result dispatched = dispatch_request(client_id, parsed.request, server_name());
         if (dispatched.outcome == dispatch_outcome::immediate_response)
         {
             post_response(client_id, dispatched.response);
