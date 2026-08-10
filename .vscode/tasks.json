@@ -1,148 +1,235 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-      {
-        "label": "[custom] cmake: configure",       // 任务名称（用户可见）
-        "type": "shell",                            // 任务类型（shell 表示在终端中运行）
-        "command": "cmd.exe",                          // 使用 cmd.exe 作为命令行解释器
-        "args": [
-          "/c",                                     // 在命令后添加 /c 以执行命令
-          "call \"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat\" && cmake --preset ${input:cmakePreset} -B ${workspaceFolder}/build -DCMAKE_BUILD_TYPE=${input:buildType}" // 调用 vcvars64.bat 并执行 CMake 命令
-        ],
-        "options": {
-          "cwd": "${workspaceFolder}",               // 工作目录设置为项目根目录
-          "shell": {
-            "executable": "cmd.exe",
-            "args": ["/c"]
-          }
-        },
-        "group": {                                  // 任务分组
-          "kind": "build",                          // 属于 "build" 组
-          "isDefault": true                         // 设为默认构建任务（可通过 Ctrl+Shift+B 触发）
-        }
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "[CGLab] Setup workspace",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      {
-        "label": "[custom] cmake: build",           // 任务名称（用户可见）
-        "type": "shell",                            // 任务类型
-        "command": "cmd.exe",                          // 使用 cmd.exe 作为命令行解释器
-        "args": [
-          "/c",                                     // 在命令后添加 /c 以执行命令
-          "call \"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat\" && cmake --build ${workspaceFolder}/build --config ${input:buildType}" // 调用 vcvars64.bat 并执行构建命令
-        ],
-        "options": {
-          "cwd": "${workspaceFolder}",               // 工作目录
-          "shell": {
-            "executable": "cmd.exe",
-            "args": ["/c"]
-          }
-        },
-        "group": "build"                            // 属于 "build" 组（非默认）
+      "args": ["setup", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "[CGLab] Diagnose environment",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      {
-        "label": "[custom] vcpkg: download",        // 下载 vcpkg 任务
-        "type": "shell",
-        "command": "git clone git@github.com:microsoft/vcpkg.git && ${workspaceFolder}/vcpkg/bootstrap-vcpkg.bat",
-        "options": {
-          "shell": {
-            "executable": "cmd.exe",
-            "args": ["/d", "/c"]
-          }
-        },
-        "group": "none",
-        "problemMatcher": []
+      "args": ["doctor"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "[CGLab] Configure",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      {
-        "label": "[custom] vcpkg: initialize baseline",    // 初始化 vcpkg 基准线任务 
-        "type": "shell", 
-        "command": "${workspaceFolder}/vcpkg/vcpkg x-update-baseline --add-initial-baseline", 
-        "options": {}, 
-        "group": "none"
-      }, 
-      {
-        "label": "[custom] vcpkg: update baseline",        // 更新 vcpkg 基准线任务
-        "type": "shell",
-        "command": "${workspaceFolder}/vcpkg/vcpkg x-update-baseline",
-        "options": {
-          "cwd": "${workspaceFolder}"
-        },
-        "group": "none",
-        "problemMatcher": []
+      "args": ["configure", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--tests", "${input:buildTests}", "--legacy", "${input:buildLegacy}"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "[CGLab] Configure fresh",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      {
-        "label": "[custom] vcpkg: install dependencies (command line)",  // 命令行方式安装依赖库任务
-        "type": "shell",
-        "command": "${workspaceFolder}/vcpkg/vcpkg",
-        "args": [
-          "install",
-          "vulkan",
-          "vulkan-memory-allocator",
-          "vk-bootstrap",
-          "sdl2",
-          "glm",
-          "fmt",
-          "stb",
-          "imgui[vulkan-binding,sdl2-binding]",
-          "fastgltf",
-          "--triplet",
-          "${input:vcpkgTriplet}"
-        ],
-        "options": {
-          "cwd": "${workspaceFolder}"
-        },
-        "group": "none",
-        "problemMatcher": []
+      "args": ["configure", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--tests", "${input:buildTests}", "--legacy", "${input:buildLegacy}", "--fresh"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "[CGLab] Build selected target",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      {
-        "label": "[custom] vcpkg: install dependencies (manifest)",  // 清单模式安装依赖库任务
-        "type": "shell",
-        "command": "${workspaceFolder}/vcpkg/vcpkg",
-        "args": [
-          "install",
-          "--triplet",
-          "${input:vcpkgTriplet}"
-        ],
-        "options": {
-          "cwd": "${workspaceFolder}"
-        },
-        "group": "none",
-        "problemMatcher": []
-      }
-    ],
-    "inputs": [                           // 定义动态输入参数
-      {
-        "id": "cmakePreset",              // 输入 ID（与任务中的 ${input:cmakePreset} 对应）
-        "type": "pickString",             // 输入类型：下拉选择
-        "description": "Select CMake Preset:",
-        "options": ["windows-msvc", "windows-gcc", "windows-clang", "linux-clang", "macos-clang", "windows-msvc-ninja"], // 可选项
-        "default": "windows-msvc"         // 默认值
+      "args": ["build", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "${input:buildTarget}", "--jobs", "${input:buildJobs}", "--tests", "${input:buildTests}", "--legacy", "${input:buildLegacy}"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "[CGLab] Build arbitrary target",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      {
-        "id": "buildType",                // 输入 ID（构建类型）
-        "type": "pickString",
-        "description": "Select Build Type:",
-        "options": ["Debug", "Release"],
-        "default": "Debug"
+      "args": ["build", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "${input:arbitraryTarget}", "--jobs", "${input:buildJobs}", "--tests", "${input:buildTests}", "--legacy", "${input:buildLegacy}"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "[CGLab] Test all",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      {
-        "id": "bootstrapScript",          // vcpkg 初始化脚本选择
-        "type": "pickString",
-        "description": "Select platform for vcpkg bootstrap:",
-        "options": ["bat", "sh"],
-        "default": "bat"
+      "args": ["test", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--jobs", "${input:buildJobs}", "--legacy", "OFF"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "[CGLab] Smoke: Triangle",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      {
-        "id": "vcpkgTriplet",             // vcpkg 平台三元组
-        "type": "pickString",
-        "description": "Select platform triplet for vcpkg:",
-        "options": [
-          "x64-windows", 
-          "x64-windows-static",
-          "x64-mingw-dynamic",
-          "x64-linux", 
-          "x64-osx", 
-          "arm64-osx"
-        ],
-        "default": "x64-windows"
-      }
-    ]
-  }
+      "args": ["smoke", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "TriangleSample", "--frames", "${input:smokeFrames}", "--jobs", "${input:buildJobs}"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "[CGLab] Smoke: glTF",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
+      },
+      "args": ["smoke", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "GltfSponzaSample", "--asset", "${input:smokeAsset}", "--frames", "${input:smokeFrames}", "--jobs", "${input:buildJobs}"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "[CGLab] Clean current preset",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
+      },
+      "args": ["clean", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--jobs", "${input:buildJobs}"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "[CGLab] Advanced: install dependencies",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
+      },
+      "args": ["deps", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--triplet", "${input:vcpkgTriplet}"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "[CGLab] Advanced: build legacy",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
+      },
+      "args": ["build", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "VulkanSampleLegacy", "--jobs", "${input:buildJobs}", "--legacy", "ON"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "[CGLab] Configure legacy",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
+      },
+      "args": ["configure", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--legacy", "ON"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "toolchainPreset",
+      "type": "pickString",
+      "description": "选择平台工具链",
+      "options": ["windows-msvc-ninja", "linux-clang-ninja"],
+      "default": "windows-msvc-ninja"
+    },
+    {
+      "id": "buildType",
+      "type": "pickString",
+      "description": "选择构建类型",
+      "options": ["Debug", "Release", "RelWithDebInfo"],
+      "default": "Debug"
+    },
+    {
+      "id": "buildTests",
+      "type": "pickString",
+      "description": "是否配置 CTest targets",
+      "options": ["OFF", "ON"],
+      "default": "OFF"
+    },
+    {
+      "id": "buildLegacy",
+      "type": "pickString",
+      "description": "是否启用 VulkanSampleLegacy",
+      "options": ["OFF", "ON"],
+      "default": "OFF"
+    },
+    {
+      "id": "buildTarget",
+      "type": "pickString",
+      "description": "选择常用 CMake target",
+      "options": [
+        "all",
+        "TriangleSample",
+        "GltfSponzaSample",
+        "cglab_application_options_tests",
+        "cglab_swapchain_image_state_tests",
+        "cglab_camera_input_tests",
+        "cglab_camera_rig_tests",
+        "cglab_scene_registry_tests",
+        "cglab_control_plane_protocol_tests",
+        "cglab_engine_runtime_tests",
+        "cglab_public_headers_tests",
+        "cglab_asset_gltf_tests",
+        "cglab_asset_service_tests"
+      ],
+      "default": "TriangleSample"
+    },
+    {
+      "id": "arbitraryTarget",
+      "type": "promptString",
+      "description": "输入任意 CMake target 名称",
+      "default": "TriangleSample"
+    },
+    {
+      "id": "buildJobs",
+      "type": "promptString",
+      "description": "并行编译任务数",
+      "default": "4"
+    },
+    {
+      "id": "smokeFrames",
+      "type": "promptString",
+      "description": "GPU smoke 帧数",
+      "default": "6"
+    },
+    {
+      "id": "smokeAsset",
+      "type": "promptString",
+      "description": "glTF/GLB 资产路径",
+      "default": "assets/triangle.gltf"
+    },
+    {
+      "id": "vcpkgTriplet",
+      "type": "promptString",
+      "description": "vcpkg triplet",
+      "default": "x64-windows"
+    }
+  ]
+}

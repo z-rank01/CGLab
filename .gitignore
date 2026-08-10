@@ -19,6 +19,8 @@
 # vcpkg
 /vcpkg/
 /vcpkg_installed/
+/.cglab-vcpkg-bootstrap-baseline
+/CMakeUserPresets.json
 
 # 系统文件
 *.user

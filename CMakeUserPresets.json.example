@@ -1,0 +1,45 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "local-windows-msvc-ninja-debug",
+      "inherits": "windows-msvc-ninja-debug",
+      "displayName": "Local Windows MSVC / Debug",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl"
+      }
+    },
+    {
+      "name": "local-linux-clang-ninja-debug",
+      "inherits": "linux-clang-ninja-debug",
+      "displayName": "Local Linux Clang / Debug",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "local-windows-msvc-ninja-debug",
+      "configurePreset": "local-windows-msvc-ninja-debug"
+    },
+    {
+      "name": "local-linux-clang-ninja-debug",
+      "configurePreset": "local-linux-clang-ninja-debug"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "local-windows-msvc-ninja-debug",
+      "configurePreset": "local-windows-msvc-ninja-debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "local-linux-clang-ninja-debug",
+      "configurePreset": "local-linux-clang-ninja-debug",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

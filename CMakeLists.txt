@@ -2,8 +2,17 @@ cmake_minimum_required(VERSION 3.20)
 
 # Use the repository's vcpkg toolchain unless the caller selected another one.
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    set(CMAKE_TOOLCHAIN_FILE
+    set(_cglab_default_vcpkg_toolchain
         "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+    )
+    if(NOT EXISTS "${_cglab_default_vcpkg_toolchain}")
+        message(FATAL_ERROR
+            "CGLab dependencies are not initialized. Run "
+            "scripts/cglab.ps1 setup on Windows or "
+            "scripts/cglab.sh setup on Linux before configuring."
+        )
+    endif()
+    set(CMAKE_TOOLCHAIN_FILE "${_cglab_default_vcpkg_toolchain}"
         CACHE STRING "Vcpkg toolchain file"
     )
 endif()
@@ -97,7 +106,7 @@ endif()
 # -----------------------------------------------------------------------------
 
 if(Vulkan_FOUND)
-    message(STATUS "Vulkan SDK location: ${Vulkan_INCLUDE_DIRS}")
+    message(STATUS "Vulkan headers/loader: ${Vulkan_INCLUDE_DIRS}")
     message(STATUS "Vulkan libraries: ${Vulkan_LIBRARIES}")
     message(STATUS "Vulkan version: ${Vulkan_VERSION}")
 else()

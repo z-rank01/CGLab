@@ -4,117 +4,108 @@
     {
       "name": "base",
       "hidden": true,
-      "binaryDir": "${sourceDir}/build",
       "toolchainFile": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake",
       "cacheVariables": {
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-      }
-    },
-    {
-      "name": "base-visual-studio",
-      "inherits": "base",
-      "hidden": true,
-      "generator": "Visual Studio 17 2022",
-      "architecture": "x64"
-    },
-    {
-      "name": "base-ninja",
-      "inherits": "base",
-      "hidden": true,
-      "generator": "Ninja"
-    },
-    {
-      "name": "base-mingw-makefiles",
-      "inherits": "base",
-      "hidden": true,
-      "generator": "MinGW Makefiles"
-    },
-    {
-      "name": "windows-msvc",
-      "inherits": "base-visual-studio",
-      "displayName": "Windows MSVC (Visual Studio)",
-      "environment": {
-        "VCPKG_TARGET_TRIPLET": "x64-windows"
-      },
-      "cacheVariables": {
-        "CMAKE_C_COMPILER": "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.42.34433/bin/Hostx64/x64/cl.exe",
-        "CMAKE_CXX_COMPILER": "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.42.34433/bin/Hostx64/x64/cl.exe"
-      }
-    },
-    {
-      "name": "windows-gcc",
-      "inherits": "base-mingw-makefiles",
-      "displayName": "Windows GCC (MinGW Makefiles)",
-      "environment": {
-        "VCPKG_CMAKE_SYSTEM_NAME": "MinGW"
-      },
-      "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "x64-windows-static",
-        "CMAKE_C_COMPILER": "C:/Program Files/msys64/ucrt64/bin/gcc.exe",
-        "CMAKE_CXX_COMPILER": "C:/Program Files/msys64/ucrt64/bin/g++.exe"
-      }
-    },
-    {
-      "name": "windows-clang",
-      "inherits": "base-ninja",
-      "displayName": "Windows Clang (Ninja)",
-      "environment": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "CMAKE_CXX_EXTENSIONS": "OFF",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/third_party/my-vcpkg-triplets/"
-      },
-      "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "x64-win-llvm",
-        "CMAKE_C_COMPILER": "C:/Program Files/LLVM/bin/clang.exe",
-        "CMAKE_CXX_COMPILER": "C:/Program Files/LLVM/bin/clang++.exe",
-        "CMAKE_RC_COMPILER": "C:/Program Files/LLVM/bin/clang-cl.exe",
-        "CMAKE_MAKE_PROGRAM": "C:/Program Files/Ninja/ninja.exe"
-      }
-    },
-    {
-      "name": "macos-clang",
-      "inherits": "base-ninja",
-      "displayName": "macOS Clang (Ninja)",
-      "environment": {
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-      },
-      "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "x64-osx", 
-        "CMAKE_C_COMPILER": "/opt/homebrew/opt/llvm/bin/clang",
-        "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++"
-      }
-    },
-    {
-      "name": "linux-clang",
-      "inherits": "base-ninja",
-      "displayName": "Linux Clang (Ninja)",
-      "environment": {
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-      },
-      "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "x64-linux", 
-        "CMAKE_C_COMPILER": "/usr/bin/clang",
-        "CMAKE_CXX_COMPILER": "/usr/bin/clang++"
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed"
       }
     },
     {
       "name": "windows-msvc-ninja",
-      "inherits": "base-ninja",
-      "displayName": "Windows MSVC with Ninja",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Ninja",
+      "displayName": "Windows MSVC / Ninja",
       "environment": {
         "VCPKG_TARGET_TRIPLET": "x64-windows"
+      }
+    },
+    {
+      "name": "linux-clang-ninja",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Ninja",
+      "displayName": "Linux Clang / Ninja",
+      "environment": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux"
       },
       "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "x64-windows", 
-        "CMAKE_C_COMPILER": "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe",
-        "CMAKE_CXX_COMPILER": "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe",
-        "CMAKE_RC_COMPILER": "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64/rc.exe",
-        "CMAKE_MAKE_PROGRAM": "C:/Program Files/Ninja/ninja.exe"
-      },
-      "vendor": {
-        "microsoft.com/VisualStudioSettings/CMake/1.0": {
-          "intelliSenseMode": "windows-msvc-x64"
-        }
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "windows-msvc-ninja-debug",
+      "inherits": "windows-msvc-ninja",
+      "displayName": "Windows MSVC / Ninja / Debug",
+      "binaryDir": "${sourceDir}/build/windows-msvc-ninja/Debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-msvc-ninja-release",
+      "inherits": "windows-msvc-ninja",
+      "displayName": "Windows MSVC / Ninja / Release",
+      "binaryDir": "${sourceDir}/build/windows-msvc-ninja/Release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "windows-msvc-ninja-relwithdebinfo",
+      "inherits": "windows-msvc-ninja",
+      "displayName": "Windows MSVC / Ninja / RelWithDebInfo",
+      "binaryDir": "${sourceDir}/build/windows-msvc-ninja/RelWithDebInfo",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "linux-clang-ninja-debug",
+      "inherits": "linux-clang-ninja",
+      "displayName": "Linux Clang / Ninja / Debug",
+      "binaryDir": "${sourceDir}/build/linux-clang-ninja/Debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-clang-ninja-release",
+      "inherits": "linux-clang-ninja",
+      "displayName": "Linux Clang / Ninja / Release",
+      "binaryDir": "${sourceDir}/build/linux-clang-ninja/Release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-clang-ninja-relwithdebinfo",
+      "inherits": "linux-clang-ninja",
+      "displayName": "Linux Clang / Ninja / RelWithDebInfo",
+      "binaryDir": "${sourceDir}/build/linux-clang-ninja/RelWithDebInfo",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     }
+  ],
+  "buildPresets": [
+    { "name": "windows-msvc-ninja-debug", "configurePreset": "windows-msvc-ninja-debug" },
+    { "name": "windows-msvc-ninja-release", "configurePreset": "windows-msvc-ninja-release" },
+    { "name": "windows-msvc-ninja-relwithdebinfo", "configurePreset": "windows-msvc-ninja-relwithdebinfo" },
+    { "name": "linux-clang-ninja-debug", "configurePreset": "linux-clang-ninja-debug" },
+    { "name": "linux-clang-ninja-release", "configurePreset": "linux-clang-ninja-release" },
+    { "name": "linux-clang-ninja-relwithdebinfo", "configurePreset": "linux-clang-ninja-relwithdebinfo" }
+  ],
+  "testPresets": [
+    { "name": "windows-msvc-ninja-debug", "configurePreset": "windows-msvc-ninja-debug", "output": { "outputOnFailure": true } },
+    { "name": "windows-msvc-ninja-release", "configurePreset": "windows-msvc-ninja-release", "output": { "outputOnFailure": true } },
+    { "name": "windows-msvc-ninja-relwithdebinfo", "configurePreset": "windows-msvc-ninja-relwithdebinfo", "output": { "outputOnFailure": true } },
+    { "name": "linux-clang-ninja-debug", "configurePreset": "linux-clang-ninja-debug", "output": { "outputOnFailure": true } },
+    { "name": "linux-clang-ninja-release", "configurePreset": "linux-clang-ninja-release", "output": { "outputOnFailure": true } },
+    { "name": "linux-clang-ninja-relwithdebinfo", "configurePreset": "linux-clang-ninja-relwithdebinfo", "output": { "outputOnFailure": true } }
   ]
 }

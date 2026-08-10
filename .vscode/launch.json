@@ -4,73 +4,69 @@
     {
       "type": "cppvsdbg",
       "request": "launch",
-      "name": "MSVC Debug",
-      "program": "${workspaceFolder}/build/${input:buildType}/${input:executableName}.exe",
-      "args": [],
-      "cwd": "${workspaceFolder}/build",
-      "environment": [],
+      "name": "CGLab Windows: TriangleSample",
+      "program": "${workspaceFolder}/build/windows-msvc-ninja/${input:debugBuildType}/TriangleSample.exe",
+      "cwd": "${workspaceFolder}",
+      "args": ["--validation"],
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "cppvsdbg",
+      "request": "launch",
+      "name": "CGLab Windows: GltfSponzaSample",
+      "program": "${workspaceFolder}/build/windows-msvc-ninja/${input:debugBuildType}/GltfSponzaSample.exe",
+      "cwd": "${workspaceFolder}",
+      "args": ["--asset", "${input:debugAsset}", "--validation"],
       "console": "integratedTerminal"
     },
     {
       "type": "cppdbg",
       "request": "launch",
-      "name": "GDB Debug",
-      "program": "${workspaceFolder}/build/${input:executableName}.exe",
-      "args": [],
-      "cwd": "${workspaceFolder}/build",
+      "name": "CGLab Linux: TriangleSample",
+      "program": "${workspaceFolder}/build/linux-clang-ninja/${input:debugBuildType}/TriangleSample",
+      "cwd": "${workspaceFolder}",
+      "args": ["--validation"],
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
       "setupCommands": [
         {
           "description": "Enable pretty-printing for gdb",
           "text": "-enable-pretty-printing",
           "ignoreFailures": false
         }
-      ],
-      "windows": {
-        "MIMode": "gdb",
-        "miDebuggerPath": "${input:dbgPath}"
-      },
-      "linux": {
-        "MIMode": "gdb",
-        "miDebuggerPath": "${input:dbgPath}"
-      },
-      "osx": {
-        "MIMode": "gdb",
-        "miDebuggerPath": "${input:dbgPath}"
-      }
+      ]
     },
     {
-      "type": "lldb",
+      "type": "cppdbg",
       "request": "launch",
-      "name": "LLDB Debug",
-      "program": "${workspaceFolder}/build/${input:executableName}.exe",
-      "args": [],
-      "cwd": "${workspaceFolder}/build",
-      "stopOnEntry": false
+      "name": "CGLab Linux: GltfSponzaSample",
+      "program": "${workspaceFolder}/build/linux-clang-ninja/${input:debugBuildType}/GltfSponzaSample",
+      "cwd": "${workspaceFolder}",
+      "args": ["--asset", "${input:debugAsset}", "--validation"],
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": false
+        }
+      ]
     }
   ],
   "inputs": [
     {
-      "type": "promptString",
-      "id": "executableName",
-      "description": "Enter executable name (without .exe)",
-      "default": "VulkanSample"
-    },
-    {
       "type": "pickString",
-      "id": "buildType",
-      "description": "Select build type (for MSVC)",
-      "options": [
-        "Debug",
-        "Release", 
-        ""
-      ],
+      "id": "debugBuildType",
+      "description": "Select the already-built configuration",
+      "options": ["Debug", "Release", "RelWithDebInfo"],
       "default": "Debug"
     },
     {
       "type": "promptString",
-      "id": "dbgPath",
-      "description": "Enter GDB debugger path",
-      "default": "C:/Program Files/msys64/ucrt64/bin/gdb.exe"
+      "id": "debugAsset",
+      "description": "glTF/GLB asset path",
+      "default": "assets/triangle.gltf"
     }
   ]
 }

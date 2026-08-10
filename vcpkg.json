@@ -36,7 +36,13 @@
     },
     {
       "name": "tinygltf",
-      "version>=": "3.0.0"
+      "version>=": "2.9.6"
+    }
+  ],
+  "overrides": [
+    {
+      "name": "tinygltf",
+      "version": "2.9.6"
     }
   ],
   "builtin-baseline": "f4fc135de213885b8d072203d324976e4aa1f171"
