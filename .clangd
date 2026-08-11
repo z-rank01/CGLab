@@ -1,23 +1,23 @@
 ---
-# 编译选项
+# CGLab 的源码由 CMake presets 配置。CMake 生成的 compile_commands.json
+# 会优先提供每个 preset 的真实编译器和系统 include；没有选中编译数据库时，
+# 下面这些最小默认值也要让 clangd 正确解析当前项目。
 CompileFlags:
-  # 将当前目录添加到包含路径
-  Add: 
+  # clangd 只会自动在源文件的父目录中查找 compile_commands.json；本项目的
+  # 编译数据库位于 preset 的 build 子目录，因此需要在这里明确指定。
+  CompilationDatabase: build/windows-msvc-ninja/Debug
+  Add:
+    - -std=c++20
+    - -fexceptions
+    # CMake 会给两个 app 注入真实仓库路径；无 compile_commands 时用当前目录
+    # 作为语法分析 fallback，避免编辑器把宏标成未声明。
+    - '-DCGLAB_SOURCE_DIR="."'
+  Remove:
     - -std:c++latest
-    - -std=c++23
-    - -Wall
-    - -Wno-c++98-compat
-    - -Wno-c++98-compat-pedantic
-    - -Ie:/Projects/ZRenderGraph/src
-    - -Ie:/Projects/ZRenderGraph/include
-  
-  # 忽略编译器特定警告
-  Remove: 
+    - -std:c++23
+    - -DCGLAB_SOURCE_DIR=*
     - -W*
     - -fsanitize=*
-  
-  # 移除编译器中不需要的参数
-  Compiler: cl
 
 # 诊断设置
 Diagnostics:
