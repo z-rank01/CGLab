@@ -6,7 +6,7 @@ add_library(cglab_sdl_vulkan_surface STATIC
 target_include_directories(cglab_sdl_vulkan_surface PUBLIC ${PROJECT_SOURCE_DIR}/src)
 
 target_link_libraries(cglab_sdl_vulkan_surface
-    PUBLIC render_graph
+    PUBLIC render_graph::vulkan
     PRIVATE SDL3::SDL3 cglab_platform_sdl
 )
 

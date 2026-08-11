@@ -13,8 +13,8 @@
 
 #include "_interface/window.h"
 #include "render_graph/system.h"
-#include "render_graph/vk_backend.h"
-#include "render_graph/vk_runtime.h"
+#include "render_graph/backend/vulkan/graph_backend.h"
+#include "render_graph/backend/vulkan/runtime.h"
 #include "swapchain_image_state.h"
 #include "engine/render_backend.h"
 #include "render_graph_vulkan/render_program.h"

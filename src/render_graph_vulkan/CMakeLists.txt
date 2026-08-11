@@ -26,7 +26,8 @@ target_link_libraries(cglab_render_graph_vulkan
         GPUOpen::VulkanMemoryAllocator
         glm::glm
         utility
-        render_graph
+        render_graph::core
+        render_graph::vulkan
         cglab_sdl_vulkan_surface
 )
 
