@@ -1,6 +1,7 @@
 #include "engine/engine_runtime.h"
 
 #include <algorithm>
+#include <array>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -18,7 +19,7 @@ namespace
 namespace engine
 {
 engine_runtime::engine_runtime(runtime_config runtime_config,
-                               std::unique_ptr<engine::render_backend> render_backend,
+                               engine::render_driver render_backend,
                                std::unique_ptr<interface::window> platform_window,
                                std::unique_ptr<asset_service> assets)
     : window(std::move(platform_window)), renderer(std::move(render_backend)), asset_loader(std::move(assets)),
@@ -647,115 +648,139 @@ void engine_runtime::publish_frame_telemetry()
 
 bool engine_runtime::tick(std::optional<std::uint64_t> frame_limit)
 {
+    static constexpr std::array phase_table{
+        &engine_runtime::poll_events,
+        &engine_runtime::consume_control_commands,
+        &engine_runtime::merge_asset_results,
+        &engine_runtime::update_scene_transforms,
+        &engine_runtime::update_cameras,
+        &engine_runtime::run_sample_systems,
+        &engine_runtime::extract_render_packet,
+        &engine_runtime::apply_resource_changes,
+        &engine_runtime::submit_render_packet,
+        &engine_runtime::publish_telemetry,
+    };
     std::uint64_t rendered_frames = 0;
     while (!window->should_close())
     {
-        // calculate delta time
-        auto current_time = std::chrono::high_resolution_clock::now();
-        delta_time        = std::chrono::duration<float>(current_time - last_frame_time).count();
-        last_frame_time   = current_time;
-
-        window->poll_events(input_events);
-        for (const interface::input_event& event : input_events)
-        {
-            if (event.type == interface::event_type::resize)
-            {
-                renderer->request_resize();
-            }
-            // P2：fly 模式左键 = 拾取（orbit 模式下左键是环绕旋转，不触发拾取）
-            if (event.type == interface::event_type::mouse_button_down && event.mouse_button.button == interface::mouse_button::left &&
-                camera_container.transforms[camera_entity_index].mode == interface::camera_mode::fly)
-            {
-                try_pick_object(event.mouse_button.x, event.mouse_button.y);
-            }
-        }
-        if (window->should_close())
-        {
-            return true;
-        }
-
-        // 帧边界消费控制平面命令（pause/resume/step/echo/camera.*/scene.*）
-        handle_control_plane_commands();
-        // 帧边界应用异步加载结果（staging + 注册 + 回响应）
-        drain_completed_loads();
-
-        interface::tick(camera_container, camera_update_context, input_events, delta_time);
-        if (sample_definition.update)
-        {
-            runtime_services services{
-                .scene = scene_registry,
-                .cameras = camera_container,
-                .active_camera = camera_entity_index,
-                .request_asset = [this](std::filesystem::path path)
-                {
-                    auto requested = asset_loader->request(std::move(path));
-                    if (requested)
-                    {
-                        pending_loads.emplace(requested.value, pending_load{});
-                    }
-                    return requested;
-                },
-                .post_message = [](std::string_view message) { Logger::LogInfo(std::string(message)); },
-            };
-            sample_definition.update(services, delta_time);
-        }
-
-        render_objects.clear();
-        for (const scene::scene_object* object : scene_registry.objects())
-        {
-            if (object->visible && object->render_geometry != engine::invalid_geometry_handle)
-            {
-                render_objects.push_back(engine::render_object{
-                    .geometry = object->render_geometry,
-                    .model = scene::model_matrix(*object),
-                });
-            }
-        }
-
-        // 暂停语义：事件泵与 UI 通道保持存活，仅跳过渲染；
-        // pending_frame_steps 允许逐帧步进。
-        bool render_this_frame = !frame_paused;
-        if (pending_frame_steps > 0)
-        {
-            --pending_frame_steps;
-            render_this_frame = true;
-        }
-        if (!render_this_frame)
-        {
-            publish_frame_telemetry();
-            std::this_thread::sleep_for(std::chrono::milliseconds(8));
-            continue;
-        }
-
-        const engine::render_snapshot snapshot{
-            .frame_serial = frame_serial++,
-            .view = interface::get_view_matrix(camera_container.transforms[camera_entity_index]),
-            .projection = interface::get_projection_matrix(camera_container.transforms[camera_entity_index],
-                                                           camera_container.configs[camera_entity_index]),
-            .objects = render_objects,
-        };
-        const engine::frame_status status = renderer->render(snapshot);
-        if (status == engine::frame_status::failed)
-        {
-            return false;
-        }
-        if (status == engine::frame_status::skipped)
-        {
-            publish_frame_telemetry();
-            std::this_thread::sleep_for(std::chrono::milliseconds(8));
-            continue;
-        }
-        if (status == engine::frame_status::rendered)
-        {
-            ++rendered_frames;
-            if (frame_limit && rendered_frames >= *frame_limit)
-            {
-                return true;
-            }
-        }
-        publish_frame_telemetry();
+        frame_phase_context context;
+        for (const frame_phase phase : phase_table) (this->*phase)(context);
+        if (context.stop_failure) return false;
+        if (context.stop_success) return true;
+        if (context.rendered && frame_limit && ++rendered_frames >= *frame_limit) return true;
     }
     return true;
+}
+
+void engine_runtime::poll_events(frame_phase_context& context)
+{
+    const auto current_time = std::chrono::high_resolution_clock::now();
+    delta_time = std::chrono::duration<float>(current_time - last_frame_time).count();
+    last_frame_time = current_time;
+    window->poll_events(input_events);
+    for (const interface::input_event& event : input_events)
+    {
+        if (event.type == interface::event_type::resize) renderer->request_resize();
+        if (event.type == interface::event_type::mouse_button_down &&
+            event.mouse_button.button == interface::mouse_button::left &&
+            camera_container.transforms[camera_entity_index].mode == interface::camera_mode::fly)
+            try_pick_object(event.mouse_button.x, event.mouse_button.y);
+    }
+    context.stop_success = window->should_close();
+}
+
+void engine_runtime::consume_control_commands(frame_phase_context& context)
+{
+    if (!context.stop_success) handle_control_plane_commands();
+}
+
+void engine_runtime::merge_asset_results(frame_phase_context& context)
+{
+    if (!context.stop_success) drain_completed_loads();
+}
+
+void engine_runtime::update_scene_transforms(frame_phase_context&)
+{
+    // Matrix rows are authoritative; hierarchical glTF transforms were resolved at the frame-boundary merge.
+}
+
+void engine_runtime::update_cameras(frame_phase_context& context)
+{
+    if (!context.stop_success) interface::tick(camera_container, camera_update_context, input_events, delta_time);
+}
+
+void engine_runtime::run_sample_systems(frame_phase_context& context)
+{
+    if (context.stop_success || !sample_definition.update) return;
+    runtime_services services{
+        .scene = scene_registry,
+        .cameras = camera_container,
+        .active_camera = camera_entity_index,
+        .request_asset = [this](std::filesystem::path path)
+        {
+            auto requested = asset_loader->request(std::move(path));
+            if (requested) pending_loads.emplace(requested.value, pending_load{});
+            return requested;
+        },
+        .post_message = [](std::string_view message) { Logger::LogInfo(std::string(message)); },
+    };
+    sample_definition.update(services, delta_time);
+}
+
+void engine_runtime::extract_render_packet(frame_phase_context& context)
+{
+    if (context.stop_success) return;
+    render_instances.clear();
+    render_transforms.clear();
+    for (const scene::scene_object* object : scene_registry.objects())
+    {
+        if (!object->visible || object->render_geometry == engine::invalid_geometry_handle) continue;
+        const std::uint32_t transform = static_cast<std::uint32_t>(render_transforms.size());
+        render_transforms.push_back(scene::model_matrix(*object));
+        render_instances.push_back({.mesh = object->render_geometry, .transform = transform});
+    }
+    render_cameras = {engine::camera_row{
+        .view = interface::get_view_matrix(camera_container.transforms[camera_entity_index]),
+        .projection = interface::get_projection_matrix(camera_container.transforms[camera_entity_index],
+                                                       camera_container.configs[camera_entity_index]),
+    }};
+}
+
+void engine_runtime::apply_resource_changes(frame_phase_context&)
+{
+    // Asset result rows are applied only at merge_asset_results; workers never mutate shared runtime tables.
+}
+
+void engine_runtime::submit_render_packet(frame_phase_context& context)
+{
+    if (context.stop_success) return;
+    context.render_this_frame = !frame_paused;
+    if (pending_frame_steps > 0)
+    {
+        --pending_frame_steps;
+        context.render_this_frame = true;
+    }
+    if (!context.render_this_frame)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        return;
+    }
+    const engine::render_frame_packet packet{
+        .frame_serial = frame_serial++,
+        .camera_rows = render_cameras,
+        .instance_rows = render_instances,
+        .transform_rows = render_transforms,
+    };
+    const engine::frame_status status = renderer->render(packet);
+    context.stop_failure = status == engine::frame_status::failed;
+    context.rendered = status == engine::frame_status::rendered;
+    if (status == engine::frame_status::skipped)
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+}
+
+void engine_runtime::publish_telemetry(frame_phase_context& context)
+{
+    if (!context.stop_success && !context.stop_failure) publish_frame_telemetry();
 }
 
 void engine_runtime::shutdown() noexcept
@@ -775,7 +800,7 @@ void engine_runtime::shutdown() noexcept
         final_validation_errors = renderer->validation_error_count();
         renderer->shutdown();
     }
-    renderer.reset();
+    renderer = engine::render_driver{};
     window.reset();
 }
 

@@ -164,7 +164,7 @@ engine::result<std::uint32_t> vulkan_backend::upload_materials(const engine::ass
 
 bool vulkan_backend::update_gpu_scene_tables()
 {
-    assert(current_snapshot != nullptr);
+    assert(current_packet != nullptr && !current_packet->camera_rows.empty());
     struct draw_candidate
     {
         glm::mat4 model{1.0F};
@@ -172,11 +172,13 @@ bool vulkan_backend::update_gpu_scene_tables()
         float distance_squared = 0.0F;
     };
     std::array<std::vector<draw_candidate>, 4> groups;
-    const glm::vec3 camera_position = glm::vec3(glm::inverse(current_snapshot->view)[3]);
+    const glm::vec3 camera_position = glm::vec3(glm::inverse(current_packet->camera_rows.front().view)[3]);
     std::size_t candidate_count = 0;
-    for (const engine::render_object& object : current_snapshot->objects)
+    for (const engine::instance_row& instance : current_packet->instance_rows)
     {
-        const auto allocation = geometry_allocations.find(object.geometry);
+        if (instance.transform >= current_packet->transform_rows.size()) continue;
+        const glm::mat4& model = current_packet->transform_rows[instance.transform];
+        const auto allocation = geometry_allocations.find(instance.mesh);
         if (allocation == geometry_allocations.end()) continue;
         for (const engine::draw_range& range : allocation->second.draws)
         {
@@ -190,8 +192,8 @@ bool vulkan_backend::update_gpu_scene_tables()
             const bool blend = material.roughness_alpha.z == 2.0F;
             const bool double_sided = material.roughness_alpha.w != 0.0F;
             const std::uint32_t group = (blend ? 2u : 0u) + (double_sided ? 1u : 0u);
-            const glm::vec3 position = glm::vec3(object.model[3]);
-            groups[group].push_back({object.model, range, glm::dot(position - camera_position, position - camera_position)});
+            const glm::vec3 position = glm::vec3(model[3]);
+            groups[group].push_back({model, range, glm::dot(position - camera_position, position - camera_position)});
         }
     }
     for (std::uint32_t group = 2; group < groups.size(); group++)

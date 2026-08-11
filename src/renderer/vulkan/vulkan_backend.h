@@ -71,22 +71,22 @@ struct staged_geometry
     std::vector<render_graph::vk_buffer_slice> slices;
 };
 
-class vulkan_backend final : public engine::render_backend
+class vulkan_backend final
 {
 public:
     explicit vulkan_backend(engine::vulkan::render_program program);
-    ~vulkan_backend() override;
-    void request_resize() noexcept override { resize_request = true; }
-    [[nodiscard]] vulkan_run_statistics statistics() const noexcept override { return run_statistics; }
+    ~vulkan_backend();
+    void request_resize() noexcept { resize_request = true; }
+    [[nodiscard]] vulkan_run_statistics statistics() const noexcept { return run_statistics; }
 
     [[nodiscard]] engine::result<bool> initialize(interface::window& render_window,
-                                                  const engine::backend_config& backend_config) override;
-    [[nodiscard]] engine::result<engine::geometry_handle> upload_geometry(const engine::geometry_asset& asset) override;
-    [[nodiscard]] engine::result<std::uint32_t> upload_materials(const engine::asset_database& asset) override;
-    void retire_geometry(engine::geometry_handle handle) override;
-    [[nodiscard]] engine::frame_status render(const engine::render_snapshot& snapshot) override;
-    void shutdown() noexcept override;
-    [[nodiscard]] std::uint32_t validation_error_count() const noexcept override
+                                                  const engine::backend_config& backend_config);
+    [[nodiscard]] engine::result<engine::geometry_handle> upload_geometry(const engine::geometry_asset& asset);
+    [[nodiscard]] engine::result<std::uint32_t> upload_materials(const engine::asset_database& asset);
+    void retire_geometry(engine::geometry_handle handle);
+    [[nodiscard]] engine::frame_status render(const engine::render_frame_packet& packet);
+    void shutdown() noexcept;
+    [[nodiscard]] std::uint32_t validation_error_count() const noexcept
     {
         return runtime ? runtime->validation_error_count() : 0;
     }
@@ -170,7 +170,7 @@ private:
     swapchain_image_state_tracker swapchain_image_states;
     vulkan_run_statistics run_statistics;
     // --- P2 scene system / geometry arena ---
-    const engine::render_snapshot* current_snapshot = nullptr;
+    const engine::render_frame_packet* current_packet = nullptr;
     std::map<engine::geometry_handle, staged_geometry> geometry_allocations;
     engine::geometry_handle next_geometry_handle = 0;
     bool shutdown_requested = false;

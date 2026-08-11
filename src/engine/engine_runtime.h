@@ -24,7 +24,7 @@ class engine_runtime
 {
 public:
     engine_runtime(runtime_config config,
-                   std::unique_ptr<engine::render_backend> renderer,
+                   engine::render_driver renderer,
                    std::unique_ptr<interface::window> platform_window = {},
                    std::unique_ptr<asset_service> assets = {});
     ~engine_runtime();
@@ -42,7 +42,7 @@ public:
 private:
     // core member
     std::unique_ptr<interface::window> window;
-    std::unique_ptr<engine::render_backend> renderer;
+    engine::render_driver renderer;
     engine::render_statistics run_statistics;
     std::uint32_t final_validation_errors = 0;
     std::vector<interface::input_event> input_events;
@@ -70,7 +70,9 @@ private:
     std::optional<engine::geometry_asset> initial_geometry;
     std::optional<engine::asset_database> initial_asset;
     std::optional<std::filesystem::path> required_startup_asset;
-    std::vector<engine::render_object> render_objects;
+    std::vector<engine::camera_row> render_cameras;
+    std::vector<engine::instance_row> render_instances;
+    std::vector<glm::mat4> render_transforms;
     std::uint64_t frame_serial = 0;
     sample sample_definition;
     std::uint64_t last_published_scene_revision = 0;
@@ -97,6 +99,25 @@ private:
     void enqueue_load(std::string path, std::string client_id, nlohmann::json rpc_id);
     void drain_completed_loads();
     [[nodiscard]] std::vector<scene::object_id> merge_asset_database(engine::asset_database asset, bool read_only);
+
+    struct frame_phase_context
+    {
+        bool stop_success = false;
+        bool stop_failure = false;
+        bool rendered = false;
+        bool render_this_frame = true;
+    };
+    using frame_phase = void (engine_runtime::*)(frame_phase_context&);
+    void poll_events(frame_phase_context&);
+    void consume_control_commands(frame_phase_context&);
+    void merge_asset_results(frame_phase_context&);
+    void update_scene_transforms(frame_phase_context&);
+    void update_cameras(frame_phase_context&);
+    void run_sample_systems(frame_phase_context&);
+    void extract_render_packet(frame_phase_context&);
+    void apply_resource_changes(frame_phase_context&);
+    void submit_render_packet(frame_phase_context&);
+    void publish_telemetry(frame_phase_context&);
 
     // fly 模式左键拾取：窗口坐标 → 相机射线 → registry pick
     void try_pick_object(float x, float y);

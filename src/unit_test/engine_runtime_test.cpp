@@ -59,41 +59,52 @@ namespace
         engine::frame_status status = engine::frame_status::rendered;
     };
 
-    class fake_backend final : public engine::render_backend
+    struct fake_backend
     {
-    public:
         explicit fake_backend(std::shared_ptr<backend_state> state) : state(std::move(state)) {}
-
-        engine::result<bool> initialize(interface::window&, const engine::backend_config&) override
-        {
-            ++state->initialize_calls;
-            return {.value = true};
-        }
-        engine::result<engine::geometry_handle> upload_geometry(const engine::geometry_asset&) override
-        {
-            ++state->upload_calls;
-            return {.value = 7};
-        }
-        void retire_geometry(engine::geometry_handle) override {}
-        void request_resize() noexcept override {}
-        engine::frame_status render(const engine::render_snapshot& snapshot) override
-        {
-            ++state->render_calls;
-            state->last_object_count = snapshot.objects.size();
-            state->object_counts.push_back(snapshot.objects.size());
-            return state->status;
-        }
-        void shutdown() noexcept override { ++state->shutdown_calls; }
-        std::uint32_t validation_error_count() const noexcept override { return 0; }
-        engine::render_statistics statistics() const noexcept override
-        {
-            return {.draw_pass_executions = static_cast<std::uint64_t>(state->render_calls),
-                    .presented_frames = static_cast<std::uint64_t>(state->render_calls)};
-        }
-
-    private:
         std::shared_ptr<backend_state> state;
     };
+
+    engine::render_driver make_fake_driver(std::shared_ptr<backend_state> state)
+    {
+        static const engine::render_driver_api api{
+            .initialize = [](void* value, interface::window&, const engine::backend_config&)
+            {
+                ++static_cast<fake_backend*>(value)->state->initialize_calls;
+                return engine::result<bool>{.value = true};
+            },
+            .apply_resource_changes = [](void* value, engine::resource_change_batch batch)
+            {
+                engine::resource_change_result changed;
+                for ([[maybe_unused]] const auto& row : batch.material_uploads) changed.material_bases.push_back(0);
+                for ([[maybe_unused]] const auto& row : batch.geometry_uploads)
+                {
+                    ++static_cast<fake_backend*>(value)->state->upload_calls;
+                    changed.geometry_handles.push_back(7);
+                }
+                return engine::result<engine::resource_change_result>{.value = std::move(changed)};
+            },
+            .render = [](void* value, const engine::render_frame_packet& packet)
+            {
+                auto& state = *static_cast<fake_backend*>(value)->state;
+                ++state.render_calls;
+                state.last_object_count = packet.instance_rows.size();
+                state.object_counts.push_back(packet.instance_rows.size());
+                return state.status;
+            },
+            .request_resize = [](void*) noexcept {},
+            .shutdown = [](void* value) noexcept { ++static_cast<fake_backend*>(value)->state->shutdown_calls; },
+            .statistics = [](const void* value) noexcept
+            {
+                const auto& state = *static_cast<const fake_backend*>(value)->state;
+                return engine::render_statistics{.draw_pass_executions = static_cast<std::uint64_t>(state.render_calls),
+                                                 .presented_frames = static_cast<std::uint64_t>(state.render_calls)};
+            },
+            .validation_error_count = [](const void*) noexcept { return 0u; },
+            .destroy = [](void* value) noexcept { delete static_cast<fake_backend*>(value); },
+        };
+        return {new fake_backend(std::move(state)), &api};
+    }
 
     engine::geometry_asset triangle();
 
@@ -114,7 +125,16 @@ namespace
         engine::result<engine::asset_request_id> request(std::filesystem::path) override
         {
             ++state->request_calls;
-            state->completed.push_back({.id = 1, .result = {.value = triangle()}});
+            engine::geometry_asset geometry = triangle();
+            engine::asset_database asset{.name = geometry.name};
+            asset.vertex_blob = geometry.primitives[0].vertices;
+            asset.index_blob = geometry.primitives[0].indices;
+            asset.primitives.push_back({.mesh = 0, .material = 0, .vertex_count = 3, .index_count = 3});
+            asset.meshes.push_back({.name = geometry.name, .primitive_count = 1,
+                                    .bounds_min = geometry.bounds_min, .bounds_max = geometry.bounds_max});
+            asset.nodes.push_back({.name = geometry.name, .mesh = 0});
+            asset.materials.emplace_back();
+            state->completed.push_back({.id = 1, .result = {.value = std::move(asset)}});
             return {.value = 1};
         }
         std::vector<engine::completed_asset_request> drain_completed() override
@@ -150,7 +170,7 @@ int main()
     };
     engine::engine_runtime runtime(
         config,
-        std::make_unique<fake_backend>(state),
+        make_fake_driver(state),
         std::make_unique<fake_window>());
     runtime.set_initial_geometry(triangle());
     runtime.initialize();
@@ -167,7 +187,7 @@ int main()
     failing_state->status = engine::frame_status::failed;
     engine::engine_runtime failing(
         config,
-        std::make_unique<fake_backend>(failing_state),
+        make_fake_driver(failing_state),
         std::make_unique<fake_window>());
     failing.initialize();
     CHECK(!failing.tick(1));
@@ -177,7 +197,7 @@ int main()
     auto boundary_asset_state = std::make_shared<asset_state>();
     engine::engine_runtime boundary_runtime(
         config,
-        std::make_unique<fake_backend>(boundary_backend_state),
+        make_fake_driver(boundary_backend_state),
         std::make_unique<fake_window>(),
         std::make_unique<fake_asset_service>(boundary_asset_state));
     bool requested = false;

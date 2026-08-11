@@ -18,7 +18,7 @@ namespace apps
     {
         engine::runtime_config runtime;
         engine::sample sample;
-        std::unique_ptr<engine::render_backend> renderer;
+        engine::render_driver renderer;
         std::optional<std::uint64_t> frame_limit;
         bool require_validation_clean = false;
         bool enforce_smoke_contract = false;

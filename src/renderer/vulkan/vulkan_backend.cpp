@@ -64,12 +64,12 @@ void vulkan_backend::retire_geometry(engine::geometry_handle handle)
     geometry_allocations.erase(found);
 }
 
-engine::frame_status vulkan_backend::render(const engine::render_snapshot& snapshot)
+engine::frame_status vulkan_backend::render(const engine::render_frame_packet& packet)
 {
     const std::uint64_t descriptor_updates_before = runtime->bindless().statistics.descriptor_updates;
-    current_snapshot = &snapshot;
+    current_packet = &packet;
     const engine::frame_status status = tick();
-    current_snapshot = nullptr;
+    current_packet = nullptr;
     run_statistics.steady_frame_descriptor_updates +=
         runtime->bindless().statistics.descriptor_updates - descriptor_updates_before;
     run_statistics.pipeline_creations = runtime->pipelines().creations;

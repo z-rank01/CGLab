@@ -109,9 +109,9 @@ bool vulkan_backend::create_pipeline()
 void vulkan_backend::update_uniform_buffer(uint32_t current_frame_index)
 {
     mvp_matrices[current_frame_index].model        = glm::mat4(1.0F);
-    assert(current_snapshot != nullptr);
-    mvp_matrices[current_frame_index].view = current_snapshot->view;
-    mvp_matrices[current_frame_index].projection = current_snapshot->projection;
+    assert(current_packet != nullptr && !current_packet->camera_rows.empty());
+    mvp_matrices[current_frame_index].view = current_packet->camera_rows.front().view;
+    mvp_matrices[current_frame_index].projection = current_packet->camera_rows.front().projection;
     // reverse the Y-axis in Vulkan's NDC coordinate system
     mvp_matrices[current_frame_index].projection[1][1] *= -1;
 
