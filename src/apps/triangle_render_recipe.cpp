@@ -103,17 +103,17 @@ namespace apps
             pipeline.depth_format = render_graph::format::D32_SFLOAT;
             pipeline.push_constants = {{.stage_mask = render_graph::shader_stage_vertex_bit,
                                         .size = sizeof(push_constants)}};
-            const render_graph::pipeline_create_row pipeline_row{std::move(pipeline)};
+            const render_graph::graphics_pipeline_create_row pipeline_row{std::move(pipeline)};
             auto created = device.apply_resource_changes({
                 .buffer_creates = buffers,
-                .pipeline_creates = std::span(&pipeline_row, 1),
+                .graphics_pipeline_creates = std::span(&pipeline_row, 1),
             });
             if (!created) return {.error = created.error};
             state.geometry = created.buffers[0];
             state.transforms = created.buffers[1];
             state.indirect = created.buffers[2];
             state.frame_uniforms.assign(created.buffers.begin() + 3, created.buffers.end());
-            state.pipeline = created.pipelines.front();
+            state.pipeline = created.graphics_pipelines.front();
 
             std::vector<render_graph::bindless_publish_row> publishes;
             publishes.push_back({.table = render_graph::bindless_table_kind::storage_buffers,

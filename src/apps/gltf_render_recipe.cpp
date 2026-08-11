@@ -127,7 +127,7 @@ namespace apps
             if (!read_spirv(shader_path / "gltf.vert.spv", vertex_shader) ||
                 !read_spirv(shader_path / "gltf.frag.spv", fragment_shader))
                 return {.error = "Failed to read glTF Render Graph shaders"};
-            std::vector<render_graph::pipeline_create_row> pipelines;
+            std::vector<render_graph::graphics_pipeline_create_row> pipelines;
             for (uint32_t group = 0; group < 4; ++group)
             {
                 render_graph::graphics_pipeline_desc pipeline;
@@ -155,14 +155,14 @@ namespace apps
                 pipelines.push_back({std::move(pipeline)});
             }
             auto created = device.apply_resource_changes({.buffer_creates = buffers,
-                                                           .pipeline_creates = pipelines});
+                                                           .graphics_pipeline_creates = pipelines});
             if (!created) return {.error = created.error};
             state.geometry = created.buffers[0];
             state.transforms = created.buffers[1];
             state.indirect = created.buffers[2];
             state.materials = created.buffers[3];
             state.frame_uniforms.assign(created.buffers.begin() + 4, created.buffers.end());
-            std::copy_n(created.pipelines.begin(), 4, state.pipelines.begin());
+            std::copy_n(created.graphics_pipelines.begin(), 4, state.pipelines.begin());
 
             std::vector<render_graph::bindless_publish_row> publishes{
                 {.table = render_graph::bindless_table_kind::storage_buffers,
