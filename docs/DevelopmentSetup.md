@@ -26,7 +26,7 @@ Windows 至少需要：
 - Ninja；
 - Visual Studio 2022 的 Desktop development with C++ workload。
 
-脚本通过 `vswhere` 找到可用的 Visual Studio 2022，并自动加载 x64 MSVC 环境，不依赖 Community edition、固定 Windows SDK 或固定 MSVC 小版本。Ninja 如果没有加入 `PATH`，脚本也会检查常见的 `C:\Program Files\Ninja` 目录。
+脚本通过 `vswhere` 找到可用的 Visual Studio 2022，并自动加载 x64 MSVC 环境，不依赖 Community edition、固定 Windows SDK 或固定 MSVC 小版本。Ninja 如果没有加入 `PATH`，脚本也会检查常见的 `C:\Program Files\Ninja` 目录。Windows 上调用 CMake 时，脚本会临时把当前控制台代码页切换为 UTF-8，并在命令结束后恢复原值，确保 CMake/Ninja 能稳定解析本地化的 MSVC `/showIncludes` 输出并追踪头文件依赖。
 
 Linux 至少需要：
 
@@ -228,6 +228,7 @@ Copy-Item CMakeUserPresets.json.example CMakeUserPresets.json
 
 - CMake 报 vcpkg toolchain 不存在：先执行 `setup`，或者用 `deps` 只初始化依赖；
 - Ninja、CMake 或编译器缺失：执行 `doctor`，按照输出的当前平台安装建议补齐工具；
+- 从旧版本构建脚本升级后，若 Windows 链接仍出现新旧命名空间或类型不一致的 `LNK2001`，先对受影响配置执行一次 `clean` 再重建；旧 build tree 可能没有保存可用的 MSVC 头文件依赖，清理一次后后续增量构建会正常追踪；
 - vcpkg 下载文件 hash 不匹配：不要绕过 hash 校验，先确认仓库中的 manifest/override 和 vcpkg baseline，再重试依赖安装；
 - Vulkan headers 能编译但 smoke 失败：检查显卡驱动、`vulkaninfo` 和可用设备；
 - shader 需要重新编译但找不到 `glslc`：安装 Vulkan SDK 并设置 `VULKAN_SDK`，然后重新 configure。

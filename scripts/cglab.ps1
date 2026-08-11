@@ -105,9 +105,30 @@ function Parse-Arguments([string[]]$Arguments) {
 }
 
 function Invoke-Native([string]$Command, [string[]]$Arguments = @()) {
-    & $Command @Arguments | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-        Fail "Command failed with exit code ${LASTEXITCODE}: $Command $($Arguments -join ' ')"
+    $originalCodePage = $null
+    # Ninja matches MSVC /showIncludes output byte-for-byte. A UTF-8 console
+    # prevents CMake from writing a mojibake dependency prefix on localized hosts.
+    $useUtf8Console = $IsWindowsHost -and [IO.Path]::GetFileNameWithoutExtension($Command) -eq "cmake"
+    if ($useUtf8Console) {
+        $codePageOutput = & (Join-Path $env:SystemRoot "System32\chcp.com") 2>$null
+        if (($codePageOutput -join " ") -match "(\d+)") {
+            $originalCodePage = [int]$Matches[1]
+        }
+        if ($originalCodePage -ne 65001) {
+            & (Join-Path $env:SystemRoot "System32\chcp.com") 65001 | Out-Null
+        }
+    }
+
+    try {
+        & $Command @Arguments | Out-Host
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne 0) {
+            Fail "Command failed with exit code ${exitCode}: $Command $($Arguments -join ' ')"
+        }
+    } finally {
+        if ($null -ne $originalCodePage -and $originalCodePage -ne 65001) {
+            & (Join-Path $env:SystemRoot "System32\chcp.com") $originalCodePage | Out-Null
+        }
     }
 }
 
