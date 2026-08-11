@@ -52,55 +52,22 @@ bool vulkan_backend::resize_swapchain()
         return true;
     }
 
-    try
-    {
-        // wait for the device to be idle
-        comm_vk_logical_device.waitIdle();
-    }
-    catch (const vk::SystemError& error)
-    {
-        Logger::LogError(std::string("Failed to wait for resize: ") + error.what());
-        return false;
-    }
-
-    completed_frame = submitted_frame > 0 ? submitted_frame - 1 : 0;
-    std::fill(frame_submission_ids.begin(), frame_submission_ids.end(), completed_frame);
-    vk_synchronization_helper.reset();
+    completed_frame = runtime->frames().next_submission > 0 ? runtime->frames().next_submission - 1 : 0;
     vk_pipeline_helper.reset();
-
-    // destroy old vulkan objects
-
-    for (auto image_view : comm_vk_swapchain_context.swapchain_image_views_)
-    {
-        comm_vk_logical_device.destroyImageView(image_view, nullptr);
-    }
     comm_vk_swapchain_context.swapchain_image_views_.clear();
     comm_vk_swapchain_context.swapchain_images_.clear();
-    // Note: Don't destroy swapchain images as they are owned by the swapchain
-    comm_vk_logical_device.destroySwapchainKHR(comm_vk_swapchain, nullptr);
-    comm_vk_swapchain = VK_NULL_HANDLE;
-
-    // reset window size
-    config.width  = width;
-    config.height = height;
-
-    // create new swapchain
-    if (!create_swapchain())
+    const auto resized = runtime->resize();
+    if (!resized)
     {
-        Logger::LogError("Failed to recreate Vulkan swap chain");
+        Logger::LogError("Failed to recreate Vulkan swapchain: " + resized.error);
         return false;
     }
+    sync_runtime_context_views();
     if (!create_pipeline())
     {
         Logger::LogError("Failed to recreate Vulkan pipeline");
         return false;
     }
-    if (!create_synchronization_objects())
-    {
-        Logger::LogError("Failed to recreate Vulkan synchronization objects");
-        return false;
-    }
-
     resize_request = false;
     return true;
 }

@@ -32,6 +32,7 @@ target_link_libraries(cglab_vulkan_backend
         callable
         template
         render_graph
+        cglab_sdl_vulkan_surface
 )
 
 if(MSVC)

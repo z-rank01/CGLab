@@ -20,6 +20,7 @@
 #include "_vra/vra.h"
 #include "render_graph/system.h"
 #include "render_graph/vk_backend.h"
+#include "render_graph/vk_runtime.h"
 #include "swapchain_image_state.h"
 #include "engine/render_backend.h"
 #include "renderer/vulkan/render_program.h"
@@ -95,7 +96,7 @@ public:
     void shutdown() noexcept override;
     [[nodiscard]] std::uint32_t validation_error_count() const noexcept override
     {
-        return validation_errors->load(std::memory_order_relaxed);
+        return runtime ? runtime->validation_error_count() : validation_errors->load(std::memory_order_relaxed);
     }
 private:
 #define FRAME_INDEX_TO_UNIFORM_BUFFER_ID(frame_index) ((frame_index) + 4)
@@ -165,6 +166,8 @@ private:
 
     bool allocate_per_frame_command_buffer();
     bool create_synchronization_objects();
+    bool create_render_graph_runtime();
+    void sync_runtime_context_views();
 
     // ------------------------------------
 
@@ -172,7 +175,7 @@ private:
 
     [[nodiscard]] vulkan_frame_status draw_frame();
     [[nodiscard]] bool resize_swapchain();
-    bool record_command(uint32_t image_index, const std::string& command_buffer_id);
+    bool record_command(uint32_t image_index, VkCommandBuffer command_buffer);
     bool build_render_graph(uint32_t image_index);
     void update_uniform_buffer(uint32_t current_frame_index);
 
@@ -264,4 +267,5 @@ private:
 
     uint64_t submitted_frame = 1;
     uint64_t completed_frame = 0;
+    std::unique_ptr<render_graph::vk_runtime> runtime;
 };

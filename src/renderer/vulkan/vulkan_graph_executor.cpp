@@ -342,18 +342,11 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
     }
     return true;
 }
-bool vulkan_backend::record_command(uint32_t image_index, const std::string& command_buffer_id)
+bool vulkan_backend::record_command(uint32_t image_index, VkCommandBuffer command_buffer)
 {
     try
     {
         if (!build_render_graph(image_index))
-        {
-            frame_graph->abort_frame();
-            return false;
-        }
-
-        // begin command recording
-        if (!vk_command_buffer_helper->BeginCommandBufferRecording(command_buffer_id, vk::CommandBufferUsageFlagBits::eOneTimeSubmit))
         {
             frame_graph->abort_frame();
             return false;
@@ -377,7 +370,6 @@ bool vulkan_backend::record_command(uint32_t image_index, const std::string& com
         frame_graph->bind_imported_image(rg_swapchain,
                                          static_cast<VkImage>(comm_vk_swapchain_context.swapchain_images_[image_index]));
 
-        auto command_buffer = static_cast<VkCommandBuffer>(vk_command_buffer_helper->GetCommandBuffer(command_buffer_id));
         const auto execute_result = frame_graph->execute(command_buffer);
         if (!execute_result.succeeded())
         {
@@ -385,12 +377,6 @@ bool vulkan_backend::record_command(uint32_t image_index, const std::string& com
             {
                 Logger::LogError("Render graph execute failed: " + diagnostic.message);
             }
-            frame_graph->abort_frame();
-            return false;
-        }
-        // end command recording
-        if (!vk_command_buffer_helper->EndCommandBufferRecording(command_buffer_id))
-        {
             frame_graph->abort_frame();
             return false;
         }

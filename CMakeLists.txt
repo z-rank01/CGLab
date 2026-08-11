@@ -85,6 +85,8 @@ else()
     add_subdirectory(third_party/render-graph EXCLUDE_FROM_ALL)
 endif()
 
+add_subdirectory(src/platform/vulkan)
+
 # -----------------------------------------------------------------------------
 # CGLab runtime, applications, and tests
 # -----------------------------------------------------------------------------

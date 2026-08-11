@@ -174,7 +174,7 @@ vulkan_backend::~vulkan_backend()
         arena_index_buffer = VK_NULL_HANDLE;
     }
     frame_graph.reset();
-    if (vma_allocator != VK_NULL_HANDLE)
+    if (vma_allocator != VK_NULL_HANDLE && !runtime)
     {
         vmaDestroyAllocator(vma_allocator);
         vma_allocator = VK_NULL_HANDLE;
@@ -182,14 +182,14 @@ vulkan_backend::~vulkan_backend()
 
     // destroy swapchain related resources
 
-    for (auto image_view : comm_vk_swapchain_context.swapchain_image_views_)
+    for (auto image_view : runtime ? std::vector<vk::ImageView>{} : comm_vk_swapchain_context.swapchain_image_views_)
     {
         if (comm_vk_logical_device)
         {
             comm_vk_logical_device.destroyImageView(image_view);
         }
     }
-    if (comm_vk_logical_device && comm_vk_swapchain)
+    if (!runtime && comm_vk_logical_device && comm_vk_swapchain)
     {
         comm_vk_logical_device.destroySwapchainKHR(comm_vk_swapchain);
     }
@@ -203,20 +203,23 @@ vulkan_backend::~vulkan_backend()
 
     // destroy comm test data
 
-    if (comm_vk_logical_device)
+    if (!runtime && comm_vk_logical_device)
     {
         vkDestroyDevice(comm_vk_logical_device, nullptr);
     }
-    if (comm_vk_instance && surface != VK_NULL_HANDLE)
+    if (!runtime && comm_vk_instance && surface != VK_NULL_HANDLE)
     {
         vkDestroySurfaceKHR(comm_vk_instance, surface, nullptr);
     }
-    destroy_debug_messenger();
-    if (comm_vk_instance)
+    if (!runtime)
+    {
+        destroy_debug_messenger();
+    }
+    if (!runtime && comm_vk_instance)
     {
         vkDestroyInstance(comm_vk_instance, nullptr);
     }
-
+    runtime.reset();
 }
 
 vulkan_frame_status vulkan_backend::tick()
@@ -258,107 +261,42 @@ vulkan_frame_status vulkan_backend::draw()
 
 vulkan_frame_status vulkan_backend::draw_frame()
 {
-    // get current resource
-    auto current_fence_id                     = output_frames[frame_index].fence_id;
-    auto current_image_available_semaphore_id = output_frames[frame_index].image_available_semaphore_id;
-    // REMOVE or IGNORE the per-frame render_finished_semaphore_id
-    auto current_command_buffer_id = output_frames[frame_index].command_buffer_id;
-
-    // wait for the last frame to finish
-    if (!vk_synchronization_helper->WaitForFence(current_fence_id))
-        return vulkan_frame_status::failed;
-    completed_frame = std::max(completed_frame, frame_submission_ids[frame_index]);
-    collect_deferred_resources();
-
-    // get semaphores
-    auto image_available_semaphore = vk_synchronization_helper->GetSemaphore(current_image_available_semaphore_id);
-    auto in_flight_fence           = vk_synchronization_helper->GetFence(current_fence_id);
-
-    uint32_t image_index = 0;
-    bool acquire_was_suboptimal = false;
-    try
-    {
-        const auto acquire_result =
-            comm_vk_logical_device.acquireNextImageKHR(comm_vk_swapchain, UINT64_MAX, image_available_semaphore, VK_NULL_HANDLE);
-        if (acquire_result.result == vk::Result::eErrorOutOfDateKHR)
-        {
-            resize_request = true;
-            return vulkan_frame_status::skipped;
-        }
-        if (acquire_result.result != vk::Result::eSuccess && acquire_result.result != vk::Result::eSuboptimalKHR)
-        {
-            Logger::LogError("Failed to acquire a swapchain image");
-            return vulkan_frame_status::failed;
-        }
-        acquire_was_suboptimal = acquire_result.result == vk::Result::eSuboptimalKHR;
-        image_index = acquire_result.value;
-    }
-    catch (const vk::OutOfDateKHRError&)
+    render_graph::vk_frame_token token;
+    const auto acquired = runtime->acquire(token);
+    if (acquired == render_graph::vk_frame_status::skipped)
     {
         resize_request = true;
         return vulkan_frame_status::skipped;
     }
-    catch (const vk::SystemError& error)
+    if (acquired == render_graph::vk_frame_status::failed)
     {
-        Logger::LogError(std::string("Failed to acquire a swapchain image: ") + error.what());
+        Logger::LogError(runtime->last_error());
         return vulkan_frame_status::failed;
     }
+    frame_index = static_cast<uint8_t>(token.frame_index);
+    completed_frame = runtime->frames().completed_submission;
+    submitted_frame = runtime->frames().next_submission;
+    collect_deferred_resources();
 
-    // [FIX] Get the semaphore associated with the ACQUIRED IMAGE INDEX
-    std::string render_finished_sem_id = "render_finished_semaphore_image_" + std::to_string(image_index);
-    auto render_finished_semaphore     = vk_synchronization_helper->GetSemaphore(render_finished_sem_id);
-
-    // record command buffer
-    if (!vk_command_buffer_helper->ResetCommandBuffer(current_command_buffer_id))
-        return vulkan_frame_status::failed;
-    if (!record_command(image_index, current_command_buffer_id))
-        return vulkan_frame_status::failed;
-
-    // Keep the fence signaled until command recording succeeds. From this point
-    // onward every failure must abort the active graph frame.
-    if (!vk_synchronization_helper->ResetFence(current_fence_id))
+    if (!runtime->realize_resources() ||
+        !runtime->record_batches(token,
+                                 this,
+                                 [](void* state, VkCommandBuffer commands, uint32_t image_index)
+                                 {
+                                     return static_cast<vulkan_backend*>(state)->record_command(image_index, commands);
+                                 }))
     {
+        frame_graph->abort_frame();
+        Logger::LogError(runtime->last_error());
+        return vulkan_frame_status::failed;
+    }
+    if (!runtime->submit(token))
+    {
+        Logger::LogError(runtime->last_error());
         frame_graph->abort_frame();
         return vulkan_frame_status::failed;
     }
-
-    // submit command buffer
-    vk::CommandBufferSubmitInfo command_buffer_submit_info{.commandBuffer = vk_command_buffer_helper->GetCommandBuffer(current_command_buffer_id)};
-
-    vk::SemaphoreSubmitInfo wait_semaphore_info{
-        .semaphore = image_available_semaphore,
-        .value = 0,
-        .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-    };
-
-    // Use the per-image semaphore here
-    vk::SemaphoreSubmitInfo signal_semaphore_info{
-        .semaphore = render_finished_semaphore,
-        .value = 0,
-        .stageMask = vk::PipelineStageFlagBits2::eAllCommands,
-    };
-
-    vk::SubmitInfo2 submit_info{
-        .waitSemaphoreInfoCount   = 1,
-        .pWaitSemaphoreInfos      = &wait_semaphore_info,
-        .commandBufferInfoCount   = 1,
-        .pCommandBufferInfos      = &command_buffer_submit_info,
-        .signalSemaphoreInfoCount = 1,
-        .pSignalSemaphoreInfos    = &signal_semaphore_info,
-    };
-    try
-    {
-        comm_vk_graphics_queue.submit2(submit_info, in_flight_fence);
-    }
-    catch (const vk::SystemError& error)
-    {
-        Logger::LogError(std::string("Failed to submit frame: ") + error.what());
-        frame_graph->abort_frame();
-        resize_request = true;
-        return vulkan_frame_status::failed;
-    }
-    frame_submission_ids[frame_index] = submitted_frame;
-    submitted_frame++;
+    submitted_frame = runtime->frames().next_submission;
     if (!frame_graph->commit_frame())
     {
         Logger::LogError("Failed to commit render graph frame");
@@ -375,47 +313,19 @@ vulkan_frame_status vulkan_backend::draw_frame()
         runtime_upload_pending = false;
     }
 
-    // present the image
-    vk::PresentInfoKHR present_info{.waitSemaphoreCount = 1,
-                                    .pWaitSemaphores    = &render_finished_semaphore, // Use the per-image semaphore here too
-                                    .swapchainCount     = 1,
-                                    .pSwapchains        = &comm_vk_swapchain,
-                                    .pImageIndices      = &image_index};
-
-    vk::Result res = vk::Result::eErrorUnknown;
-    try
-    {
-        res = comm_vk_graphics_queue.presentKHR(&present_info);
-    }
-    catch (const vk::OutOfDateKHRError&)
+    const auto presented = runtime->present(token);
+    if (presented == render_graph::vk_frame_status::skipped)
     {
         resize_request = true;
         return vulkan_frame_status::skipped;
     }
-    catch (const vk::SystemError& error)
+    if (presented == render_graph::vk_frame_status::failed)
     {
-        Logger::LogError(std::string("Failed to present image: ") + error.what());
+        Logger::LogError(runtime->last_error());
         return vulkan_frame_status::failed;
     }
-    if (res == vk::Result::eErrorOutOfDateKHR || res == vk::Result::eSuboptimalKHR)
-    {
-        resize_request = true;
-        return vulkan_frame_status::skipped;
-    }
-    if (res != vk::Result::eSuccess)
-    {
-        Logger::LogError("Failed to present image");
-        return vulkan_frame_status::failed;
-    }
-    swapchain_image_states.mark_presented(image_index);
+    swapchain_image_states.mark_presented(token.image_index);
     ++run_statistics.presented_frames;
-    // Logger::LogInfo("Succeeded in presenting image");
-
-    // update frame index
-    frame_index = (frame_index + 1) % config.frame_count;
-    if (acquire_was_suboptimal)
-    {
-        resize_request = true;
-    }
+    frame_index = static_cast<uint8_t>(runtime->frames().cursor);
     return vulkan_frame_status::rendered;
 }

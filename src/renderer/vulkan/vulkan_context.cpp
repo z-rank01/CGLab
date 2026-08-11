@@ -1,5 +1,7 @@
 #include "renderer/vulkan/vulkan_backend_internal.h"
 
+#include "platform/vulkan/sdl_vulkan_surface_adapter.h"
+
 void vulkan_backend::initialize_vulkan_hpp()
 {
     VULKAN_HPP_DEFAULT_DISPATCHER.init();
@@ -8,29 +10,9 @@ void vulkan_backend::initialize_vulkan()
 {
     generate_frame_structs();
 
-    if (!create_instance())
+    if (!create_render_graph_runtime())
     {
-        throw std::runtime_error("Failed to create Vulkan instance.");
-    }
-
-    if (!create_surface())
-    {
-        throw std::runtime_error("Failed to create Vulkan surface.");
-    }
-
-    if (!create_physical_device())
-    {
-        throw std::runtime_error("Failed to create Vulkan physical device.");
-    }
-
-    if (!create_logical_device())
-    {
-        throw std::runtime_error("Failed to create Vulkan logical device.");
-    }
-
-    if (!create_swapchain())
-    {
-        throw std::runtime_error("Failed to create Vulkan swap chain.");
+        throw std::runtime_error("Failed to create Render Graph Vulkan runtime.");
     }
 
     if (!create_vma_vra_objects())
@@ -60,20 +42,93 @@ void vulkan_backend::initialize_vulkan()
         throw std::runtime_error("Failed to create Vulkan pipeline.");
     }
 
-    if (!create_command_pool())
-    {
-        throw std::runtime_error("Failed to create Vulkan command pool.");
-    }
+}
 
-    if (!allocate_per_frame_command_buffer())
+bool vulkan_backend::create_render_graph_runtime()
+{
+    runtime = std::make_unique<render_graph::vk_runtime>();
+    const auto initialized = runtime->initialize(render_graph::vk_runtime_config{
+        .application_name = config.application_name,
+        .frames_in_flight = config.frame_count,
+        .validation = config.use_validation_layers,
+        .surface = platform::vulkan::make_sdl_surface_provider(*window),
+    });
+    if (!initialized)
     {
-        throw std::runtime_error("Failed to allocate Vulkan command buffer.");
+        Logger::LogError(initialized.error);
+        return false;
     }
+    comm_vk_instance = runtime->devices().instance;
+    comm_vk_logical_device = runtime->devices().device;
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(comm_vk_instance);
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(comm_vk_logical_device);
+    sync_runtime_context_views();
+    return true;
+}
 
-    if (!create_synchronization_objects())
+void vulkan_backend::sync_runtime_context_views()
+{
+    const auto& devices = runtime->devices();
+    const auto& queues = runtime->queues();
+    const auto& swapchain = runtime->swapchain_images();
+    comm_vk_instance = devices.instance;
+    surface = devices.surface;
+    comm_vk_physical_device = devices.physical_device;
+    comm_vk_logical_device = devices.device;
+    comm_vk_graphics_queue = queues.graphics.queue;
+    comm_vk_transfer_queue = queues.copy.queue;
+    comm_vk_swapchain = swapchain.swapchain;
+    vma_allocator = devices.allocator;
+
+    comm_vk_physical_device_context = {};
+    comm_vk_physical_device_context.vk_instance_ = comm_vk_instance;
+    comm_vk_physical_device_context.vk_physical_device_ = comm_vk_physical_device;
+    comm_vk_physical_device_context.selection_criteria_.surface_ = surface;
+    comm_vk_physical_device_context.device_properties_ = comm_vk_physical_device.getProperties();
+    comm_vk_physical_device_context.device_features_ = comm_vk_physical_device.getFeatures();
+    comm_vk_physical_device_context.memory_properties_ = comm_vk_physical_device.getMemoryProperties();
+    comm_vk_physical_device_context.queue_family_properties_ = comm_vk_physical_device.getQueueFamilyProperties();
+
+    comm_vk_logical_device_context = {};
+    comm_vk_logical_device_context.vk_physical_device_ = comm_vk_physical_device;
+    comm_vk_logical_device_context.vk_logical_device_ = comm_vk_logical_device;
+    comm_vk_logical_device_context.queue_family_properties_ = comm_vk_physical_device_context.queue_family_properties_;
+    comm_vk_logical_device_context.named_queues_["main_graphics"] = comm_vk_graphics_queue;
+    comm_vk_logical_device_context.named_queues_["upload"] = comm_vk_transfer_queue;
+    comm_vk_logical_device_context.named_queues_["compute_async"] = queues.compute.queue;
+    const auto add_queue = [this](const char* name, const render_graph::vk_queue_row& row)
     {
-        throw std::runtime_error("Failed to create Vulkan synchronization objects.");
+        comm_vk_logical_device_context.queue_infos_.push_back({
+            .queue_family_index_ = row.family,
+            .queue_count_ = 1,
+            .queue_priorities_ = {1.0F},
+            .queue_flags_ = comm_vk_physical_device_context.queue_family_properties_[row.family].queueFlags,
+            .queue_name_ = name,
+        });
+        comm_vk_logical_device_context.family_queues_[row.family] = {row.queue};
+    };
+    add_queue("main_graphics", queues.graphics);
+    if (queues.copy.family != queues.graphics.family) add_queue("upload", queues.copy);
+    if (queues.compute.family != queues.graphics.family && queues.compute.family != queues.copy.family)
+        add_queue("compute_async", queues.compute);
+
+    comm_vk_swapchain_context = {};
+    comm_vk_swapchain_context.vk_logical_device_ = comm_vk_logical_device;
+    comm_vk_swapchain_context.vk_physical_device_ = comm_vk_physical_device;
+    comm_vk_swapchain_context.vk_surface_ = surface;
+    comm_vk_swapchain_context.vk_swapchain_ = comm_vk_swapchain;
+    comm_vk_swapchain_context.swapchain_info_.surface_format_ = {
+        static_cast<vk::Format>(swapchain.format), static_cast<vk::ColorSpaceKHR>(swapchain.color_space)};
+    comm_vk_swapchain_context.swapchain_info_.extent_ = swapchain.extent;
+    comm_vk_swapchain_context.swapchain_info_.image_count_ = static_cast<uint32_t>(swapchain.rows.size());
+    for (const auto& row : swapchain.rows)
+    {
+        comm_vk_swapchain_context.swapchain_images_.push_back(row.image);
+        comm_vk_swapchain_context.swapchain_image_views_.push_back(row.view);
     }
+    swapchain_image_states.reset(swapchain.rows.size());
+    config.width = static_cast<int>(swapchain.extent.width);
+    config.height = static_cast<int>(swapchain.extent.height);
 }
 
 bool vulkan_backend::create_instance()
@@ -236,18 +291,9 @@ bool vulkan_backend::create_vma_vra_objects()
     // vra and vma members
     vra_data_batcher = std::make_unique<vra::VraDataBatcher>(comm_vk_physical_device);
 
-    VmaAllocatorCreateInfo allocator_create_info = {};
-    allocator_create_info.flags                  = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
-    allocator_create_info.vulkanApiVersion       = VK_API_VERSION_1_3;
-    allocator_create_info.physicalDevice         = comm_vk_physical_device;
-    allocator_create_info.device                 = comm_vk_logical_device;
-    allocator_create_info.instance               = comm_vk_instance;
-
-    const auto result = vmaCreateAllocator(&allocator_create_info, &vma_allocator);
-    if (!Logger::LogWithVkResult(result,
-                                 "Failed to create Vulkan vra and vma objects",
-                                 "Succeeded in creating Vulkan vra and vma objects"))
+    if (vma_allocator == VK_NULL_HANDLE)
     {
+        Logger::LogError("Render Graph Vulkan runtime did not provide a VMA allocator");
         return false;
     }
     const auto graphics_family = common::logicaldevice::find_optimal_queue_family(
