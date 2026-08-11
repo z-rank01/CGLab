@@ -59,6 +59,13 @@ add_executable(cglab_public_headers_tests public_headers_test.cpp)
 target_link_libraries(cglab_public_headers_tests PRIVATE cglab_engine_runtime)
 cglab_register_test(cglab_public_headers_tests cglab.public_headers)
 
+add_test(
+    NAME cglab.architecture_contract
+    COMMAND ${CMAKE_COMMAND}
+        -DCGLAB_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+        -P ${PROJECT_SOURCE_DIR}/cmake/ArchitectureContract.cmake
+)
+
 add_executable(cglab_asset_gltf_tests asset_gltf_test.cpp)
 target_link_libraries(cglab_asset_gltf_tests PRIVATE cglab_asset_runtime dcl::gltf)
 target_compile_definitions(cglab_asset_gltf_tests

@@ -32,7 +32,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(CGLAB_BUILD_DCL_SAMPLES "Build digital-content-loader sample executables" OFF)
 option(CGLAB_BUILD_RENDER_GRAPH_SAMPLES "Build render-graph sample executables" OFF)
-option(CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS "Build render-graph CTest executable" OFF)
+option(CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS "Build render-graph CTest executable" ${BUILD_TESTING})
 option(CGLAB_RENDER_GRAPH_SHARED "Build render_graph as a shared library (DLL)" OFF)
 option(CGLAB_BUILD_LEGACY_VULKAN_SAMPLE "Build the protected pre-render-graph legacy snapshot" OFF)
 
