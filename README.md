@@ -1,7 +1,7 @@
 # CGLab
 
 CGLab 是一个面向 Vulkan 的 C++20 图形框架实验项目。应用共享
-`engine_runtime`、asset runtime 和 `cglab_render_graph_vulkan`：
+`engine_runtime`、asset runtime、Sample 专属 recipe 和 Render Graph Vulkan backend：
 
 - `TriangleSample`：最小三角形，用于验证窗口、runtime、Vulkan backend 和帧循环。
 - `GltfSponzaSample`：支持 `.gltf/.glb`，默认可使用仓库内的 `assets/triangle.gltf`。

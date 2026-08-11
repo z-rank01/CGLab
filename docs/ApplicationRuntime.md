@@ -2,7 +2,7 @@
 
 > as-built，2026-08。
 
-`TriangleSample` 和 `GltfSponzaSample` 都是轻量组合点。应用选择启动资产和 render program，然后把窗口、asset service、Engine runtime 与 `cglab_render_graph_vulkan` driver 交给共享 application runner。
+`TriangleSample` 和 `GltfSponzaSample` 都是轻量组合点。应用选择启动资产和自己的 API 无关 Render Graph recipe，然后把窗口、asset service、Engine runtime 与平台 function-table bridge 交给共享 application runner。
 
 ## 构建目标
 
@@ -14,10 +14,10 @@
 | `cglab_platform_sdl` | window/input 实现 |
 | `cglab_sdl_vulkan_surface` | Vulkan runtime 所需的窄 surface provider |
 | `cglab_engine_runtime` | state tables、固定 phase systems、控制平面 |
-| `cglab_render_graph_vulkan` | Engine 行表到 RG Vulkan runtime 的薄适配 |
+| Sample recipe | Triangle 或 glTF 专属 shader、资源行与 draw policy |
 | `cglab_application_runner` | CLI、组装、退出码和 smoke contract |
 
-应用 executable 链接 application runner 与 RG Vulkan adapter，不直接链接或调用 Vulkan resource API。
+应用 executable 链接 application runner、自己的 recipe 与 `cglab_sdl_vulkan_surface`，不直接链接或调用 Vulkan resource API。
 
 ## Render driver
 
@@ -44,4 +44,4 @@ runtime 逐帧执行固定十阶段表：
 
 ## 增加新 Sample
 
-新 Sample 只需要提供启动配置、可选资产和 render program，并复用 application runner。若需要新渲染能力，先扩展 API 无关 packet/resource rows，再在 `src/render_graph_vulkan` 做内容 lowering，在 RG Vulkan runtime 实现物理资源或命令行为；不要在 App 或 Engine 中创建 Vk 对象。
+新 Sample 只需要提供启动配置、可选资产和 API 无关 recipe，并复用 application runner。内容语义在 Sample recipe lowering；跨 API 的资源或命令能力先扩展 RG Core contract，再由各 backend 实现物理 lowering。不要在 App 或 Engine 中创建 Vk 对象。

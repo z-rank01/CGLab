@@ -8,7 +8,8 @@
 |---|---|---|
 | Engine runtime | 事件、控制命令、资产完成行 | scene/camera 状态表、phase systems、frame extraction |
 | `render_driver` | API 无关资源变更和 SoA frame packet | opaque 调用契约，不拥有 GPU API |
-| `src/render_graph_vulkan` | Engine 行表、SDL surface provider | 内容 lowering 与 RG recipe/执行适配 |
+| Sample recipe | Engine frame packet、资产行 | shader/PBR、材质、draw grouping 与通用 RG command rows |
+| `src/platform/vulkan` | Engine driver 调用、SDL window | surface provider 与 function-table 转接 |
 | RG Vulkan runtime | 公共 resource desc、upload/draw rows | Vulkan context、资源、descriptor、pipeline、命令、同步与提交 |
 
 Engine 不读取 Vk handle，RG backend 不读取可变 scene/camera 对象。SDL adapter 仅提供 instance extensions、surface 创建和 drawable extent。
@@ -59,7 +60,7 @@ Pipeline row 的 key 包含 shader stages、vertex layout、raster state 和 Dyn
 
 ## GPU scene 与 glTF
 
-CPU extraction 输出 mesh instance、transform、material 和 draw packet SoA。backend 生成 GPU draw table 与 indexed indirect command buffer，并按 alpha/cull/pipeline key 分组。相同 mesh 的多个 node 共享 geometry slice；transform 或 material 更新不会重新上传 vertex/index。
+CPU extraction 输出 mesh instance、transform、material 和 draw packet SoA。Sample recipe 生成 GPU draw table 与 indexed indirect command buffer，并按 alpha/cull/pipeline key 分组；RG backend 只执行通用 command rows。相同 mesh 的多个 node 共享 geometry slice；transform 或 material 更新不会重新上传 vertex/index。
 
 glTF Core 2.0 静态 PBR 支持 base color、metallic-roughness、normal、occlusion、emissive、alpha mode/cutoff 和 double-sided。required extension 不支持时明确失败；未知 optional extension 只记录 warning。第一版使用 Engine 方向光，不含 IBL。
 
@@ -71,4 +72,4 @@ glTF Core 2.0 静态 PBR 支持 base color、metallic-roughness、normal、occlu
 - staging、resource、descriptor slot 与 pipeline retirement 都由 submission 序号控制；
 - graph 只在 recipe、尺寸、格式或兼容性变化时重编译。
 
-架构扫描禁止 active `src/` 出现 GPU allocation、descriptor、pipeline、command、submit/present side effect；这些调用必须位于 RG Vulkan backend。
+架构扫描禁止 active `src/` 出现 GPU allocation、descriptor、pipeline、command、submit/present side effect；仅 surface adapter 可调用 `SDL_Vulkan_CreateSurface`，其他 Vulkan side effect 必须位于 RG Vulkan backend。

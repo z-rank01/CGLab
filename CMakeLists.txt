@@ -86,7 +86,6 @@ add_subdirectory(src/platform/vulkan)
 # CGLab runtime, applications, and tests
 # -----------------------------------------------------------------------------
 
-add_subdirectory(src/render_graph_vulkan)
 add_subdirectory(src/apps)
 
 if(BUILD_TESTING)

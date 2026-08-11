@@ -32,6 +32,15 @@ if(EXISTS "${CGLAB_SOURCE_DIR}/src/renderer")
     message(FATAL_ERROR "src/renderer must not exist; Render Graph owns the rendering layer")
 endif()
 
+if(EXISTS "${CGLAB_SOURCE_DIR}/src/render_graph_vulkan")
+    message(FATAL_ERROR "src/render_graph_vulkan must not exist; the reusable backend belongs to the Render Graph submodule")
+endif()
+
+file(READ "${CGLAB_SOURCE_DIR}/CMakeLists.txt" _root_cmake)
+if(_root_cmake MATCHES "cglab_render_graph_vulkan|src/render_graph_vulkan")
+    message(FATAL_ERROR "The removed parent-repository Vulkan backend target is still referenced")
+endif()
+
 # Active parent-repository sources may describe Vulkan handles but may not own
 # Vulkan side effects. All native allocation, descriptor, pipeline, command and
 # submission calls live in the Render Graph Vulkan backend.
@@ -52,6 +61,10 @@ foreach(_source IN LISTS _source_files)
     file(RELATIVE_PATH _relative "${CGLAB_SOURCE_DIR}" "${_source}")
     string(REPLACE "\\" "/" _relative "${_relative}")
     file(READ "${_source}" _contents)
+    if(_contents MATCHES "SDL_Vulkan_CreateSurface" AND
+       NOT _relative STREQUAL "src/platform/vulkan/sdl_vulkan_surface_adapter.cpp")
+        message(FATAL_ERROR "SDL Vulkan surface creation escaped the platform adapter: ${_relative}")
+    endif()
     if(_contents MATCHES "vmaCreate(Buffer|Image)")
         message(FATAL_ERROR
             "Persistent GPU buffer/image allocation must be owned by the Render Graph Vulkan resource store: ${_relative}"

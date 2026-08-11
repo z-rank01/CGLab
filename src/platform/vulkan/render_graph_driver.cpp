@@ -16,6 +16,8 @@ namespace platform::vulkan
             render_recipe recipe;
             render_graph::render_device device;
             const engine::render_frame_packet* packet = nullptr;
+            uint64_t steady_descriptor_baseline = 0;
+            bool render_started = false;
             bool shutdown = false;
         };
 
@@ -53,6 +55,11 @@ namespace platform::vulkan
             .render = [](void* value, const engine::render_frame_packet& packet)
             {
                 auto& state = driver(value);
+                if (!state.render_started)
+                {
+                    state.steady_descriptor_baseline = state.device.statistics().descriptor_updates;
+                    state.render_started = true;
+                }
                 state.packet = &packet;
                 const auto result = state.device.render({.state = &state, .build = &build_recipe});
                 state.packet = nullptr;
@@ -72,12 +79,14 @@ namespace platform::vulkan
             },
             .statistics = [](const void* value) noexcept
             {
-                const auto stats = driver(value).device.statistics();
+                const auto& state = driver(value);
+                const auto stats = state.device.statistics();
                 return engine::render_statistics{
                     .upload_pass_executions = stats.upload_pass_executions,
                     .draw_pass_executions = stats.draw_pass_executions,
                     .presented_frames = stats.presented_frames,
-                    .steady_frame_descriptor_updates = 0,
+                    .steady_frame_descriptor_updates = stats.descriptor_updates -
+                                                       state.steady_descriptor_baseline,
                     .pipeline_creations = stats.pipeline_creations,
                     .indirect_groups = stats.indirect_groups,
                 };

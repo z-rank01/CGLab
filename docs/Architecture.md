@@ -11,13 +11,12 @@ TriangleSample / GltfSponzaSample
         |              |-- cglab_engine_core
         |              |-- cglab_asset_runtime --> cglab_asset_gltf
         |              `-- cglab_platform_sdl
-        `-- cglab_render_graph_vulkan
-                |-- cglab_engine_core
-                |-- cglab_sdl_vulkan_surface
-                `-- render_graph Vulkan runtime
+        |-- Sample-specific API-neutral recipe
+        `-- cglab_sdl_vulkan_surface
+                `-- render_graph::vulkan
 ```
 
-Engine 公共头只表达资产、场景、帧数据和渲染驱动契约，不包含 Vulkan、SDL、glTF 或 Render Graph 类型。`src/render_graph_vulkan/` 是 Engine 数据与 RG Vulkan runtime 之间的薄适配层；Vulkan instance/device、swapchain、VMA 分配、bindless descriptor、pipeline cache 和命令录制均由 `third_party/render-graph/src/core/` 拥有。
+Engine 公共头只表达资产、场景、帧数据和渲染驱动契约，不包含 Vulkan、SDL、glTF 或 Render Graph 类型。`src/platform/vulkan/` 只保存 SDL surface provider 与 Engine↔RG function-table bridge；Vulkan instance/device、swapchain、VMA 分配、bindless descriptor、pipeline cache、graph 执行和命令录制全部由 `third_party/render-graph/src/backend/vulkan/` 拥有。
 
 `src/renderer/` 已删除。旧 VRA 和 Vulkan helper 已退出构建，历史样例只保存在 `archive/legacy_vulkan/`。
 
@@ -46,7 +45,7 @@ glTF adapter 输出 CPU Asset Database：node/parent/local transform、mesh、pr
 
 ## Render Graph 与 Vulkan
 
-RG Core 的 buffer/image 描述与 API 无关；Vulkan lowering 负责选择 Vk usage、memory flags 和格式兼容性。DX12/Metal 当前只有 lowering contract 和 fake tests。
+RG Core 的 render device、buffer/image、pipeline、resource change、frame recipe 和 command 描述与 API 无关；Vulkan lowering 负责选择 Vk usage、memory flags 和格式兼容性。DX12/Metal 当前只有 lowering contract 和 fake tests。
 
 Vulkan runtime 以集中表保存 device、queue、frame、swapchain image、resource、allocation、bindless slot、pipeline 和 retirement 状态，并显式执行：
 
@@ -58,7 +57,7 @@ acquire -> realize_resources -> record_batches -> submit -> present -> collect_r
 
 固定 bindless ABI 包含 sampled images、samplers、storage images、uniform buffers 和 storage buffers。slot 0 是默认资源；CPU handle 使用 index + generation。Vulkan 要求 runtime descriptor array、partially bound、update-after-bind 和 non-uniform indexing，不提供传统 descriptor fallback。
 
-Dynamic Rendering 保留，attachment format 进入 pipeline key。GPU scene 按 opaque/mask、single/double-sided、blend 分组，透明行按相机距离排序，以 indexed indirect 批量录制。稳定场景不会逐帧分配 descriptor，也不会因上传行数变化重新编译 graph。
+Dynamic Rendering 保留，attachment format 进入 pipeline key。Triangle 与 glTF 分别拥有自己的 recipe；glTF recipe 按 opaque/mask、single/double-sided、blend 分组，透明行按相机距离排序，以 indexed indirect 批量录制。RG backend 不知道 shader 路径或 glTF/PBR 语义。稳定场景不会逐帧分配 descriptor，也不会因上传行数变化重新编译 graph。
 
 ## 设计约束
 
