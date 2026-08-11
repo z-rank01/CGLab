@@ -49,7 +49,7 @@ namespace platform::vulkan
         }
     } // namespace
 
-    render_graph::vk_surface_provider make_sdl_surface_provider(interface::window& window)
+    render_graph::vulkan::surface_provider make_sdl_surface_provider(interface::window& window)
     {
         return {
             .state = &window,

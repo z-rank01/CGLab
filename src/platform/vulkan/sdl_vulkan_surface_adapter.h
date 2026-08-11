@@ -1,6 +1,6 @@
 #pragma once
 
-#include "render_graph/backend/vulkan/runtime.h"
+#include "render_graph/backend/vulkan/surface_provider.h"
 
 namespace interface
 {
@@ -9,5 +9,5 @@ namespace interface
 
 namespace platform::vulkan
 {
-    [[nodiscard]] render_graph::vk_surface_provider make_sdl_surface_provider(interface::window& window);
+    [[nodiscard]] render_graph::vulkan::surface_provider make_sdl_surface_provider(interface::window& window);
 }
