@@ -48,6 +48,22 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
         .aliasing = render_graph::aliasing_policy::forbidden,
         .lifetime = render_graph::resource_lifetime_class::imported,
     };
+    const render_graph::buffer_desc transform_desc{
+        .size = sizeof(glm::mat4) * 65536,
+        .usage = render_graph::buffer_usage::STORAGE_BUFFER,
+        .memory = render_graph::memory_domain::upload,
+        .mapping = render_graph::mapping_policy::persistent,
+        .aliasing = render_graph::aliasing_policy::forbidden,
+        .lifetime = render_graph::resource_lifetime_class::imported,
+    };
+    const render_graph::buffer_desc indirect_desc{
+        .size = sizeof(VkDrawIndexedIndirectCommand) * 65536,
+        .usage = render_graph::buffer_usage::INDIRECT_BUFFER,
+        .memory = render_graph::memory_domain::upload,
+        .mapping = render_graph::mapping_policy::persistent,
+        .aliasing = render_graph::aliasing_policy::forbidden,
+        .lifetime = render_graph::resource_lifetime_class::imported,
+    };
 
     frame_graph->add_copy_pass("UploadPass", [this, upload_desc, geometry_desc](setup_context& ctx)
     {
@@ -99,7 +115,7 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
     };
 
     frame_graph->add_raster_pass(render_program.pass_name,
-                                 [this, uniform_desc, swapchain_desc, depth_desc, extent, swapchain_initialized](setup_context& ctx)
+                                 [this, uniform_desc, transform_desc, indirect_desc, swapchain_desc, depth_desc, extent, swapchain_initialized](setup_context& ctx)
     {
         const render_graph::buffer_access_desc mesh_read{
             .usage = render_graph::buffer_usage::VERTEX_BUFFER | render_graph::buffer_usage::INDEX_BUFFER,
@@ -115,6 +131,24 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
         ctx.set_initial_state(rg_uniform, uniform_read, render_graph::access_type::read,
                               render_graph::contents_policy::preserve);
         ctx.read_buffer(rg_uniform, uniform_read);
+
+        rg_transforms = ctx.import_buffer("TransformTable", transform_desc);
+        const render_graph::buffer_access_desc transform_read{
+            .usage = render_graph::buffer_usage::STORAGE_BUFFER,
+            .domain = render_graph::pipeline_domain::graphics,
+        };
+        ctx.set_initial_state(rg_transforms, transform_read, render_graph::access_type::read,
+                              render_graph::contents_policy::preserve);
+        ctx.read_buffer(rg_transforms, transform_read);
+
+        rg_indirect = ctx.import_buffer("IndexedIndirectTable", indirect_desc);
+        const render_graph::buffer_access_desc indirect_read{
+            .usage = render_graph::buffer_usage::INDIRECT_BUFFER,
+            .domain = render_graph::pipeline_domain::graphics,
+        };
+        ctx.set_initial_state(rg_indirect, indirect_read, render_graph::access_type::read,
+                              render_graph::contents_policy::preserve);
+        ctx.read_buffer(rg_indirect, indirect_read);
 
         rg_swapchain = ctx.import_image("Swapchain", swapchain_desc);
         const render_graph::image_access_desc present{
@@ -180,24 +214,23 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
         const VkDeviceSize base_offset = 0;
         vkCmdBindVertexBuffers(commands, 0, 1, &arena, &base_offset);
         vkCmdBindIndexBuffer(commands, arena, 0, VK_INDEX_TYPE_UINT32);
-        if (current_snapshot == nullptr) return;
-        for (const engine::render_object& object : current_snapshot->objects)
-        {
-            const auto allocation = geometry_allocations.find(object.geometry);
-            if (allocation == geometry_allocations.end()) continue;
-            const object_push_constants push{
-                .model = object.model,
-                .frame_uniform_slot = frame_uniform_slots[frame_index].index,
-            };
-            vkCmdPushConstants(commands,
-                               runtime->pipeline_layout(graphics_pipeline),
-                               VK_SHADER_STAGE_VERTEX_BIT,
-                               0,
-                               sizeof(push),
-                               &push);
-            for (const engine::draw_range& range : allocation->second.draws)
-                vkCmdDrawIndexed(commands, range.index_count, 1, range.first_index, range.vertex_offset, 0);
-        }
+        if (indirect_draw_count == 0) return;
+        const object_push_constants push{
+            .frame_uniform_slot = frame_uniform_slots[frame_index].index,
+            .transform_buffer_slot = transform_buffer_slot.index,
+        };
+        vkCmdPushConstants(commands,
+                           runtime->pipeline_layout(graphics_pipeline),
+                           VK_SHADER_STAGE_VERTEX_BIT,
+                           0,
+                           sizeof(push),
+                           &push);
+        vkCmdDrawIndexedIndirect(commands,
+                                 ctx.resources.buffer(rg_indirect),
+                                 0,
+                                 indirect_draw_count,
+                                 sizeof(VkDrawIndexedIndirectCommand));
+        ++run_statistics.indirect_groups;
     });
 
     const auto result = frame_graph->compile();
@@ -219,6 +252,8 @@ bool vulkan_backend::record_command(uint32_t image_index, VkCommandBuffer comman
         frame_graph->bind_imported_buffer(rg_upload, runtime->buffer(runtime->resources().upload_arena));
         frame_graph->bind_imported_buffer(rg_geometry, geometry_buffer);
         frame_graph->bind_imported_buffer(rg_uniform, uniform_buffer);
+        frame_graph->bind_imported_buffer(rg_transforms, transform_buffer);
+        frame_graph->bind_imported_buffer(rg_indirect, indirect_buffer);
         frame_graph->bind_imported_image(rg_swapchain,
                                          runtime->swapchain_images().rows[image_index].image);
         const auto result = frame_graph->execute(command_buffer);

@@ -30,6 +30,7 @@ namespace engine
         std::uint64_t presented_frames = 0;
         std::uint64_t steady_frame_descriptor_updates = 0;
         std::uint64_t pipeline_creations = 0;
+        std::uint64_t indirect_groups = 0;
     };
 
     struct render_object

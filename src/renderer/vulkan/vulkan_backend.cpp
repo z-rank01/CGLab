@@ -154,6 +154,10 @@ vulkan_frame_status vulkan_backend::tick()
 
     // update the view matrix
     update_uniform_buffer(frame_index);
+    if (!update_gpu_scene_tables())
+    {
+        return vulkan_frame_status::failed;
+    }
 
     // render a frame
     return draw();

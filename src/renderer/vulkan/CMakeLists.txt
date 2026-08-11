@@ -4,6 +4,7 @@ add_library(cglab_vulkan_backend STATIC
     vulkan_swapchain.cpp
     vulkan_frame_resources.cpp
     vulkan_geometry_store.cpp
+    vulkan_gpu_scene.cpp
     vulkan_graph_executor.cpp
     vulkan_backend_internal.h
     vulkan_backend.h

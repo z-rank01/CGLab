@@ -39,7 +39,8 @@ namespace apps
                     statistics.draw_pass_executions != *request.frame_limit ||
                     statistics.presented_frames != *request.frame_limit ||
                     statistics.steady_frame_descriptor_updates != 0 ||
-                    statistics.pipeline_creations != 1)
+                    statistics.pipeline_creations != 1 ||
+                    statistics.indirect_groups != *request.frame_limit)
                 {
                     Logger::LogError("GPU smoke counters did not match the requested frame contract");
                     return EXIT_FAILURE;

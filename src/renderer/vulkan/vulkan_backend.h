@@ -37,8 +37,8 @@ struct mvp_matrix
 
 struct object_push_constants
 {
-    glm::mat4 model{1.0F};
     std::uint32_t frame_uniform_slot = 0;
+    std::uint32_t transform_buffer_slot = 0;
 };
 
 using vulkan_frame_status = engine::frame_status;
@@ -122,6 +122,8 @@ private:
 
     // --- P2 geometry arena / runtime upload ---
     bool create_geometry_arena();
+    bool create_gpu_scene_tables();
+    bool update_gpu_scene_tables();
     void collect_deferred_resources();
     [[nodiscard]] bool stage_runtime_geometry(const std::vector<engine::geometry_primitive>& primitives,
                                               staged_geometry& out);
@@ -141,6 +143,8 @@ private:
     render_graph::buffer_handle rg_upload{};
     render_graph::buffer_handle rg_geometry{};
     render_graph::buffer_handle rg_uniform{};
+    render_graph::buffer_handle rg_transforms{};
+    render_graph::buffer_handle rg_indirect{};
     swapchain_image_state_tracker swapchain_image_states;
     vulkan_run_statistics run_statistics;
     // --- P2 scene system / geometry arena ---
@@ -153,6 +157,12 @@ private:
     // 运行时对象的 device-local 大块显存（bump 分配 + 空闲链表回收）
     vk::Buffer geometry_buffer = VK_NULL_HANDLE;
     render_graph::vk_buffer_resource_handle geometry_resource;
+    render_graph::vk_buffer_resource_handle transform_resource;
+    render_graph::vk_buffer_resource_handle indirect_resource;
+    render_graph::vk_bindless_handle transform_buffer_slot;
+    vk::Buffer transform_buffer = VK_NULL_HANDLE;
+    vk::Buffer indirect_buffer = VK_NULL_HANDLE;
+    std::uint32_t indirect_draw_count = 0;
 
     uint64_t submitted_frame = 1;
     uint64_t completed_frame = 0;

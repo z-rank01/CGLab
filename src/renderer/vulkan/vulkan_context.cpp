@@ -28,6 +28,11 @@ void vulkan_backend::initialize_vulkan()
         throw std::runtime_error("Failed to create Vulkan uniform buffers.");
     }
 
+    if (!create_gpu_scene_tables())
+    {
+        throw std::runtime_error("Failed to create GPU scene tables.");
+    }
+
     if (!create_pipeline())
     {
         throw std::runtime_error("Failed to create Vulkan pipeline.");
