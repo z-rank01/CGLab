@@ -21,11 +21,6 @@ engine::result<bool> vulkan_backend::initialize(interface::window& render_window
         config.frame_count = backend_config.frames_in_flight;
         config.use_validation_layers = backend_config.validation;
         window = &render_window;
-        // Keep a valid imported legacy buffer while the runtime path routes all
-        // real content through the geometry arena. No legacy draw is emitted.
-        vertices.assign(1, engine::vertex{});
-        indices.assign(1, 0);
-        mesh_upload_pending = false;
         initialize();
         result.value = true;
     }
@@ -136,49 +131,7 @@ vulkan_backend::~vulkan_backend()
         descriptor_set_layout = VK_NULL_HANDLE;
     }
 
-    // destroy vma relatives
-    if (vma_allocator != VK_NULL_HANDLE && uniform_buffer != VK_NULL_HANDLE)
-    {
-        vmaDestroyBuffer(vma_allocator, uniform_buffer, uniform_buffer_allocation);
-        uniform_buffer = VK_NULL_HANDLE;
-    }
-    if (vma_allocator != VK_NULL_HANDLE && local_buffer != VK_NULL_HANDLE)
-    {
-        vmaDestroyBuffer(vma_allocator, local_buffer, local_buffer_allocation);
-        local_buffer = VK_NULL_HANDLE;
-    }
-    if (vma_allocator != VK_NULL_HANDLE && staging_buffer != VK_NULL_HANDLE)
-    {
-        vmaDestroyBuffer(vma_allocator, staging_buffer, staging_buffer_allocation);
-        staging_buffer = VK_NULL_HANDLE;
-    }
-    // P2：销毁运行时上传批次与 geometry arena
-    for (runtime_upload& upload : queued_uploads)
-    {
-        destroy_runtime_upload(vma_allocator, upload);
-    }
-    queued_uploads.clear();
-    for (auto& [gate, upload] : in_flight_uploads)
-    {
-        destroy_runtime_upload(vma_allocator, upload);
-    }
-    in_flight_uploads.clear();
-    if (vma_allocator != VK_NULL_HANDLE && arena_vertex_buffer != VK_NULL_HANDLE)
-    {
-        vmaDestroyBuffer(vma_allocator, arena_vertex_buffer, arena_vertex_allocation);
-        arena_vertex_buffer = VK_NULL_HANDLE;
-    }
-    if (vma_allocator != VK_NULL_HANDLE && arena_index_buffer != VK_NULL_HANDLE)
-    {
-        vmaDestroyBuffer(vma_allocator, arena_index_buffer, arena_index_allocation);
-        arena_index_buffer = VK_NULL_HANDLE;
-    }
     frame_graph.reset();
-    if (vma_allocator != VK_NULL_HANDLE && !runtime)
-    {
-        vmaDestroyAllocator(vma_allocator);
-        vma_allocator = VK_NULL_HANDLE;
-    }
 
     // destroy swapchain related resources
 
@@ -297,22 +250,12 @@ vulkan_frame_status vulkan_backend::draw_frame()
         return vulkan_frame_status::failed;
     }
     submitted_frame = runtime->frames().next_submission;
+    runtime->commit_pending_uploads(submitted_frame - 1);
     if (!frame_graph->commit_frame())
     {
         Logger::LogError("Failed to commit render graph frame");
         return vulkan_frame_status::failed;
     }
-    mesh_upload_pending = false;
-    if (runtime_upload_pending)
-    {
-        for (runtime_upload& upload : queued_uploads)
-        {
-            in_flight_uploads.emplace_back(submitted_frame - 1, std::move(upload));
-        }
-        queued_uploads.clear();
-        runtime_upload_pending = false;
-    }
-
     const auto presented = runtime->present(token);
     if (presented == render_graph::vk_frame_status::skipped)
     {

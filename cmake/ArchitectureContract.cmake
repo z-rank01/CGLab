@@ -53,6 +53,13 @@ set(_native_vulkan_pattern
 foreach(_source IN LISTS _source_files)
     file(RELATIVE_PATH _relative "${CGLAB_SOURCE_DIR}" "${_source}")
     string(REPLACE "\\" "/" _relative "${_relative}")
+    file(READ "${_source}" _contents)
+    if(_contents MATCHES "vmaCreate(Buffer|Image)" AND
+       NOT _relative MATCHES "^src/(legacy_vulkan_sample|_old|_vra)/")
+        message(FATAL_ERROR
+            "Persistent GPU buffer/image allocation must be owned by the Render Graph Vulkan resource store: ${_relative}"
+        )
+    endif()
     set(_allowed false)
     foreach(_prefix IN LISTS _allowed_native_vulkan_prefixes)
         string(FIND "${_relative}" "${_prefix}" _prefix_position)
@@ -65,7 +72,6 @@ foreach(_source IN LISTS _source_files)
         continue()
     endif()
 
-    file(READ "${_source}" _contents)
     if(_contents MATCHES "${_native_vulkan_pattern}")
         message(FATAL_ERROR "Native Vulkan side effect escaped an allowed implementation directory: ${_relative}")
     endif()

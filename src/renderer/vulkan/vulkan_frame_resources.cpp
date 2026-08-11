@@ -1,5 +1,7 @@
 #include "renderer/vulkan/vulkan_backend_internal.h"
 
+#include <span>
+
 void vulkan_backend::generate_frame_structs()
 {
     output_frames.resize(config.frame_count);
@@ -28,34 +30,23 @@ bool vulkan_backend::create_command_pool()
 
 bool vulkan_backend::create_uniform_buffers()
 {
-    for (int i = 0; i < config.frame_count; ++i)
+    const VkDeviceSize alignment = comm_vk_physical_device_context.device_properties_.limits.minUniformBufferOffsetAlignment;
+    uniform_stride = (sizeof(mvp_matrix) + alignment - 1) / alignment * alignment;
+    const auto created = runtime->create_buffer(render_graph::buffer_desc{
+        .size = uniform_stride * config.frame_count,
+        .usage = render_graph::buffer_usage::UNIFORM_BUFFER,
+        .memory = render_graph::memory_domain::upload,
+        .mapping = render_graph::mapping_policy::persistent,
+        .aliasing = render_graph::aliasing_policy::forbidden,
+        .lifetime = render_graph::resource_lifetime_class::persistent,
+    }, uniform_resource);
+    if (!created)
     {
-        auto current_mvp_matrix = mvp_matrices[i];
-        vk::BufferCreateInfo buffer_create_info;
-        buffer_create_info.setSize(sizeof(mvp_matrix)).setUsage(vk::BufferUsageFlagBits::eUniformBuffer).setSharingMode(vk::SharingMode::eExclusive);
-        vra::VraDataDesc data_desc{vra::VraDataMemoryPattern::CPU_GPU, vra::VraDataUpdateRate::Frequent, buffer_create_info};
-        vra::VraRawData raw_data{.pData_ = &current_mvp_matrix, .size_ = sizeof(mvp_matrix)};
-        uniform_buffer_id.push_back(0);
-        vra_data_batcher->Collect(data_desc, raw_data, uniform_buffer_id.back());
+        Logger::LogError("Failed to create RG uniform table: " + created.error);
+        return false;
     }
-
-    uniform_batch_handle = vra_data_batcher->Batch();
-
-    // get buffer create info
-    const auto& uniform_buffer_create_info = uniform_batch_handle[vra::VraBuiltInBatchIds::CPU_GPU_Frequently].data_desc.GetBufferCreateInfo();
-
-    VmaAllocationCreateInfo allocation_create_info = {};
-    allocation_create_info.usage                   = VMA_MEMORY_USAGE_AUTO;
-    allocation_create_info.flags = vra_data_batcher->GetSuggestVmaMemoryFlags(vra::VraDataMemoryPattern::CPU_GPU, vra::VraDataUpdateRate::Frequent);
-    allocation_create_info.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    return Logger::LogWithVkResult(vmaCreateBuffer(vma_allocator,
-                                                   &uniform_buffer_create_info,
-                                                   &allocation_create_info,
-                                                   reinterpret_cast<VkBuffer*>(&uniform_buffer),
-                                                   &uniform_buffer_allocation,
-                                                   &uniform_buffer_allocation_info),
-                                   "Failed to create uniform buffer",
-                                   "Succeeded in creating uniform buffer");
+    uniform_buffer = runtime->buffer(uniform_resource);
+    return uniform_buffer != VK_NULL_HANDLE;
 }
 
 bool vulkan_backend::create_and_write_descriptor_relatives()
@@ -213,125 +204,7 @@ void vulkan_backend::update_uniform_buffer(uint32_t current_frame_index)
     // reverse the Y-axis in Vulkan's NDC coordinate system
     mvp_matrices[current_frame_index].projection[1][1] *= -1;
 
-    // map vulkan host memory to update the uniform buffer
-    uniform_buffer_mapped_data = nullptr;
-    vmaMapMemory(vma_allocator, uniform_buffer_allocation, &uniform_buffer_mapped_data);
-
-    // get the offset of the current frame in the uniform buffer
-    auto offset            = uniform_batch_handle[vra::VraBuiltInBatchIds::CPU_GPU_Frequently].offsets[uniform_buffer_id[current_frame_index]];
-    uint8_t* data_location = static_cast<uint8_t*>(uniform_buffer_mapped_data) + offset;
-
-    // copy the data to the mapped memory
-    std::memcpy(data_location, &mvp_matrices[current_frame_index], sizeof(mvp_matrix));
-
-    // unmap the memory
-    vmaUnmapMemory(vma_allocator, uniform_buffer_allocation);
-    uniform_buffer_mapped_data = nullptr;
-}
-
-void vulkan_backend::create_drawcall_list_buffer()
-{
-    vra::VraRawData vertex_buffer_data{.pData_ = vertices.data(), .size_ = sizeof(engine::vertex) * vertices.size()};
-    vra::VraRawData index_buffer_data{.pData_ = indices.data(), .size_ = sizeof(uint32_t) * indices.size()};
-
-    // 顶点缓冲区创建信息
-    vk::BufferCreateInfo vertex_buffer_create_info{.usage       = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
-                                                   .sharingMode = vk::SharingMode::eExclusive};
-    vra::VraDataDesc vertex_buffer_desc{vra::VraDataMemoryPattern::GPU_Only, vra::VraDataUpdateRate::RarelyOrNever, vertex_buffer_create_info};
-
-    // 索引缓冲区创建信息
-    vk::BufferCreateInfo index_buffer_create_info{.usage       = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
-                                                  .sharingMode = vk::SharingMode::eExclusive};
-    vra::VraDataDesc index_buffer_desc{vra::VraDataMemoryPattern::GPU_Only, vra::VraDataUpdateRate::RarelyOrNever, index_buffer_create_info};
-
-    // 暂存缓冲区创建信息
-    vk::BufferCreateInfo staging_buffer_create_info{.usage = vk::BufferUsageFlagBits::eTransferSrc, .sharingMode = vk::SharingMode::eExclusive};
-    vra::VraDataDesc staging_vertex_buffer_desc{
-        vra::VraDataMemoryPattern::CPU_GPU, vra::VraDataUpdateRate::RarelyOrNever, staging_buffer_create_info};
-    vra::VraDataDesc staging_index_buffer_desc{vra::VraDataMemoryPattern::CPU_GPU, vra::VraDataUpdateRate::RarelyOrNever, staging_buffer_create_info};
-
-    if (!vra_data_batcher->Collect(vertex_buffer_desc, vertex_buffer_data, vertex_buffer_id))
-    {
-        Logger::LogError("Failed to collect vertex buffer data");
-        return;
-    }
-    if (!vra_data_batcher->Collect(index_buffer_desc, index_buffer_data, index_buffer_id))
-    {
-        Logger::LogError("Failed to collect index buffer data");
-        return;
-    }
-    if (!vra_data_batcher->Collect(staging_vertex_buffer_desc, vertex_buffer_data, staging_vertex_buffer_id))
-    {
-        Logger::LogError("Failed to collect staging vertex buffer data");
-        return;
-    }
-    if (!vra_data_batcher->Collect(staging_index_buffer_desc, index_buffer_data, staging_index_buffer_id))
-    {
-        Logger::LogError("Failed to collect staging index buffer data");
-        return;
-    }
-
-    // 执行批处理
-    local_host_batch_handle = vra_data_batcher->Batch();
-
-    // 创建本地缓冲区
-    auto local_buffer_create_info = local_host_batch_handle[vra::VraBuiltInBatchIds::GPU_Only].data_desc.GetBufferCreateInfo();
-    VmaAllocationCreateInfo allocation_create_info{};
-    allocation_create_info.usage = VMA_MEMORY_USAGE_AUTO;
-    vmaCreateBuffer(vma_allocator,
-                    &local_buffer_create_info,
-                    &allocation_create_info,
-                    reinterpret_cast<VkBuffer*>(&local_buffer),
-                    &local_buffer_allocation,
-                    &local_buffer_allocation_info);
-
-    // 创建暂存缓冲区
-    auto host_buffer_create_info = local_host_batch_handle[vra::VraBuiltInBatchIds::CPU_GPU_Rarely].data_desc.GetBufferCreateInfo();
-    VmaAllocationCreateInfo staging_allocation_create_info{};
-    staging_allocation_create_info.usage = VMA_MEMORY_USAGE_AUTO;
-    staging_allocation_create_info.flags =
-        vra_data_batcher->GetSuggestVmaMemoryFlags(vra::VraDataMemoryPattern::CPU_GPU, vra::VraDataUpdateRate::RarelyOrNever);
-    vmaCreateBuffer(vma_allocator,
-                    &host_buffer_create_info,
-                    &staging_allocation_create_info,
-                    reinterpret_cast<VkBuffer*>(&staging_buffer),
-                    &staging_buffer_allocation,
-                    &staging_buffer_allocation_info);
-
-    // 复制数据到暂存缓冲区
-    auto consolidate_data = local_host_batch_handle[vra::VraBuiltInBatchIds::CPU_GPU_Rarely].consolidated_data;
-    void* data            = nullptr;
-    vmaInvalidateAllocation(vma_allocator, staging_buffer_allocation, 0, VK_WHOLE_SIZE);
-    vmaMapMemory(vma_allocator, staging_buffer_allocation, &data);
-    std::memcpy(data, consolidate_data.data(), consolidate_data.size());
-    vmaUnmapMemory(vma_allocator, staging_buffer_allocation);
-    vmaFlushAllocation(vma_allocator, staging_buffer_allocation, 0, VK_WHOLE_SIZE);
-
-    // 设置顶点输入绑定描述
-    vertex_input_binding_description.binding   = 0;
-    vertex_input_binding_description.stride    = sizeof(engine::vertex);
-    vertex_input_binding_description.inputRate = vk::VertexInputRate::eVertex;
-
-    // 设置顶点属性描述
-    vertex_input_attributes.clear();
-
-    // 使用更安全的偏移量计算，确保 offsetof 计算正确
-    // position
-    vertex_input_attributes.emplace_back(vk::VertexInputAttributeDescription{
-        .location = 0, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(engine::vertex, position)});
-    // color
-    vertex_input_attributes.emplace_back(vk::VertexInputAttributeDescription{
-        .location = 1, .binding = 0, .format = vk::Format::eR32G32B32A32Sfloat, .offset = offsetof(engine::vertex, color)});
-    // normal
-    vertex_input_attributes.emplace_back(vk::VertexInputAttributeDescription{
-        .location = 2, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(engine::vertex, normal)});
-    // tangent
-    vertex_input_attributes.emplace_back(vk::VertexInputAttributeDescription{
-        .location = 3, .binding = 0, .format = vk::Format::eR32G32B32A32Sfloat, .offset = offsetof(engine::vertex, tangent)});
-    // uv0
-    vertex_input_attributes.emplace_back(
-        vk::VertexInputAttributeDescription{.location = 4, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(engine::vertex, uv0)});
-    // uv1
-    vertex_input_attributes.emplace_back(
-        vk::VertexInputAttributeDescription{.location = 5, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(engine::vertex, uv1)});
+    const auto bytes = std::as_bytes(std::span(&mvp_matrices[current_frame_index], 1));
+    if (!runtime->update_buffer(uniform_resource, uniform_stride * current_frame_index, bytes))
+        Logger::LogError("Failed to update RG uniform table: " + runtime->last_error());
 }

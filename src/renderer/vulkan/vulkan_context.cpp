@@ -15,17 +15,15 @@ void vulkan_backend::initialize_vulkan()
         throw std::runtime_error("Failed to create Render Graph Vulkan runtime.");
     }
 
-    if (!create_vma_vra_objects())
+    if (!create_graph_allocator_bridge())
     {
-        throw std::runtime_error("Failed to create Vulkan vra and vma objects.");
+        throw std::runtime_error("Failed to connect the Render Graph allocator.");
     }
 
     if (!create_geometry_arena())
     {
         throw std::runtime_error("Failed to create geometry arena.");
     }
-
-    create_drawcall_list_buffer();
 
     if (!create_uniform_buffers())
     {
@@ -286,11 +284,8 @@ bool vulkan_backend::create_logical_device()
     return true;
 }
 
-bool vulkan_backend::create_vma_vra_objects()
+bool vulkan_backend::create_graph_allocator_bridge()
 {
-    // vra and vma members
-    vra_data_batcher = std::make_unique<vra::VraDataBatcher>(comm_vk_physical_device);
-
     if (vma_allocator == VK_NULL_HANDLE)
     {
         Logger::LogError("Render Graph Vulkan runtime did not provide a VMA allocator");
