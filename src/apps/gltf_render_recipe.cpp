@@ -63,6 +63,10 @@ namespace apps
             std::vector<render_graph::indexed_indirect_command> commands;
             std::array<render_graph::draw_indexed_indirect_row, 4> draws;
             push_constants push;
+            std::array<render_graph::frame_resource_row, 5> frame_resources;
+            std::array<render_graph::frame_buffer_access_row, 3> frame_buffer_accesses;
+            std::array<render_graph::frame_attachment_row, 2> frame_attachments;
+            std::array<render_graph::frame_pass_row, 1> frame_passes;
         };
 
         bool read_spirv(const std::filesystem::path& path, std::vector<uint32_t>& words)
@@ -383,11 +387,46 @@ namespace apps
                 .material_buffer_slot = state.material_slot,
             };
             plan.cache_key = 0x474c544650425200ull;
-            plan.pass_name = "GltfSponzaPass";
-            plan.clear_color = {0.03F, 0.04F, 0.08F, 1.0F};
+            state.frame_resources = {{
+                {.source = render_graph::frame_resource_source::persistent_buffer,
+                 .name = "Geometry", .buffer = state.geometry},
+                {.source = render_graph::frame_resource_source::persistent_buffer,
+                 .name = "Transforms", .buffer = state.transforms},
+                {.source = render_graph::frame_resource_source::persistent_buffer,
+                 .name = "Indirect", .buffer = state.indirect},
+                {.source = render_graph::frame_resource_source::swapchain_image, .name = "Swapchain"},
+                {.source = render_graph::frame_resource_source::transient_image, .name = "Depth",
+                 .image_description = {.fmt = render_graph::format::D32_SFLOAT,
+                                       .extent = environment.extent,
+                                       .usage = render_graph::image_usage::DEPTH_STENCIL_ATTACHMENT,
+                                       .memory = render_graph::memory_domain::device_local,
+                                       .lifetime = render_graph::resource_lifetime_class::transient}},
+            }};
+            state.frame_buffer_accesses = {{
+                {{0}, render_graph::buffer_usage::VERTEX_BUFFER, render_graph::access_type::read},
+                {{0}, render_graph::buffer_usage::INDEX_BUFFER, render_graph::access_type::read},
+                {{2}, render_graph::buffer_usage::INDIRECT_BUFFER, render_graph::access_type::read},
+            }};
+            state.frame_attachments = {{
+                {.resource = {3}, .kind = render_graph::frame_attachment_kind::color,
+                 .clear = {.color = {0.03F, 0.04F, 0.08F, 1.0F}}},
+                {.resource = {4}, .kind = render_graph::frame_attachment_kind::depth_stencil,
+                 .store = render_graph::attachment_store_op::dont_care,
+                 .clear = {.depth = 1.0F}},
+            }};
+            state.frame_passes = {{
+                {.name = "GltfSponzaPass", .kind = render_graph::pass_kind::raster,
+                 .buffer_accesses = {0, 3}, .attachments = {0, 2},
+                 .indexed_indirect_draws = {0, 4},
+                 .push_constant_size = sizeof(state.push),
+                 .push_constant_stage_mask = render_graph::shader_stage_vertex_bit |
+                                              render_graph::shader_stage_fragment_bit},
+            }};
+            plan.resources = state.frame_resources;
+            plan.passes = state.frame_passes;
+            plan.buffer_accesses = state.frame_buffer_accesses;
+            plan.attachments = state.frame_attachments;
             plan.push_constants = std::as_bytes(std::span(&state.push, 1));
-            plan.push_constant_stage_mask = render_graph::shader_stage_vertex_bit |
-                                            render_graph::shader_stage_fragment_bit;
             plan.indexed_indirect_draws = state.draws;
             return {};
         }
