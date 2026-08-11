@@ -29,6 +29,8 @@ set_target_properties(cglab_application_runner PROPERTIES
 # `cmake --build build --target <target>` when only one app is needed.
 add_executable(TriangleSample
     triangle_sample.cpp
+    triangle_render_recipe.cpp
+    triangle_render_recipe.h
 )
 
 add_executable(GltfSponzaSample
@@ -43,7 +45,6 @@ foreach(cglab_app IN ITEMS TriangleSample GltfSponzaSample)
     target_link_libraries(${cglab_app}
         PRIVATE
             cglab_application_runner
-            cglab_render_graph_vulkan
     )
 
     target_compile_definitions(${cglab_app}
@@ -54,6 +55,9 @@ foreach(cglab_app IN ITEMS TriangleSample GltfSponzaSample)
         target_compile_options(${cglab_app} PRIVATE /W4 /FS /utf-8)
     endif()
 endforeach()
+
+target_link_libraries(TriangleSample PRIVATE cglab_sdl_vulkan_surface)
+target_link_libraries(GltfSponzaSample PRIVATE cglab_render_graph_vulkan)
 
 # Preserve the paths used by existing scripts and documentation.
 set_target_properties(TriangleSample GltfSponzaSample PROPERTIES

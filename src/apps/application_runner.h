@@ -22,6 +22,8 @@ namespace apps
         std::optional<std::uint64_t> frame_limit;
         bool require_validation_clean = false;
         bool enforce_smoke_contract = false;
+        std::uint64_t expected_pipeline_creations = 4;
+        std::uint64_t expected_indirect_groups_per_frame = 1;
     };
 
     struct application_setup_result
