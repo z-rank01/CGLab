@@ -43,7 +43,7 @@ foreach(cglab_app IN ITEMS TriangleSample GltfSponzaSample)
     target_link_libraries(${cglab_app}
         PRIVATE
             cglab_application_runner
-            cglab_vulkan_backend
+            cglab_render_graph_vulkan
     )
 
     target_compile_definitions(${cglab_app}

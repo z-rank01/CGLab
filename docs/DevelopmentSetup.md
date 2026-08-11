@@ -131,7 +131,7 @@ bash scripts/cglab.sh build --preset linux-clang-ninja --config Release --target
 bash scripts/cglab.sh build --preset linux-clang-ninja --config Release --target all --jobs 8
 ```
 
-`all` 会构建当前配置中加入默认构建的 library、两个现代 app 以及已启用的测试 target。默认情况下 tests 和 legacy 都是关闭的，所以通常会得到 `TriangleSample` 和 `GltfSponzaSample`，不会得到 `VulkanSampleLegacy` 或测试可执行文件。
+`all` 会构建当前配置中加入默认构建的 library、两个 app 以及已启用的测试 target。默认情况下 tests 是关闭的，所以通常会得到 `TriangleSample` 和 `GltfSponzaSample`，不会得到测试可执行文件。
 
 如果只关心某一个 app，显式传入 target 会更快。查看当前 build tree 中所有可用 target：
 
@@ -165,12 +165,7 @@ glTF GPU smoke：
 
 省略 glTF smoke 的 `--asset` 时，脚本会自动使用 `assets/triangle.gltf`；非 smoke 的 `GltfSponzaSample` 运行仍应显式提供资产路径。
 
-历史快照默认关闭，只有需要验证兼容性时才启用：
-
-```powershell
-.\scripts\cglab.ps1 configure --preset windows-msvc-ninja --config Debug --legacy ON
-.\scripts\cglab.ps1 build --preset windows-msvc-ninja --config Debug --target VulkanSampleLegacy --legacy ON
-```
+历史 Vulkan 快照位于 `archive/legacy_vulkan/`，不属于 CMake 构建图，也没有脚本开关。
 
 ## 8. VS Code 工作流
 

@@ -1,9 +1,8 @@
 #pragma once
 
-#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #define VULKAN_HPP_NO_CONSTRUCTORS
 
-#include "renderer/vulkan/vulkan_backend.h"
+#include "render_graph_vulkan/vulkan_backend.h"
 #include "utility/logger.h"
 
 #include <algorithm>

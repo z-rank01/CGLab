@@ -1,4 +1,6 @@
-#include "renderer/vulkan/vulkan_backend_internal.h"
+#include "render_graph_vulkan/vulkan_backend_internal.h"
+
+#include <span>
 
 namespace
 {
@@ -198,48 +200,34 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
     {
         ++run_statistics.draw_pass_executions;
         const VkCommandBuffer commands = ctx.commands();
-        const VkDescriptorSet descriptor_set = runtime->bindless_set();
-
-        const VkViewport viewport{
-            .x = 0.0F,
-            .y = 0.0F,
-            .width = static_cast<float>(extent.width),
-            .height = static_cast<float>(extent.height),
-            .minDepth = 0.0F,
-            .maxDepth = 1.0F,
-        };
-        vkCmdSetViewport(commands, 0, 1, &viewport);
-        const VkRect2D scissor{.extent = {.width = extent.width, .height = extent.height}};
-        vkCmdSetScissor(commands, 0, 1, &scissor);
-
         const VkBuffer arena = ctx.resources.buffer(rg_geometry);
-        const VkDeviceSize base_offset = 0;
-        vkCmdBindVertexBuffers(commands, 0, 1, &arena, &base_offset);
-        vkCmdBindIndexBuffer(commands, arena, 0, VK_INDEX_TYPE_UINT32);
         if (indirect_draw_count == 0) return;
         const object_push_constants push{
             .frame_uniform_slot = frame_uniform_slots[frame_index].index,
             .transform_buffer_slot = transform_buffer_slot.index,
             .material_buffer_slot = material_buffer_slot.index,
         };
-        for (std::uint32_t group = 0; group < graphics_pipelines.size(); group++)
+        std::array<render_graph::vk_indirect_group_row, 4> groups;
+        for (std::uint32_t group = 0; group < groups.size(); group++)
         {
-            if (indirect_group_counts[group] == 0) continue;
-            const auto pipeline = graphics_pipelines[group];
-            const VkPipelineLayout layout = runtime->pipeline_layout(pipeline);
-            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, runtime->pipeline(pipeline));
-            vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1,
-                                    &descriptor_set, 0, nullptr);
-            vkCmdPushConstants(commands, layout,
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                               0, sizeof(push), &push);
-            vkCmdDrawIndexedIndirect(commands,
-                                     ctx.resources.buffer(rg_indirect),
-                                     sizeof(VkDrawIndexedIndirectCommand) * indirect_group_offsets[group],
-                                     indirect_group_counts[group],
-                                     sizeof(VkDrawIndexedIndirectCommand));
-            ++run_statistics.indirect_groups;
+            groups[group] = {
+                .pipeline = graphics_pipelines[group],
+                .command_offset = sizeof(VkDrawIndexedIndirectCommand) * indirect_group_offsets[group],
+                .command_count = indirect_group_counts[group],
+            };
+            if (indirect_group_counts[group] != 0) ++run_statistics.indirect_groups;
         }
+        const auto push_bytes = std::as_bytes(std::span(&push, 1));
+        if (!runtime->record_indexed_scene({
+                .commands = commands,
+                .extent = extent,
+                .geometry = arena,
+                .indirect = ctx.resources.buffer(rg_indirect),
+                .push_constants = push_bytes,
+                .push_stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                .groups = groups,
+            }))
+            throw std::runtime_error(runtime->last_error());
     });
 
     const auto result = frame_graph->compile();

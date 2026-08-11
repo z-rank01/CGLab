@@ -39,7 +39,7 @@ namespace scene
         glm::vec3 scale{1.0F};
     };
 
-    // 运行时对象在 geometry arena 中的绘制区间（vkCmdDrawIndexed 参数语义）
+    // 运行时对象引用的 RG persistent geometry 行。
     struct draw_range
     {
         std::uint32_t first_index   = 0; // 索引区间起点（单位：index）

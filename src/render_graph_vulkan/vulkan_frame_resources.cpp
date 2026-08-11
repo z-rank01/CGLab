@@ -1,4 +1,4 @@
-#include "renderer/vulkan/vulkan_backend_internal.h"
+#include "render_graph_vulkan/vulkan_backend_internal.h"
 
 #include <fstream>
 #include <span>
@@ -19,7 +19,7 @@ namespace
 
 bool vulkan_backend::create_uniform_buffers()
 {
-    const VkDeviceSize alignment = comm_vk_physical_device.getProperties().limits.minUniformBufferOffsetAlignment;
+    const VkDeviceSize alignment = runtime->min_uniform_buffer_offset_alignment();
     uniform_stride = (sizeof(mvp_matrix) + alignment - 1) / alignment * alignment;
     const auto created = runtime->create_buffer(render_graph::buffer_desc{
         .size = uniform_stride * config.frame_count,

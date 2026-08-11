@@ -213,14 +213,15 @@ int main()
         },
     });
     boundary_runtime.initialize();
-    CHECK(boundary_runtime.tick(2));
+    CHECK(boundary_runtime.tick(3));
     boundary_runtime.shutdown();
     CHECK(boundary_asset_state->start_calls == 1);
     CHECK(boundary_asset_state->request_calls == 1);
     CHECK(boundary_asset_state->shutdown_calls == 1);
     CHECK(boundary_backend_state->upload_calls == 1);
-    CHECK(boundary_backend_state->object_counts.size() == 2);
+    CHECK(boundary_backend_state->object_counts.size() == 3);
     CHECK(boundary_backend_state->object_counts[0] == 0);
-    CHECK(boundary_backend_state->object_counts[1] == 1);
+    CHECK(boundary_backend_state->object_counts[1] == 0);
+    CHECK(boundary_backend_state->object_counts[2] == 1);
     return EXIT_SUCCESS;
 }

@@ -1,11 +1,10 @@
 # CGLab
 
-CGLab 是一个面向 Vulkan 的 C++20 图形框架实验项目。当前现代应用共享
-`engine_runtime`、asset runtime 和 `cglab_vulkan_backend`：
+CGLab 是一个面向 Vulkan 的 C++20 图形框架实验项目。应用共享
+`engine_runtime`、asset runtime 和 `cglab_render_graph_vulkan`：
 
 - `TriangleSample`：最小三角形，用于验证窗口、runtime、Vulkan backend 和帧循环。
 - `GltfSponzaSample`：支持 `.gltf/.glb`，默认可使用仓库内的 `assets/triangle.gltf`。
-- `VulkanSampleLegacy`：旧版快照，仅在显式启用 legacy 选项时构建。
 
 ## 首次初始化
 
@@ -80,19 +79,13 @@ Copy-Item CMakeUserPresets.json.example CMakeUserPresets.json
 
 其他编译器或生成器可以在 `CMakeUserPresets.json` 中继承 `base` preset 自行添加，不会污染仓库配置。
 
-## Legacy 和可选第三方 targets
+## 可选第三方 targets
 
-默认构建包含两个现代 app。legacy 快照默认关闭，可通过脚本或 CMake 参数显式启用：
-
-```powershell
-.\scripts\cglab.ps1 build --preset windows-msvc-ninja --config Debug --target VulkanSampleLegacy --legacy ON
-```
-
-Render Graph、digital-content-loader 的额外 samples 和测试由根 CMake 选项控制，普通用户不需要启用它们。所有 CTest targets 可通过 `test` action 构建并执行。
+默认构建包含两个现代 app。Render Graph、digital-content-loader 的额外 samples 和测试由根 CMake 选项控制，普通用户不需要启用它们。所有 CTest targets 可通过 `test` action 构建并执行。历史 Vulkan 样例仅保存在 `archive/legacy_vulkan/`，不属于构建图。
 
 ## 架构文档
 
-Render Graph 迁移边界见 [GltfSponzaSample Render Graph 迁移说明](docs/GltfSponzaSampleRenderGraphMigration.md)。整体模块划分见 [Architecture](docs/Architecture.md) 和 [Application Runtime](docs/ApplicationRuntime.md)。
+当前所有权边界见 [Render Graph 与 Vulkan Backend](docs/RenderGraphAndRHI.md)。整体模块划分见 [Architecture](docs/Architecture.md) 和 [Application Runtime](docs/ApplicationRuntime.md)。
 
 ## CGLab
 

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/render_backend.h"
-#include "renderer/vulkan/render_program.h"
+#include "render_graph_vulkan/render_program.h"
 
 namespace engine::vulkan
 {

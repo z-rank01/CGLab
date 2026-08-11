@@ -1,4 +1,4 @@
-#include "renderer/vulkan/vulkan_backend_internal.h"
+#include "render_graph_vulkan/vulkan_backend_internal.h"
 
 bool vulkan_backend::resize_swapchain()
 {

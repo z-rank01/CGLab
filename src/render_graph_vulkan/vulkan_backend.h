@@ -17,7 +17,7 @@
 #include "render_graph/vk_runtime.h"
 #include "swapchain_image_state.h"
 #include "engine/render_backend.h"
-#include "renderer/vulkan/render_program.h"
+#include "render_graph_vulkan/render_program.h"
 
 struct vulkan_backend_config
 {
@@ -121,7 +121,6 @@ private:
     void initialize();
     [[nodiscard]] vulkan_frame_status tick();
     [[nodiscard]] vulkan_frame_status draw();
-    void initialize_vulkan_hpp();
     void initialize_vulkan();
 
     bool create_pipeline();
@@ -153,9 +152,6 @@ private:
 
     // -------------------------
 
-    vk::Instance comm_vk_instance = VK_NULL_HANDLE;
-    vk::PhysicalDevice comm_vk_physical_device = VK_NULL_HANDLE;
-    vk::Device comm_vk_logical_device = VK_NULL_HANDLE;
 
     using frame_render_graph = render_graph::render_graph_system<render_graph::vk_backend>;
     std::unique_ptr<frame_render_graph> frame_graph;

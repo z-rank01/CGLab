@@ -34,7 +34,6 @@ option(CGLAB_BUILD_DCL_SAMPLES "Build digital-content-loader sample executables"
 option(CGLAB_BUILD_RENDER_GRAPH_SAMPLES "Build render-graph sample executables" OFF)
 option(CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS "Build render-graph CTest executable" ${BUILD_TESTING})
 option(CGLAB_RENDER_GRAPH_SHARED "Build render_graph as a shared library (DLL)" OFF)
-option(CGLAB_BUILD_LEGACY_VULKAN_SAMPLE "Build the protected pre-render-graph legacy snapshot" OFF)
 
 set(DCL_BUILD_SAMPLES ${CGLAB_BUILD_DCL_SAMPLES}
     CACHE BOOL "Build sample/test executables (digital-content-loader)" FORCE
@@ -66,10 +65,6 @@ find_package(Stb REQUIRED)
 # -----------------------------------------------------------------------------
 
 add_subdirectory(src/utility)
-add_subdirectory(src/_old)
-add_subdirectory(src/_callable)
-add_subdirectory(src/_vra)
-add_subdirectory(src/_templates)
 add_subdirectory(src/engine)
 add_subdirectory(src/_interface)
 add_subdirectory(src/control_plane)
@@ -91,12 +86,8 @@ add_subdirectory(src/platform/vulkan)
 # CGLab runtime, applications, and tests
 # -----------------------------------------------------------------------------
 
-add_subdirectory(src/renderer/vulkan)
+add_subdirectory(src/render_graph_vulkan)
 add_subdirectory(src/apps)
-
-if(CGLAB_BUILD_LEGACY_VULKAN_SAMPLE)
-    add_subdirectory(src/legacy_vulkan_sample EXCLUDE_FROM_ALL)
-endif()
 
 if(BUILD_TESTING)
     add_subdirectory(src/unit_test)

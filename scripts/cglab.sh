@@ -15,7 +15,6 @@ CONFIG="${CGLAB_CONFIG:-Debug}"
 TARGET="TriangleSample"
 JOBS=""
 TESTS="OFF"
-LEGACY="OFF"
 FRESH=0
 TRIPLET=""
 VCPKG_ROOT_VALUE="${VCPKG_ROOT:-$ROOT/vcpkg}"
@@ -39,7 +38,6 @@ Options:
   --jobs COUNT        Parallel build jobs
   --fresh             Use cmake --fresh when configuring
   --tests ON|OFF      Configure CTest targets
-  --legacy ON|OFF     Configure VulkanSampleLegacy
   --triplet NAME      vcpkg target triplet
   --vcpkg-root PATH   vcpkg checkout location
   --frames COUNT      GPU smoke frame count
@@ -58,12 +56,12 @@ require_command() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --fresh) FRESH=1; shift ;;
-    --preset|--config|--target|--jobs|--tests|--legacy|--triplet|--vcpkg-root|--frames|--asset)
+    --preset|--config|--target|--jobs|--tests|--triplet|--vcpkg-root|--frames|--asset)
       [[ $# -ge 2 ]] || die "Missing value for $1"
       key="${1#--}"; value="$2"; shift 2
       case "$key" in
         preset) PRESET="$value";; config) CONFIG="$value";; target) TARGET="$value";; jobs) JOBS="$value";;
-        tests) TESTS="${value^^}";; legacy) LEGACY="${value^^}";; triplet) TRIPLET="$value";;
+        tests) TESTS="${value^^}";; triplet) TRIPLET="$value";;
         vcpkg-root) VCPKG_ROOT_VALUE="$value"; VCPKG_ROOT_EXPLICIT=1;; frames) FRAMES="$value";; asset) ASSET="$value";;
       esac
       ;;
@@ -166,7 +164,7 @@ install_dependencies() {
 configure_project() {
   local force_tests="${1:-$TESTS}" preset="$(resolve_preset)"
   [[ -f "$VCPKG_ROOT_VALUE/scripts/buildsystems/vcpkg.cmake" ]] || die "vcpkg is not initialized. Run ./scripts/cglab.sh setup first."
-  local args=(--preset "$preset" "-DBUILD_TESTING=$force_tests" "-DCGLAB_BUILD_LEGACY_VULKAN_SAMPLE=$LEGACY")
+  local args=(--preset "$preset" "-DBUILD_TESTING=$force_tests")
   [[ $VCPKG_ROOT_EXPLICIT -eq 1 ]] && args+=("-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT_VALUE/scripts/buildsystems/vcpkg.cmake")
   [[ $FRESH -eq 1 ]] && args=(--fresh "${args[@]}")
   (cd "$ROOT" && cmake "${args[@]}")

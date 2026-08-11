@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <vector>
 
 #include <glm/glm.hpp>
 
@@ -129,25 +130,8 @@ namespace engine
         [[nodiscard]] const render_driver* operator->() const noexcept { return this; }
         [[nodiscard]] result<bool> initialize(interface::window& window, const backend_config& config)
         { return api->initialize(state, window, config); }
-        [[nodiscard]] result<geometry_handle> upload_geometry(const geometry_asset& asset)
-        {
-            const geometry_upload_row row{&asset};
-            const auto changed = api->apply_resource_changes(state, {.geometry_uploads = std::span(&row, 1)});
-            return changed ? result<geometry_handle>{.value = changed.value.geometry_handles.front()}
-                           : result<geometry_handle>{.error = changed.error};
-        }
-        [[nodiscard]] result<std::uint32_t> upload_materials(const asset_database& asset)
-        {
-            const material_upload_row row{&asset};
-            const auto changed = api->apply_resource_changes(state, {.material_uploads = std::span(&row, 1)});
-            return changed ? result<std::uint32_t>{.value = changed.value.material_bases.front()}
-                           : result<std::uint32_t>{.error = changed.error};
-        }
-        void retire_geometry(geometry_handle handle)
-        {
-            const geometry_retire_row row{handle};
-            (void)api->apply_resource_changes(state, {.geometry_retires = std::span(&row, 1)});
-        }
+        [[nodiscard]] result<resource_change_result> apply_resource_changes(resource_change_batch batch)
+        { return api->apply_resource_changes(state, batch); }
         [[nodiscard]] frame_status render(const render_frame_packet& packet) { return api->render(state, packet); }
         void request_resize() noexcept { api->request_resize(state); }
         void shutdown() noexcept { if (state) api->shutdown(state); }

@@ -17,7 +17,6 @@ $Options = [ordered]@{
     Target = "TriangleSample"
     Jobs = ""
     Tests = "OFF"
-    Legacy = "OFF"
     Fresh = $false
     Triplet = ""
     VcpkgRoot = if ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { Join-Path $Root "vcpkg" }
@@ -51,7 +50,6 @@ Options:
   --jobs <count>        Parallel build jobs.
   --fresh               Use cmake --fresh when configuring.
   --tests <ON|OFF>      Configure CTest targets.
-  --legacy <ON|OFF>     Configure VulkanSampleLegacy.
   --triplet <name>      vcpkg target triplet.
   --vcpkg-root <path>   vcpkg checkout location.
   --frames <count>      GPU smoke frame count.
@@ -93,7 +91,6 @@ function Parse-Arguments([string[]]$Arguments) {
             "target" { $Options.Target = $value }
             "jobs" { $Options.Jobs = $value }
             "tests" { $Options.Tests = $value.ToUpperInvariant() }
-            "legacy" { $Options.Legacy = $value.ToUpperInvariant() }
             "triplet" { $Options.Triplet = $value }
             "vcpkg-root" { $Options.VcpkgRoot = $value; $Options.VcpkgRootExplicit = $true }
             "frames" { $Options.Frames = $value }
@@ -350,7 +347,7 @@ function Configure-Project([bool]$ForceTests = $false) {
     if ($Options.VcpkgRootExplicit) {
         $arguments += "-DCMAKE_TOOLCHAIN_FILE=$(Join-Path $Options.VcpkgRoot 'scripts\buildsystems\vcpkg.cmake')"
     }
-    $arguments += @("--preset", $preset, "-DBUILD_TESTING=$(if ($ForceTests) { 'ON' } else { $Options.Tests })", "-DCGLAB_BUILD_LEGACY_VULKAN_SAMPLE=$($Options.Legacy)")
+    $arguments += @("--preset", $preset, "-DBUILD_TESTING=$(if ($ForceTests) { 'ON' } else { $Options.Tests })")
     Push-Location $Root
     try { Invoke-Native "cmake" $arguments } finally { Pop-Location }
     return $preset

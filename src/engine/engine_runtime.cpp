@@ -112,23 +112,25 @@ void engine_runtime::initialize()
 
     if (initial_geometry)
     {
-        const auto uploaded = renderer->upload_geometry(*initial_geometry);
-        if (!uploaded)
+        const geometry_upload_row upload_row{initial_geometry.operator->()};
+        const auto changed = renderer->apply_resource_changes({.geometry_uploads = std::span(&upload_row, 1)});
+        if (!changed || changed.value.geometry_handles.size() != 1)
         {
-            throw std::runtime_error("Failed to upload startup geometry: " + uploaded.error);
+            throw std::runtime_error("Failed to upload startup geometry: " + changed.error);
         }
+        const geometry_handle uploaded = changed.value.geometry_handles.front();
         const scene::aabb bounds{initial_geometry->bounds_min, initial_geometry->bounds_max};
         const scene::object_id id = scene_registry.register_object(
             initial_geometry->name.empty() ? "startup" : initial_geometry->name,
             bounds,
             {},
             true,
-            uploaded.value);
+            uploaded);
         if (runtime_geometry_slots.size() <= id)
         {
             runtime_geometry_slots.resize(id + 1);
         }
-        runtime_geometry_slots[id] = uploaded.value;
+        runtime_geometry_slots[id] = uploaded;
         initial_geometry.reset();
     }
     if (initial_asset)
@@ -159,9 +161,15 @@ void engine_runtime::enqueue_load(std::string path, std::string client_id, nlohm
                           pending_load{.client_id = std::move(client_id), .rpc_id = std::move(rpc_id), .respond = true});
 }
 
-void engine_runtime::drain_completed_loads()
+void engine_runtime::collect_completed_loads()
 {
     for (completed_asset_request& completed : asset_loader->drain_completed())
+        completed_asset_rows.push_back(std::move(completed));
+}
+
+void engine_runtime::apply_completed_loads()
+{
+    for (completed_asset_request& completed : completed_asset_rows)
     {
         const auto pending = pending_loads.find(completed.id);
         if (pending == pending_loads.end())
@@ -196,17 +204,19 @@ void engine_runtime::drain_completed_loads()
                                                                      {"primitives", primitive_count}}));
         }
     }
+    completed_asset_rows.clear();
 }
 
 std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset_database asset, bool read_only)
 {
-    const auto uploaded_materials = renderer->upload_materials(asset);
-    if (!uploaded_materials)
+    const material_upload_row material_row{&asset};
+    const auto material_changes = renderer->apply_resource_changes({.material_uploads = std::span(&material_row, 1)});
+    if (!material_changes || material_changes.value.material_bases.size() != 1)
     {
-        Logger::LogError("Failed to upload glTF materials: " + uploaded_materials.error);
+        Logger::LogError("Failed to upload glTF materials: " + material_changes.error);
         return {};
     }
-    const std::uint32_t material_base = uploaded_materials.value;
+    const std::uint32_t material_base = material_changes.value.material_bases.front();
     std::vector<engine::geometry_handle> mesh_handles(asset.meshes.size(), engine::invalid_geometry_handle);
     for (std::uint32_t mesh_index = 0; mesh_index < asset.meshes.size(); mesh_index++)
     {
@@ -223,15 +233,19 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
                                   asset.index_blob.begin() + primitive.index_offset + primitive.index_count);
             geometry.primitives.push_back(std::move(output));
         }
-        const auto uploaded = renderer->upload_geometry(geometry);
-        if (!uploaded)
+        const geometry_upload_row geometry_row{&geometry};
+        const auto geometry_changes = renderer->apply_resource_changes({.geometry_uploads = std::span(&geometry_row, 1)});
+        if (!geometry_changes || geometry_changes.value.geometry_handles.size() != 1)
         {
-            Logger::LogError("Failed to upload glTF mesh: " + uploaded.error);
+            Logger::LogError("Failed to upload glTF mesh: " + geometry_changes.error);
+            std::vector<geometry_retire_row> rollback_rows;
             for (const auto handle : mesh_handles)
-                if (handle != engine::invalid_geometry_handle) renderer->retire_geometry(handle);
+                if (handle != engine::invalid_geometry_handle) rollback_rows.push_back({handle});
+            if (!rollback_rows.empty())
+                (void)renderer->apply_resource_changes({.geometry_retires = rollback_rows});
             return {};
         }
-        mesh_handles[mesh_index] = uploaded.value;
+        mesh_handles[mesh_index] = geometry_changes.value.geometry_handles.front();
     }
 
     std::vector<glm::mat4> world(asset.nodes.size(), glm::mat4(1.0F));
@@ -265,7 +279,8 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
         ids.push_back(id);
     }
     for (const auto handle : mesh_handles)
-        if (handle != engine::invalid_geometry_handle && !geometry_ref_counts.contains(handle)) renderer->retire_geometry(handle);
+        if (handle != engine::invalid_geometry_handle && !geometry_ref_counts.contains(handle))
+            pending_geometry_retires.push_back({handle});
     return ids;
 }
 
@@ -310,7 +325,7 @@ void engine_runtime::handle_scene_command(const control_plane::engine_command& c
             auto references = geometry_ref_counts.find(handle);
             if (references == geometry_ref_counts.end() || --references->second == 0)
             {
-                renderer->retire_geometry(handle);
+                pending_geometry_retires.push_back({handle});
                 if (references != geometry_ref_counts.end()) geometry_ref_counts.erase(references);
             }
             runtime_geometry_slots[id].reset();
@@ -696,7 +711,7 @@ void engine_runtime::consume_control_commands(frame_phase_context& context)
 
 void engine_runtime::merge_asset_results(frame_phase_context& context)
 {
-    if (!context.stop_success) drain_completed_loads();
+    if (!context.stop_success) collect_completed_loads();
 }
 
 void engine_runtime::update_scene_transforms(frame_phase_context&)
@@ -746,9 +761,19 @@ void engine_runtime::extract_render_packet(frame_phase_context& context)
     }};
 }
 
-void engine_runtime::apply_resource_changes(frame_phase_context&)
+void engine_runtime::apply_resource_changes(frame_phase_context& context)
 {
-    // Asset result rows are applied only at merge_asset_results; workers never mutate shared runtime tables.
+    if (context.stop_success) return;
+    apply_completed_loads();
+    if (pending_geometry_retires.empty()) return;
+    const auto changed = renderer->apply_resource_changes({.geometry_retires = pending_geometry_retires});
+    if (!changed)
+    {
+        Logger::LogError("Failed to retire geometry resources: " + changed.error);
+        context.stop_failure = true;
+        return;
+    }
+    pending_geometry_retires.clear();
 }
 
 void engine_runtime::submit_render_packet(frame_phase_context& context)

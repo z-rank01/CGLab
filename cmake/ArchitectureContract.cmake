@@ -28,9 +28,13 @@ foreach(_header IN LISTS _engine_headers)
     endforeach()
 endforeach()
 
-# During the strangler migration, native Vulkan side effects are allowed only in
-# the current Vulkan implementation, the protected legacy snapshot, and the RG
-# Vulkan backend. W8 narrows this list to the RG backend alone.
+if(EXISTS "${CGLAB_SOURCE_DIR}/src/renderer")
+    message(FATAL_ERROR "src/renderer must not exist; Render Graph owns the rendering layer")
+endif()
+
+# Active parent-repository sources may describe Vulkan handles but may not own
+# Vulkan side effects. All native allocation, descriptor, pipeline, command and
+# submission calls live in the Render Graph Vulkan backend.
 file(GLOB_RECURSE _source_files
     LIST_DIRECTORIES false
     "${CGLAB_SOURCE_DIR}/src/*.h"
@@ -38,30 +42,22 @@ file(GLOB_RECURSE _source_files
     "${CGLAB_SOURCE_DIR}/src/*.cpp"
 )
 
-set(_allowed_native_vulkan_prefixes
-    "src/_old/"
-    "src/_templates/"
-    "src/_vra/"
-    "src/legacy_vulkan_sample/"
-    "src/renderer/vulkan/"
-)
+set(_allowed_native_vulkan_prefixes)
 
 set(_native_vulkan_pattern
-    "(vk|vma)(Create|Allocate|Destroy|Free|Bind|Map|Unmap|Flush|Invalidate|UpdateDescriptor|CmdBindPipeline|CmdBindDescriptor)"
+    "(vk|vma)(Create|Allocate|Destroy|Free|Bind|Map|Unmap|Flush|Invalidate|UpdateDescriptor|Cmd|Queue|DeviceWaitIdle|AcquireNextImage)"
 )
 
 foreach(_source IN LISTS _source_files)
     file(RELATIVE_PATH _relative "${CGLAB_SOURCE_DIR}" "${_source}")
     string(REPLACE "\\" "/" _relative "${_relative}")
     file(READ "${_source}" _contents)
-    if(_contents MATCHES "vmaCreate(Buffer|Image)" AND
-       NOT _relative MATCHES "^src/(legacy_vulkan_sample|_old|_vra)/")
+    if(_contents MATCHES "vmaCreate(Buffer|Image)")
         message(FATAL_ERROR
             "Persistent GPU buffer/image allocation must be owned by the Render Graph Vulkan resource store: ${_relative}"
         )
     endif()
-    if(_contents MATCHES "vk(CreateDescriptor(SetLayout|Pool)|AllocateDescriptorSets|UpdateDescriptorSets|Create(GraphicsPipelines|ShaderModule|PipelineLayout))" AND
-       NOT _relative MATCHES "^src/(legacy_vulkan_sample|_old|_vra)/")
+    if(_contents MATCHES "vk(CreateDescriptor(SetLayout|Pool)|AllocateDescriptorSets|UpdateDescriptorSets|Create(GraphicsPipelines|ShaderModule|PipelineLayout))")
         message(FATAL_ERROR
             "Descriptor and pipeline creation must be owned by the Render Graph Vulkan runtime: ${_relative}"
         )

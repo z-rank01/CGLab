@@ -1,6 +1,4 @@
-#include "renderer/vulkan/vulkan_backend_internal.h"
-
-VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE;
+#include "render_graph_vulkan/vulkan_backend_internal.h"
 
 vulkan_backend::vulkan_backend(engine::vulkan::render_program program) : render_program(std::move(program))
 {
@@ -83,16 +81,7 @@ void vulkan_backend::shutdown() noexcept
         return;
     }
     shutdown_requested = true;
-    if (comm_vk_logical_device)
-    {
-        try
-        {
-            (void)comm_vk_logical_device.waitIdle();
-        }
-        catch (...)
-        {
-        }
-    }
+    if (runtime) runtime->wait_idle();
 }
 
 void vulkan_backend::initialize()
@@ -103,24 +92,13 @@ void vulkan_backend::initialize()
     frame_submission_ids.assign(config.frame_count, 0);
 
     // initialize SDL, vulkan, and camera
-    initialize_vulkan_hpp();
     initialize_vulkan();
 }
 
 vulkan_backend::~vulkan_backend()
 {
     // 等待设备空闲，确保没有正在进行的操作
-    if (comm_vk_logical_device)
-    {
-        try
-        {
-            (void)comm_vk_logical_device.waitIdle();
-        }
-        catch (const vk::SystemError& error)
-        {
-            Logger::LogError(std::string("Failed to wait for Vulkan shutdown: ") + error.what());
-        }
-    }
+    if (runtime) runtime->wait_idle();
 
     frame_graph.reset();
 

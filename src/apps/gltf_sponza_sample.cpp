@@ -2,7 +2,7 @@
 
 #include "apps/application_options.h"
 #include "apps/application_runner.h"
-#include "renderer/vulkan/create_vulkan_backend.h"
+#include "render_graph_vulkan/create_vulkan_backend.h"
 
 namespace
 {
