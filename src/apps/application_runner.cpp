@@ -37,7 +37,9 @@ namespace apps
                 const engine::render_statistics statistics = runtime.statistics();
                 if (!request.frame_limit || statistics.upload_pass_executions != 1 ||
                     statistics.draw_pass_executions != *request.frame_limit ||
-                    statistics.presented_frames != *request.frame_limit)
+                    statistics.presented_frames != *request.frame_limit ||
+                    statistics.steady_frame_descriptor_updates != 0 ||
+                    statistics.pipeline_creations != 1)
                 {
                     Logger::LogError("GPU smoke counters did not match the requested frame contract");
                     return EXIT_FAILURE;

@@ -66,9 +66,13 @@ void vulkan_backend::retire_geometry(engine::geometry_handle handle)
 
 engine::frame_status vulkan_backend::render(const engine::render_snapshot& snapshot)
 {
+    const std::uint64_t descriptor_updates_before = runtime->bindless().statistics.descriptor_updates;
     current_snapshot = &snapshot;
     const engine::frame_status status = tick();
     current_snapshot = nullptr;
+    run_statistics.steady_frame_descriptor_updates +=
+        runtime->bindless().statistics.descriptor_updates - descriptor_updates_before;
+    run_statistics.pipeline_creations = runtime->pipelines().creations;
     return status;
 }
 
@@ -118,60 +122,8 @@ vulkan_backend::~vulkan_backend()
         }
     }
 
-    // 销毁描述符相关资源
-    if (descriptor_pool != VK_NULL_HANDLE)
-    {
-        comm_vk_logical_device.destroyDescriptorPool(descriptor_pool);
-        descriptor_pool = VK_NULL_HANDLE;
-    }
-
-    if (descriptor_set_layout != VK_NULL_HANDLE)
-    {
-        comm_vk_logical_device.destroyDescriptorSetLayout(descriptor_set_layout);
-        descriptor_set_layout = VK_NULL_HANDLE;
-    }
-
     frame_graph.reset();
 
-    // destroy swapchain related resources
-
-    for (auto image_view : runtime ? std::vector<vk::ImageView>{} : comm_vk_swapchain_context.swapchain_image_views_)
-    {
-        if (comm_vk_logical_device)
-        {
-            comm_vk_logical_device.destroyImageView(image_view);
-        }
-    }
-    if (!runtime && comm_vk_logical_device && comm_vk_swapchain)
-    {
-        comm_vk_logical_device.destroySwapchainKHR(comm_vk_swapchain);
-    }
-
-    // release unique pointer
-
-    vk_shader_helper.reset();
-    vk_pipeline_helper.reset();
-    vk_command_buffer_helper.reset();
-    vk_synchronization_helper.reset();
-
-    // destroy comm test data
-
-    if (!runtime && comm_vk_logical_device)
-    {
-        vkDestroyDevice(comm_vk_logical_device, nullptr);
-    }
-    if (!runtime && comm_vk_instance && surface != VK_NULL_HANDLE)
-    {
-        vkDestroySurfaceKHR(comm_vk_instance, surface, nullptr);
-    }
-    if (!runtime)
-    {
-        destroy_debug_messenger();
-    }
-    if (!runtime && comm_vk_instance)
-    {
-        vkDestroyInstance(comm_vk_instance, nullptr);
-    }
     runtime.reset();
 }
 

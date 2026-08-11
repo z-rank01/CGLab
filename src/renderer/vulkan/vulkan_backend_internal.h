@@ -4,6 +4,7 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS
 
 #include "renderer/vulkan/vulkan_backend.h"
+#include "utility/logger.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -13,11 +14,5 @@
 #include <stdexcept>
 #include <utility>
 
-#include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_enums.hpp>
-
-#include "_callable/callable.h"
-#include "_templates/common.hpp"
-
-using namespace templates;

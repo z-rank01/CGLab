@@ -1,36 +1,25 @@
 #include "renderer/vulkan/vulkan_backend_internal.h"
 
+#include <fstream>
 #include <span>
 
-void vulkan_backend::generate_frame_structs()
+namespace
 {
-    output_frames.resize(config.frame_count);
-    for (int i = 0; i < config.frame_count; ++i)
+    bool read_spirv(const std::filesystem::path& path, std::vector<uint32_t>& words)
     {
-        output_frames[i].image_index                  = i;
-        output_frames[i].queue_id                     = "graphic_queue";
-        output_frames[i].command_buffer_id            = "graphic_command_buffer_" + std::to_string(i);
-        output_frames[i].image_available_semaphore_id = "image_available_semaphore_" + std::to_string(i);
-        output_frames[i].render_finished_semaphore_id = "render_finished_semaphore_" + std::to_string(i);
-        output_frames[i].fence_id                     = "in_flight_fence_" + std::to_string(i);
+        std::ifstream input(path, std::ios::binary | std::ios::ate);
+        if (!input) return false;
+        const auto size = input.tellg();
+        if (size <= 0 || size % static_cast<std::streamoff>(sizeof(uint32_t)) != 0) return false;
+        words.resize(static_cast<size_t>(size) / sizeof(uint32_t));
+        input.seekg(0);
+        return static_cast<bool>(input.read(reinterpret_cast<char*>(words.data()), size));
     }
-}
-bool vulkan_backend::create_command_pool()
-{
-    vk_command_buffer_helper = std::make_unique<VulkanCommandBufferHelper>();
-
-    auto queue_family_index = common::logicaldevice::find_optimal_queue_family(comm_vk_logical_device_context, vk::QueueFlagBits::eGraphics);
-    if (!queue_family_index.has_value())
-    {
-        std::cerr << "Failed to find any suitable graphics queue family." << '\n';
-        return false;
-    }
-    return vk_command_buffer_helper->CreateCommandPool(comm_vk_logical_device, queue_family_index.value());
 }
 
 bool vulkan_backend::create_uniform_buffers()
 {
-    const VkDeviceSize alignment = comm_vk_physical_device_context.device_properties_.limits.minUniformBufferOffsetAlignment;
+    const VkDeviceSize alignment = comm_vk_physical_device.getProperties().limits.minUniformBufferOffsetAlignment;
     uniform_stride = (sizeof(mvp_matrix) + alignment - 1) / alignment * alignment;
     const auto created = runtime->create_buffer(render_graph::buffer_desc{
         .size = uniform_stride * config.frame_count,
@@ -46,152 +35,68 @@ bool vulkan_backend::create_uniform_buffers()
         return false;
     }
     uniform_buffer = runtime->buffer(uniform_resource);
-    return uniform_buffer != VK_NULL_HANDLE;
-}
-
-bool vulkan_backend::create_and_write_descriptor_relatives()
-{
-    vk::DescriptorPoolSize pool_size =
+    if (uniform_buffer == VK_NULL_HANDLE) return false;
+    frame_uniform_slots.resize(config.frame_count);
+    for (uint32_t frame = 0; frame < config.frame_count; frame++)
     {
-        .type = vk::DescriptorType::eUniformBufferDynamic,
-        .descriptorCount = 1
-    };
-    vk::DescriptorPoolCreateInfo descriptor_pool_create_info;
-    descriptor_pool_create_info.setPoolSizes(pool_size).setPoolSizeCount(1).setMaxSets(1);
-
-    descriptor_pool = comm_vk_logical_device.createDescriptorPool(descriptor_pool_create_info, nullptr);
-    if (!descriptor_pool)
-        return false;
-
-    // create descriptor set layout
-
-    vk::DescriptorSetLayoutBinding layout_binding;
-    layout_binding.setBinding(0)
-        .setDescriptorType(vk::DescriptorType::eUniformBufferDynamic)
-        .setDescriptorCount(1)
-        .setStageFlags(vk::ShaderStageFlagBits::eVertex);
-
-    vk::DescriptorSetLayoutCreateInfo layout_create_info;
-    layout_create_info.setBindingCount(1).setPBindings(&layout_binding);
-
-    descriptor_set_layout = comm_vk_logical_device.createDescriptorSetLayout(layout_create_info, nullptr);
-    if (!descriptor_set_layout)
-        return false;
-
-    // allocate descriptor set
-
-    vk::DescriptorSetAllocateInfo alloc_info;
-    alloc_info.setDescriptorPool(descriptor_pool).setDescriptorSetCount(1).setPSetLayouts(&descriptor_set_layout);
-
-    descriptor_sets = comm_vk_logical_device.allocateDescriptorSets(alloc_info);
-    if (descriptor_sets.empty())
-        return false;
-
-    // write descriptor set
-    vk::DescriptorBufferInfo descriptor_buffer_info{.buffer = uniform_buffer, .offset = 0, .range = sizeof(mvp_matrix)};
-    std::vector<vk::WriteDescriptorSet> write_descriptor_sets(descriptor_sets.size());
-    for (size_t i = 0; i < descriptor_sets.size(); ++i)
-    {
-        write_descriptor_sets[i] = {.dstSet          = descriptor_sets[i],
-                                    .dstBinding      = 0,
-                                    .dstArrayElement = 0,
-                                    .descriptorCount = 1,
-                                    .descriptorType  = vk::DescriptorType::eUniformBufferDynamic,
-                                    .pBufferInfo     = &descriptor_buffer_info};
+        const auto allocated = runtime->allocate_uniform_buffer(uniform_resource,
+                                                                uniform_stride * frame,
+                                                                sizeof(mvp_matrix),
+                                                                frame_uniform_slots[frame]);
+        if (!allocated)
+        {
+            Logger::LogError("Failed to allocate frame uniform bindless slot: " + allocated.error);
+            return false;
+        }
     }
-    comm_vk_logical_device.updateDescriptorSets(write_descriptor_sets, {});
     return true;
 }
 
 bool vulkan_backend::create_pipeline()
 {
-    // create shader
-    vk_shader_helper = std::make_unique<VulkanShaderHelper>(comm_vk_logical_device);
-
-    std::vector<SVulkanShaderConfig> shader_configs;
     const std::filesystem::path shader_path =
         std::filesystem::path(config.working_directory) / "src" / "shader";
-    // std::string vertex_shader_path = shader_path + "triangle.vert.spv";
-    // std::string fragment_shader_path = shader_path + "triangle.frag.spv";
-    std::string vertex_shader_path   = (shader_path / "gltf.vert.spv").string();
-    std::string fragment_shader_path = (shader_path / "gltf.frag.spv").string();
-    shader_configs.push_back({.shader_type = EShaderType::kVertexShader, .shader_path = vertex_shader_path.c_str()});
-    shader_configs.push_back({.shader_type = EShaderType::kFragmentShader, .shader_path = fragment_shader_path.c_str()});
-
-    for (const auto& shader_config : shader_configs)
+    std::vector<uint32_t> vertex_shader;
+    std::vector<uint32_t> fragment_shader;
+    if (!read_spirv(shader_path / "gltf.vert.spv", vertex_shader) ||
+        !read_spirv(shader_path / "gltf.frag.spv", fragment_shader))
     {
-        std::vector<uint32_t> shader_code;
-        if (!vk_shader_helper->ReadShaderCode(shader_config.shader_path, shader_code))
-        {
-            Logger::LogError("Failed to read shader code from " + std::string(shader_config.shader_path));
-            return false;
-        }
-
-        if (!vk_shader_helper->CreateShaderModule(comm_vk_logical_device, shader_code, shader_config.shader_type))
-        {
-            Logger::LogError("Failed to create shader module for " + std::string(shader_config.shader_path));
-            return false;
-        }
+        Logger::LogError("Failed to read glTF SPIR-V shaders from " + shader_path.string());
+        return false;
     }
 
-    // create pipeline
-    SVulkanPipelineConfig pipeline_config{
-        .swap_chain_extent                   = comm_vk_swapchain_context.swapchain_info_.extent_,
-        .shader_module_map                   = {{EShaderType::kVertexShader, vk_shader_helper->GetShaderModule(EShaderType::kVertexShader)},
-                                                {EShaderType::kFragmentShader, vk_shader_helper->GetShaderModule(EShaderType::kFragmentShader)}},
-        .color_format                       = comm_vk_swapchain_context.swapchain_info_.surface_format_.format,
-        .depth_format                       = vk::Format::eD32Sfloat,
-        .vertex_input_binding_description    = vertex_input_binding_description,
-        .vertex_input_attribute_descriptions = vertex_input_attributes,
-        .descriptor_set_layouts              = {descriptor_set_layout},
-        .push_constant_ranges               = {vk::PushConstantRange{vk::ShaderStageFlagBits::eVertex, 0, sizeof(glm::mat4)}}};
-    vk_pipeline_helper = std::make_unique<VulkanPipelineHelper>(pipeline_config);
-    return vk_pipeline_helper->CreatePipeline(comm_vk_logical_device);
-}
-
-bool vulkan_backend::allocate_per_frame_command_buffer()
-{
-    for (int i = 0; i < config.frame_count; ++i)
+    render_graph::vk_graphics_pipeline_desc desc;
+    desc.shaders = {
+        {.stage = VK_SHADER_STAGE_VERTEX_BIT, .spirv = std::move(vertex_shader)},
+        {.stage = VK_SHADER_STAGE_FRAGMENT_BIT, .spirv = std::move(fragment_shader)},
+    };
+    desc.vertex_layout.bindings.push_back(VkVertexInputBindingDescription{
+        .binding = vertex_input_binding_description.binding,
+        .stride = vertex_input_binding_description.stride,
+        .inputRate = static_cast<VkVertexInputRate>(vertex_input_binding_description.inputRate),
+    });
+    for (const auto& attribute : vertex_input_attributes)
     {
-        if (!vk_command_buffer_helper->AllocateCommandBuffer({.command_buffer_level = vk::CommandBufferLevel::ePrimary, .command_buffer_count = 1},
-                                                              output_frames[i].command_buffer_id))
-        {
-            Logger::LogError("Failed to allocate command buffer for frame " + std::to_string(i));
-            return false;
-        }
+        desc.vertex_layout.attributes.push_back(VkVertexInputAttributeDescription{
+            .location = attribute.location,
+            .binding = attribute.binding,
+            .format = static_cast<VkFormat>(attribute.format),
+            .offset = attribute.offset,
+        });
     }
-    return true;
-}
-
-bool vulkan_backend::create_synchronization_objects()
-{
-    vk_synchronization_helper = std::make_unique<VulkanSynchronizationHelper>(comm_vk_logical_device);
-
-    // Create synchronization objects per frame-in-flight
-    for (int i = 0; i < config.frame_count; ++i)
+    desc.color_formats = {runtime->swapchain_images().format};
+    desc.depth_format = VK_FORMAT_D32_SFLOAT;
+    desc.push_constants = {VkPushConstantRange{
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+        .offset = 0,
+        .size = sizeof(object_push_constants),
+    }};
+    const auto created = runtime->create_graphics_pipeline(desc, graphics_pipeline);
+    if (!created)
     {
-        if (!vk_synchronization_helper->CreateVkSemaphore(output_frames[i].image_available_semaphore_id))
-            return false;
-
-        // Note: Do NOT create the per-frame render_finished_semaphore here anymore.
-        // We will use per-image semaphores instead.
-        // if (!vk_synchronization_helper_->CreateVkSemaphore(output_frames_[i].render_finished_semaphore_id))
-        //    return false;
-
-        if (!vk_synchronization_helper->CreateFence(output_frames[i].fence_id))
-            return false;
+        Logger::LogError("Failed to create RG graphics pipeline: " + created.error);
+        return false;
     }
-
-    // Create render_finished semaphores per swapchain image
-    const auto swapchain_images = comm_vk_logical_device.getSwapchainImagesKHR(comm_vk_swapchain);
-    for (size_t i = 0; i < swapchain_images.size(); ++i)
-    {
-        // Use a unique ID based on the image index
-        std::string id = "render_finished_semaphore_image_" + std::to_string(i);
-        if (!vk_synchronization_helper->CreateVkSemaphore(id))
-            return false;
-    }
-
     return true;
 }
 

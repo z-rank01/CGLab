@@ -28,6 +28,8 @@ namespace engine
         std::uint64_t upload_pass_executions = 0;
         std::uint64_t draw_pass_executions = 0;
         std::uint64_t presented_frames = 0;
+        std::uint64_t steady_frame_descriptor_updates = 0;
+        std::uint64_t pipeline_creations = 0;
     };
 
     struct render_object

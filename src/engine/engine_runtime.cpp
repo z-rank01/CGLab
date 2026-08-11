@@ -569,6 +569,8 @@ void engine_runtime::publish_frame_telemetry()
                                                                 {"presented_frames", stats.presented_frames},
                                                                 {"draw_pass_executions", stats.draw_pass_executions},
                                                                 {"upload_pass_executions", stats.upload_pass_executions},
+                                                                {"steady_frame_descriptor_updates", stats.steady_frame_descriptor_updates},
+                                                                {"pipeline_creations", stats.pipeline_creations},
                                                                 {"validation_errors", validation_error_count()},
                                                                 {"paused", frame_paused},
                                                                 {"camera", current_camera_state()},

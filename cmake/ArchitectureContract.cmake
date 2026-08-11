@@ -60,6 +60,12 @@ foreach(_source IN LISTS _source_files)
             "Persistent GPU buffer/image allocation must be owned by the Render Graph Vulkan resource store: ${_relative}"
         )
     endif()
+    if(_contents MATCHES "vk(CreateDescriptor(SetLayout|Pool)|AllocateDescriptorSets|UpdateDescriptorSets|Create(GraphicsPipelines|ShaderModule|PipelineLayout))" AND
+       NOT _relative MATCHES "^src/(legacy_vulkan_sample|_old|_vra)/")
+        message(FATAL_ERROR
+            "Descriptor and pipeline creation must be owned by the Render Graph Vulkan runtime: ${_relative}"
+        )
+    endif()
     set(_allowed false)
     foreach(_prefix IN LISTS _allowed_native_vulkan_prefixes)
         string(FIND "${_relative}" "${_prefix}" _prefix_position)

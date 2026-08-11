@@ -11,8 +11,9 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
     using setup_context = frame_render_graph::pass_setup_context;
     using execute_context = frame_render_graph::pass_execute_context;
 
-    const auto extent = comm_vk_swapchain_context.swapchain_info_.extent_;
-    const auto native_format = static_cast<VkFormat>(comm_vk_swapchain_context.swapchain_info_.surface_format_.format);
+    const auto& swapchain = runtime->swapchain_images();
+    const auto extent = swapchain.extent;
+    const auto native_format = swapchain.format;
     const bool swapchain_initialized = swapchain_image_states.is_initialized(image_index);
     const uint64_t graph_cache_key = (static_cast<uint64_t>(extent.width) << 32) ^
                                      static_cast<uint64_t>(extent.height) ^
@@ -151,18 +152,17 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
         ++run_statistics.draw_pass_executions;
         const VkCommandBuffer commands = ctx.commands();
         vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          static_cast<VkPipeline>(vk_pipeline_helper->GetPipeline()));
+                          runtime->pipeline(graphics_pipeline));
 
-        const uint32_t dynamic_offset = static_cast<uint32_t>(uniform_stride * frame_index);
-        const VkDescriptorSet descriptor_set = static_cast<VkDescriptorSet>(descriptor_sets.front());
+        const VkDescriptorSet descriptor_set = runtime->bindless_set();
         vkCmdBindDescriptorSets(commands,
                                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                static_cast<VkPipelineLayout>(vk_pipeline_helper->GetPipelineLayout()),
+                                runtime->pipeline_layout(graphics_pipeline),
                                 0,
                                 1,
                                 &descriptor_set,
-                                1,
-                                &dynamic_offset);
+                                0,
+                                nullptr);
 
         const VkViewport viewport{
             .x = 0.0F,
@@ -185,12 +185,16 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
         {
             const auto allocation = geometry_allocations.find(object.geometry);
             if (allocation == geometry_allocations.end()) continue;
+            const object_push_constants push{
+                .model = object.model,
+                .frame_uniform_slot = frame_uniform_slots[frame_index].index,
+            };
             vkCmdPushConstants(commands,
-                               static_cast<VkPipelineLayout>(vk_pipeline_helper->GetPipelineLayout()),
+                               runtime->pipeline_layout(graphics_pipeline),
                                VK_SHADER_STAGE_VERTEX_BIT,
                                0,
-                               sizeof(glm::mat4),
-                               &object.model);
+                               sizeof(push),
+                               &push);
             for (const engine::draw_range& range : allocation->second.draws)
                 vkCmdDrawIndexed(commands, range.index_count, 1, range.first_index, range.vertex_offset, 0);
         }
@@ -216,7 +220,7 @@ bool vulkan_backend::record_command(uint32_t image_index, VkCommandBuffer comman
         frame_graph->bind_imported_buffer(rg_geometry, geometry_buffer);
         frame_graph->bind_imported_buffer(rg_uniform, uniform_buffer);
         frame_graph->bind_imported_image(rg_swapchain,
-                                         static_cast<VkImage>(comm_vk_swapchain_context.swapchain_images_[image_index]));
+                                         runtime->swapchain_images().rows[image_index].image);
         const auto result = frame_graph->execute(command_buffer);
         if (result.succeeded()) return true;
         for (const auto& diagnostic : result.diagnostics)

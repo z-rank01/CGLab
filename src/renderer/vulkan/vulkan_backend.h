@@ -1,22 +1,16 @@
 #pragma once
 
-#include <VkBootstrap.h>
-
-#include <atomic>
 #include <deque>
+#include <map>
 #include <utility>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <memory>
 #include <unordered_set>
+#include <vulkan/vulkan.hpp>
 
 #include "_interface/window.h"
-#include "_old/vulkan_commandbuffer.h"
-#include "_old/vulkan_pipeline.h"
-#include "_old/vulkan_shader.h"
-#include "_old/vulkan_synchronization.h"
-#include "_templates/common.hpp"
 #include "render_graph/system.h"
 #include "render_graph/vk_backend.h"
 #include "render_graph/vk_runtime.h"
@@ -34,21 +28,17 @@ struct vulkan_backend_config
     bool use_validation_layers = false;
 };
 
-struct output_frame
-{
-    uint32_t image_index;
-    std::string queue_id;
-    std::string command_buffer_id;
-    std::string image_available_semaphore_id;
-    std::string render_finished_semaphore_id;
-    std::string fence_id;
-};
-
 struct mvp_matrix
 {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 projection;
+};
+
+struct object_push_constants
+{
+    glm::mat4 model{1.0F};
+    std::uint32_t frame_uniform_slot = 0;
 };
 
 using vulkan_frame_status = engine::frame_status;
@@ -77,7 +67,7 @@ public:
     void shutdown() noexcept override;
     [[nodiscard]] std::uint32_t validation_error_count() const noexcept override
     {
-        return runtime ? runtime->validation_error_count() : validation_errors->load(std::memory_order_relaxed);
+        return runtime ? runtime->validation_error_count() : 0;
     }
 private:
 #define FRAME_INDEX_TO_UNIFORM_BUFFER_ID(frame_index) ((frame_index) + 4)
@@ -85,7 +75,6 @@ private:
     uint8_t frame_index = 0;
     bool resize_request = false;
     vulkan_backend_config config;
-    std::vector<output_frame> output_frames;
 
     // uniform data and buffer
     std::vector<mvp_matrix> mvp_matrices;
@@ -95,24 +84,16 @@ private:
     VkDeviceSize uniform_stride = sizeof(mvp_matrix);
     VmaAllocator vma_allocator = VK_NULL_HANDLE;
     render_graph::vk_buffer_resource_handle uniform_resource;
+    std::vector<render_graph::vk_bindless_handle> frame_uniform_slots;
 
-    // surface
-    VkSurfaceKHR surface = VK_NULL_HANDLE;
-
-    // descriptor
-    vk::DescriptorPool descriptor_pool = VK_NULL_HANDLE;
-    vk::DescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
-    std::vector<vk::DescriptorSet> descriptor_sets;
+    // pipeline input rows
     vk::VertexInputBindingDescription vertex_input_binding_description;
     std::vector<vk::VertexInputAttributeDescription> vertex_input_attributes;
 
     // vulkan helper members (old oop version)
     // TODO: remove these helper classes with dod version instead in the future
     interface::window* window                     = nullptr;
-    std::unique_ptr<VulkanShaderHelper> vk_shader_helper;
-    std::unique_ptr<VulkanPipelineHelper> vk_pipeline_helper;
-    std::unique_ptr<VulkanCommandBufferHelper> vk_command_buffer_helper;
-    std::unique_ptr<VulkanSynchronizationHelper> vk_synchronization_helper;
+    render_graph::vk_pipeline_handle graphics_pipeline;
 
     // --- Vulkan Initialization Steps ---
 
@@ -122,27 +103,10 @@ private:
     void initialize_vulkan_hpp();
     void initialize_vulkan();
 
-    void generate_frame_structs();
-    bool create_instance();
-    bool create_debug_messenger();
-    void destroy_debug_messenger() noexcept;
-    static VKAPI_ATTR VkBool32 VKAPI_CALL validation_callback(
-        VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
-        VkDebugUtilsMessageTypeFlagsEXT message_types,
-        const VkDebugUtilsMessengerCallbackDataEXT* callback_data,
-        void* user_data);
-    bool create_surface();
-    bool create_physical_device();
-    bool create_logical_device();
-    bool create_swapchain();
     bool create_pipeline();
-    bool create_command_pool();
-    bool create_and_write_descriptor_relatives();
     bool create_graph_allocator_bridge();
     bool create_uniform_buffers();
 
-    bool allocate_per_frame_command_buffer();
-    bool create_synchronization_objects();
     bool create_render_graph_runtime();
     void sync_runtime_context_views();
 
@@ -166,22 +130,9 @@ private:
 
     // -------------------------
 
-    // --- Common Templates ---
-
     vk::Instance comm_vk_instance = VK_NULL_HANDLE;
     vk::PhysicalDevice comm_vk_physical_device = VK_NULL_HANDLE;
     vk::Device comm_vk_logical_device = VK_NULL_HANDLE;
-    vk::Queue comm_vk_graphics_queue = VK_NULL_HANDLE;
-    vk::Queue comm_vk_transfer_queue = VK_NULL_HANDLE;
-    vk::SwapchainKHR comm_vk_swapchain = VK_NULL_HANDLE;
-    VkDebugUtilsMessengerEXT debug_messenger = VK_NULL_HANDLE;
-    std::shared_ptr<std::atomic_uint32_t> validation_errors = std::make_shared<std::atomic_uint32_t>(0);
-    templates::common::CommVkInstanceContext comm_vk_instance_context;
-    templates::common::CommVkPhysicalDeviceContext comm_vk_physical_device_context;
-    templates::common::CommVkLogicalDeviceContext comm_vk_logical_device_context;
-    templates::common::CommVkSwapchainContext comm_vk_swapchain_context;
-
-    vk::Format depth_format        = vk::Format::eD32Sfloat;
 
     using frame_render_graph = render_graph::render_graph_system<render_graph::vk_backend>;
     std::unique_ptr<frame_render_graph> frame_graph;

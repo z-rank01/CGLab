@@ -23,14 +23,9 @@ target_link_libraries(cglab_vulkan_backend
     PRIVATE
         Vulkan::Vulkan
         GPUOpen::VulkanMemoryAllocator
-        SDL3::SDL3
         glm::glm
-        vk-bootstrap::vk-bootstrap
         utility
         vulkan_resource_allocator
-        vulkan_old_class
-        callable
-        template
         render_graph
         cglab_sdl_vulkan_surface
 )
