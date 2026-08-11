@@ -90,7 +90,6 @@ endif()
 # -----------------------------------------------------------------------------
 
 add_subdirectory(src/renderer/vulkan)
-add_subdirectory(src/framework)
 add_subdirectory(src/apps)
 
 if(CGLAB_BUILD_LEGACY_VULKAN_SAMPLE)

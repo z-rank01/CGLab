@@ -13,12 +13,12 @@
 #include "_interface/camera_system.h"
 #include "control_plane/control_plane_server.h"
 #include "engine/render_backend.h"
-#include "framework/asset_service.h"
-#include "framework/runtime_config.h"
-#include "framework/sample.h"
+#include "engine/asset_service.h"
+#include "engine/runtime_config.h"
+#include "engine/sample.h"
 #include "scene/scene_registry.h"
 
-namespace framework
+namespace engine
 {
 class engine_runtime
 {
@@ -100,4 +100,4 @@ private:
 
     runtime_config config;
 };
-} // namespace framework
+} // namespace engine

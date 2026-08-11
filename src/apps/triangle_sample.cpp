@@ -27,7 +27,7 @@ int main(int argc, char** argv)
 {
     return apps::run_application(argc, argv, "TriangleSample", [](const apps::application_options& options)
     {
-        framework::runtime_config config{
+        engine::runtime_config config{
             .window = {.title = "TriangleSample", .width = 1280, .height = 720},
             .working_directory = CGLAB_SOURCE_DIR,
             .frames_in_flight = 3,

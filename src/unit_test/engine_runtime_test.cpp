@@ -1,4 +1,4 @@
-#include "framework/engine_runtime.h"
+#include "engine/engine_runtime.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -102,22 +102,22 @@ namespace
         int start_calls = 0;
         int request_calls = 0;
         int shutdown_calls = 0;
-        std::vector<framework::completed_asset_request> completed;
+        std::vector<engine::completed_asset_request> completed;
     };
 
-    class fake_asset_service final : public framework::asset_service
+    class fake_asset_service final : public engine::asset_service
     {
     public:
         explicit fake_asset_service(std::shared_ptr<asset_state> state) : state(std::move(state)) {}
 
         void start(std::filesystem::path) override { ++state->start_calls; }
-        engine::result<framework::asset_request_id> request(std::filesystem::path) override
+        engine::result<engine::asset_request_id> request(std::filesystem::path) override
         {
             ++state->request_calls;
             state->completed.push_back({.id = 1, .result = {.value = triangle()}});
             return {.value = 1};
         }
-        std::vector<framework::completed_asset_request> drain_completed() override
+        std::vector<engine::completed_asset_request> drain_completed() override
         {
             return std::exchange(state->completed, {});
         }
@@ -144,11 +144,11 @@ namespace
 int main()
 {
     auto state = std::make_shared<backend_state>();
-    framework::runtime_config config{
+    engine::runtime_config config{
         .window = {.title = "runtime test", .width = 640, .height = 480},
         .working_directory = ".",
     };
-    framework::engine_runtime runtime(
+    engine::engine_runtime runtime(
         config,
         std::make_unique<fake_backend>(state),
         std::make_unique<fake_window>());
@@ -165,7 +165,7 @@ int main()
 
     auto failing_state = std::make_shared<backend_state>();
     failing_state->status = engine::frame_status::failed;
-    framework::engine_runtime failing(
+    engine::engine_runtime failing(
         config,
         std::make_unique<fake_backend>(failing_state),
         std::make_unique<fake_window>());
@@ -175,15 +175,15 @@ int main()
 
     auto boundary_backend_state = std::make_shared<backend_state>();
     auto boundary_asset_state = std::make_shared<asset_state>();
-    framework::engine_runtime boundary_runtime(
+    engine::engine_runtime boundary_runtime(
         config,
         std::make_unique<fake_backend>(boundary_backend_state),
         std::make_unique<fake_window>(),
         std::make_unique<fake_asset_service>(boundary_asset_state));
     bool requested = false;
-    boundary_runtime.configure_sample(framework::sample{
+    boundary_runtime.configure_sample(engine::sample{
         .name = "asset boundary test",
-        .update = [&requested](framework::runtime_services& services, float)
+        .update = [&requested](engine::runtime_services& services, float)
         {
             if (!requested)
             {

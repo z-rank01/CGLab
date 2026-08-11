@@ -9,7 +9,7 @@ CGLab 当前有三个不同层次的渲染接口：
 
 | 边界 | 使用者 | 解决的问题 | 是否暴露 Vulkan |
 |---|---|---|---|
-| `engine::render_backend` | framework runtime | 初始化、geometry 生命周期、单帧提交、resize、统计、关闭 | 否 |
+| `engine::render_backend` | engine runtime | 初始化、geometry 生命周期、单帧提交、resize、统计、关闭 | 否 |
 | `engine::vulkan::render_program` | Vulkan sample | 描述 sample 的 Vulkan 渲染程序扩展点 | 可以；当前字段尚不需要 Vulkan handle |
 | `render_graph` | Vulkan renderer 内部 | pass/resource DAG、状态转换、barrier、transient allocation、帧事务 | core 格式无关，Vulkan lowering 使用 Vulkan |
 
@@ -64,7 +64,7 @@ cglab_vulkan_backend
 | `skipped` | 暂时不可渲染，例如 swapchain 需要恢复 | 保持事件/控制处理，之后重试 |
 | `failed` | 本次运行无法继续 | 结束循环并返回失败退出码 |
 
-这个接口刻意没有暴露通用 GPU resource API。它足以替换 fake backend 做 runtime 单测，也能阻止 Vulkan 向 framework 泄漏。
+这个接口刻意没有暴露通用 GPU resource API。它足以替换 fake backend 做 runtime 单测，也能阻止 Vulkan 向 engine runtime 泄漏。
 
 ## 4. Snapshot 与 Geometry 边界
 
@@ -104,7 +104,7 @@ scene 只保存数值 handle。以下信息全部是 Vulkan renderer 私有状�
 | Geometry store | device-local vertex/index arena、staging batch、opaque handle map、延迟回收 |
 | Render Graph bridge | graph 构建、imported resource binding、Vulkan lowering、frame commit/abort |
 
-这些实现位于 `src/renderer/vulkan/` 下的 context、swapchain、frame、geometry 和 graph 源文件中。目标边界已经稳定，后续可以继续收敛组件类和 RAII 所有权，而不改变 framework API。
+这些实现位于 `src/renderer/vulkan/` 下的 context、swapchain、frame、geometry 和 graph 源文件中。目标边界已经稳定，后续可以继续收敛组件类和 RAII 所有权，而不改变 engine runtime API。
 
 ## 6. 当前 Render Graph
 
@@ -181,11 +181,11 @@ Vulkan renderer 的帧事务为：
 - 至少两个复杂 sample 证明当前 Vulkan program 接口产生了重复的资源/管线管理代码；
 - 自动测试能定义跨 backend 的行为契约，而不是只比较类型名称。
 
-届时应先评估现有 `render_backend` 是否继续作为上层 façade，再在 renderer 下方引入资源级 RHI；不应直接让 RHI 类型进入 scene、camera 或 framework。
+届时应先评估现有 `render_backend` 是否继续作为上层 façade，再在 renderer 下方引入资源级 RHI；不应直接让 RHI 类型进入 scene、camera 或 engine runtime。
 
 ## 10. 测试与验收
 
-- `cglab.public_headers`：公共 engine/framework 头不得传递包含 Vulkan、SDL、tinygltf。
+- `cglab.public_headers`：公共 engine 头不得传递包含 Vulkan、SDL、tinygltf。
 - `cglab.engine_runtime`：fake window/backend/asset service 验证生命周期、snapshot 和帧边界合并。
 - `cglab.asset_gltf` / `cglab.asset_service`：DTO 转换、异步结果与失败路径。
 - Render Graph CTest：DAG、barrier、resource lifetime、frame transaction、Vulkan lowering 和 sample graph。

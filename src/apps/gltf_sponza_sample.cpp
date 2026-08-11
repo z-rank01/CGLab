@@ -37,7 +37,7 @@ int main(int argc, char** argv)
                 };
             }
 
-            framework::runtime_config config{
+            engine::runtime_config config{
                 .window            = {.title = "GltfSponzaSample", .width = 1280, .height = 720},
                 .working_directory = CGLAB_SOURCE_DIR,
                 .frames_in_flight  = 3,

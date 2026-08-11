@@ -1,7 +1,7 @@
 # GltfSponzaSample 交互界面与交互能力设计案（v2）
 
 > v2（2026-08）：P0–P2 已落地（`0a42ec44` 控制平面 / `9ce28037` 相机与输入 / `2a466de1` 场景系统）。
-> 本版按 `Architecture.md` v2 的四层模型**重排路线图**：引擎框架层抽取（I0）先于正式 Web UI。
+> 本版按 `Architecture.md` v2 的四层模型**重排路线图**：engine runtime 抽取（I0）先于正式 Web UI。
 > v1 的方案搜罗（§3 选型分析）、协议与线程模型（§4）、单窗口路线（§4.5/4.6）、健壮性清单（§6）
 > 结论全部沿用且已被实现验证，本文不再重复论证，只保留结论与偏差记录。
 
@@ -32,7 +32,7 @@
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **I0 框架层抽取（已完成）** | `cglab_framework_runtime` 持有窗口/帧循环/camera/scene/control/asset service；GltfSponzaSample 与 TriangleSample 共享 runtime | TriangleSample 应用文件 100 行以内；runtime 可注入 fake window/backend/asset service 做 CTest |
+| **I0 Engine runtime 抽取（已完成）** | `cglab_engine_runtime` 持有窗口/帧循环/camera/scene/control/asset service；GltfSponzaSample 与 TriangleSample 共享 runtime | TriangleSample 应用文件 100 行以内；runtime 可注入 fake window/backend/asset service 做 CTest |
 | **I1 协议收尾 + UI 托管** | 协议文档化（methods/telemetry 的 JSON Schema 固化进 `docs/`）；控制平面加 HTTP 静态文件服务，`--ui-open-browser` 真正生效 | 启动引擎即开浏览器可用 dev console；协议文档与实现对齐有测试 |
 | **I2 正式 Web UI v1** | `ui/`（Vite+React+TS）：dock 布局（dockview）、场景树/检视器/相机/帧控制/资产加载/console 面板，布局 localStorage 持久化 | 浏览器打开即完整覆盖 dev console 全部能力；UI 关掉引擎无恙 |
 | **I3 RG 可视化** | `debug_dump()` JSON 化（passes/resources/edges）经控制平面下发；React Flow DAG；pass timestamp 时序瀑布 | recompile 后图自动更新；能定位最慢 pass |
@@ -41,7 +41,7 @@
 
 依赖关系：I0 已完成；I1 可直接开始。I2 依赖 I1；I3 依赖 I2；I4 依赖 I2；I5 依赖 I4 选型结论。
 
-**与原 v1 排序的差异**：原 P3（Web UI）前插入 I0/I1。原因——Architecture v2 确认 app_sample god object 是复用的最大瓶颈，且正式 UI 的所有面板都应挂在框架层 API 上而不是 app_sample 的私有结构上；dev console 已够日常调试，UI 正式化不再是最高优先。
+**与原 v1 排序的差异**：原 P3（Web UI）前插入 I0/I1。原因——Architecture v2 确认 app_sample god object 是复用的最大瓶颈，且正式 UI 的所有面板都应挂在 engine runtime API 上而不是 app_sample 的私有结构上；dev console 已够日常调试，UI 正式化不再是最高优先。
 
 ## 4. 沿用不变的 v1 设计结论（速查）
 

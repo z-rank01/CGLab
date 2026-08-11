@@ -92,7 +92,7 @@ Render Graph、digital-content-loader 的额外 samples 和测试由根 CMake �
 
 ## 架构文档
 
-Render Graph 迁移边界见 [GltfSponzaSample Render Graph 迁移说明](docs/GltfSponzaSampleRenderGraphMigration.md)。整体模块划分见 [Architecture](docs/Architecture.md) 和 [Application Framework](docs/ApplicationFramework.md)。
+Render Graph 迁移边界见 [GltfSponzaSample Render Graph 迁移说明](docs/GltfSponzaSampleRenderGraphMigration.md)。整体模块划分见 [Architecture](docs/Architecture.md) 和 [Application Runtime](docs/ApplicationRuntime.md)。
 
 ## CGLab
 

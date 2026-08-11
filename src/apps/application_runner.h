@@ -9,15 +9,15 @@
 
 #include "apps/application_options.h"
 #include "engine/render_backend.h"
-#include "framework/runtime_config.h"
-#include "framework/sample.h"
+#include "engine/runtime_config.h"
+#include "engine/sample.h"
 
 namespace apps
 {
     struct application_run_request
     {
-        framework::runtime_config runtime;
-        framework::sample sample;
+        engine::runtime_config runtime;
+        engine::sample sample;
         std::unique_ptr<engine::render_backend> renderer;
         std::optional<std::uint64_t> frame_limit;
         bool require_validation_clean = false;

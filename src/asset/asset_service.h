@@ -9,14 +9,14 @@
 #include <thread>
 #include <vector>
 
-#include "framework/asset_service.h"
+#include "engine/asset_service.h"
 
 namespace asset
 {
-    using request_id = framework::asset_request_id;
-    using completed_request = framework::completed_asset_request;
+    using request_id = engine::asset_request_id;
+    using completed_request = engine::completed_asset_request;
 
-    class asset_service final : public framework::asset_service
+    class asset_service final : public engine::asset_service
     {
     public:
         asset_service() = default;

@@ -5,7 +5,7 @@
 
 #include "_interface/window.h"
 
-namespace framework
+namespace engine
 {
     struct control_config
     {
@@ -22,4 +22,4 @@ namespace framework
         bool validation = false;
         control_config control_plane{};
     };
-} // namespace framework
+} // namespace engine

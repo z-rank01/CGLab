@@ -12,7 +12,7 @@ target_include_directories(cglab_application_runner
 
 target_link_libraries(cglab_application_runner
     PUBLIC
-        cglab_framework_runtime
+        cglab_engine_runtime
     PRIVATE
         utility
 )

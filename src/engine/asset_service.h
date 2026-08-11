@@ -6,7 +6,7 @@
 
 #include "engine/render_backend.h"
 
-namespace framework
+namespace engine
 {
     using asset_request_id = std::uint64_t;
 
@@ -25,4 +25,4 @@ namespace framework
         [[nodiscard]] virtual std::vector<completed_asset_request> drain_completed() = 0;
         virtual void shutdown() noexcept = 0;
     };
-} // namespace framework
+} // namespace engine

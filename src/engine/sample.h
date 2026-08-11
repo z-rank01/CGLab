@@ -7,10 +7,10 @@
 #include <string_view>
 
 #include "_interface/camera_component.h"
-#include "framework/asset_service.h"
+#include "engine/asset_service.h"
 #include "scene/scene_registry.h"
 
-namespace framework
+namespace engine
 {
     struct runtime_services
     {
@@ -28,4 +28,4 @@ namespace framework
         std::optional<std::filesystem::path> required_startup_asset;
         std::function<void(runtime_services&, float)> update;
     };
-} // namespace framework
+} // namespace engine

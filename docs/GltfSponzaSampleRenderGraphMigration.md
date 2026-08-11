@@ -2,7 +2,7 @@
 
 ## 所有权边界
 
-`cglab_vulkan_backend` 拥有 Vulkan instance/device/surface、swapchain acquire、queue submit、present、pipeline、shader、descriptor 与 geometry arena。`cglab_framework_runtime` 拥有窗口、camera、scene、控制平面和 asset service，并通过 Vulkan-free `render_snapshot` 提交只读 camera 矩阵和 geometry handles。Render Graph 接管帧内 logical resources、views、attachments、pass 录制边界、barrier、transient allocation、帧事务与 submission plan。
+`cglab_vulkan_backend` 拥有 Vulkan instance/device/surface、swapchain acquire、queue submit、present、pipeline、shader、descriptor 与 geometry arena。`cglab_engine_runtime` 拥有窗口、camera、scene、控制平面和 asset service，并通过 Vulkan-free `render_snapshot` 提交只读 camera 矩阵和 geometry handles。Render Graph 接管帧内 logical resources、views、attachments、pass 录制边界、barrier、transient allocation、帧事务与 submission plan。
 
 帧内不再创建固定 `VkRenderPass`/`VkFramebuffer`，不再手写 `vkCmdPipelineBarrier*`，也不再由 sample 单独管理 transient depth image。graphics pipeline 通过 `VkPipelineRenderingCreateInfo` 声明 attachment formats。
 

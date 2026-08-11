@@ -1,4 +1,4 @@
-# 应用层分离与多 App 框架
+# 应用层分离与共享 Engine Runtime
 
 > 状态：as-built，2026-08。
 > 这里的“多 App”指仓库可以构建多个独立 executable，并复用同一套 runtime/renderer；不表示同一进程中热切换 App。
@@ -15,7 +15,7 @@ CGLab 的 sample 用于隔离不同图形实验。新增一个 sample 时，应�
 - 可选的每帧应用更新；
 - 未来的专属 UI hook。
 
-共享框架负责：
+共享 engine runtime 负责：
 
 - CLI 解析、退出码、validation/smoke contract；
 - SDL 窗口和事件泵；
@@ -30,15 +30,15 @@ CGLab 的 sample 用于隔离不同图形实验。新增一个 sample 时，应�
 ```text
 App executable
   ├─ setup(options) -> application_run_request
-  │                    ├─ framework::runtime_config
-  │                    ├─ framework::sample
+  │                    ├─ engine::runtime_config
+  │                    ├─ engine::sample
   │                    └─ unique_ptr<engine::render_backend>
   │
   └─ apps::run_application(...)
-          └─ framework::engine_runtime
+          └─ engine::engine_runtime
                  ├─ interface::window          (默认 SDL3)
                  ├─ scene/camera/input
-                 ├─ framework::asset_service  (默认 glTF worker)
+                 ├─ engine::asset_service     (默认 glTF worker)
                  ├─ control_plane
                  └─ engine::render_backend    (当前 Vulkan)
 ```
@@ -51,19 +51,19 @@ App executable
 | `cglab_platform_sdl` | SDL 窗口实现与事件转换 | engine core、SDL3 |
 | `cglab_asset_gltf` | glTF/GLB adapter | engine core；DCL 为私有实现依赖 |
 | `cglab_asset_runtime` | 异步 asset service 和格式分发 | cglab_asset_gltf |
-| `cglab_framework_runtime` | 通用生命周期、帧 phase 和服务所有权 | engine core；platform/asset/control 为实现依赖 |
+| `cglab_engine_runtime` | 通用生命周期、帧 phase 和服务所有权 | engine core；platform/asset/control 为实现依赖 |
 | `cglab_vulkan_backend` | Vulkan device/swapchain、geometry arena、Render Graph 执行 | engine core；Vulkan/Render Graph 为实现依赖 |
-| `cglab_application_runner` | CLI、组装、退出码与 smoke 检查 | framework runtime |
+| `cglab_application_runner` | CLI、组装、退出码与 smoke 检查 | engine runtime |
 
 应用 executable 通常只链接 `cglab_application_runner` 和 `cglab_vulkan_backend`。
 
 ## 3. 公共组合接口
 
-### `framework::runtime_config`
+### `engine::runtime_config`
 
 包含窗口、工作目录、frames-in-flight、validation 和控制平面策略。它不包含 Vulkan instance/device/swapchain 配置。
 
-### `framework::sample`
+### `engine::sample`
 
 `sample` 是浅数据结构，不建立 sample 类继承树：
 
@@ -72,7 +72,7 @@ App executable
 - `required_startup_asset`：进入帧循环前必须完成的资产；
 - `update`：可选的应用更新函数。
 
-### `framework::runtime_services`
+### `engine::runtime_services`
 
 `update` 通过受控服务访问 scene、camera、异步资产请求和应用消息。它不会暴露 renderer、Vulkan handle、geometry arena 或 Render Graph 内部对象。
 
@@ -144,8 +144,8 @@ renderer 的 GPU idle 和资源销毁属于 backend 的 `shutdown()` 实现，�
 ```cpp
 return apps::run_application(argc, argv, "MySample", [](const apps::application_options& options)
 {
-    framework::runtime_config runtime{/* neutral runtime settings */};
-    framework::sample sample{.name = "MySample", .startup_geometry = make_scene()};
+    engine::runtime_config runtime{/* neutral runtime settings */};
+    engine::sample sample{.name = "MySample", .startup_geometry = make_scene()};
     engine::vulkan::render_program program{.pass_name = "MyPass"};
     return apps::application_setup_result{.request = apps::application_run_request{
         .runtime = std::move(runtime),
@@ -162,10 +162,10 @@ return apps::run_application(argc, argv, "MySample", [](const apps::application_
 ## 8. 边界规则
 
 - 应用中不得出现窗口循环、control server 或 loader thread。
-- framework/engine 公共头不得 include Vulkan、SDL 或 DCL/glTF 头。
+- engine 公共头不得 include Vulkan、SDL 或 DCL/glTF 头。
 - runtime 不知道具体 renderer 类型，只依赖 `engine::render_backend`。
 - renderer 不保存可变 scene/camera 指针，只消费单次调用有效的 snapshot。
-- sample 可以选择 Vulkan render program，但 Vulkan 类型不得进入 `framework::sample`。
+- sample 可以选择 Vulkan render program，但 Vulkan 类型不得进入 `engine::sample`。
 - 不为 sample 建立深继承树；优先使用值类型配置和函数组合。
 
 ## 9. 当前限制与演进点

@@ -1,4 +1,4 @@
-#include "framework/engine_runtime.h"
+#include "engine/engine_runtime.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -15,7 +15,7 @@ namespace
     constexpr float telemetry_interval_seconds = 0.1F;
 } // namespace
 
-namespace framework
+namespace engine
 {
 engine_runtime::engine_runtime(runtime_config runtime_config,
                                std::unique_ptr<engine::render_backend> render_backend,
@@ -740,4 +740,4 @@ void engine_runtime::configure_sample(sample definition)
         sample_definition.required_startup_asset.reset();
     }
 }
-} // namespace framework
+} // namespace engine

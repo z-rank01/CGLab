@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "framework/engine_runtime.h"
+#include "engine/engine_runtime.h"
 #include "utility/logger.h"
 
 namespace apps
@@ -18,7 +18,7 @@ namespace apps
     {
         try
         {
-            framework::engine_runtime runtime(std::move(request.runtime), std::move(request.renderer));
+            engine::engine_runtime runtime(std::move(request.runtime), std::move(request.renderer));
             runtime.configure_sample(std::move(request.sample));
             runtime.initialize();
             const bool succeeded = runtime.tick(request.frame_limit);
