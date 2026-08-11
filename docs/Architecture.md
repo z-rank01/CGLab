@@ -62,7 +62,9 @@ acquire -> realize_resources -> record_batches -> submit -> present -> collect_r
 
 Dynamic Rendering 保留，attachment format 进入 pipeline key。Triangle 与 glTF 分别拥有自己的 recipe；glTF recipe 按 opaque/mask、single/double-sided、blend 分组，透明行按相机距离排序，以 indexed indirect 批量录制。RG backend 不知道 shader 路径或 glTF/PBR 语义。稳定场景不会逐帧分配 descriptor，也不会因上传行数变化重新编译 graph。
 
-RG 的公共头唯一真源位于子仓库 `include/render_graph/`。`render_graph::core` 与
+RG 的公共头唯一真源位于子仓库 `include/render_graph/`；该目录只包含稳定、可安装的 API 和
+compiled-plan rows。graph/compiler 的 `compiler_state`、DAG 与 free-function phases 位于 `src/core/`，
+`render_graph::core` 是实际编译库而非 header-only target。`render_graph::core` 与
 `render_graph::vulkan` 使用 BUILD/INSTALL interface，可通过安装后的 CMake package 在源码树外消费；库内诊断
 只返回结构化结果或写入宿主提供的 diagnostic sink，不直接写宿主日志。
 
