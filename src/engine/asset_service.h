@@ -13,7 +13,7 @@ namespace engine
     struct completed_asset_request
     {
         asset_request_id id = 0;
-        engine::result<engine::geometry_asset> result;
+        engine::result<engine::asset_database> result;
     };
 
     class asset_service

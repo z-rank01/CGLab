@@ -87,15 +87,21 @@ bool vulkan_backend::create_pipeline()
     desc.color_formats = {runtime->swapchain_images().format};
     desc.depth_format = VK_FORMAT_D32_SFLOAT;
     desc.push_constants = {VkPushConstantRange{
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
         .offset = 0,
         .size = sizeof(object_push_constants),
     }};
-    const auto created = runtime->create_graphics_pipeline(desc, graphics_pipeline);
-    if (!created)
+    for (std::uint32_t group = 0; group < graphics_pipelines.size(); group++)
     {
-        Logger::LogError("Failed to create RG graphics pipeline: " + created.error);
-        return false;
+        desc.raster.cull_mode = (group & 1u) != 0 ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+        desc.raster.blend = group >= 2;
+        desc.raster.depth_write = group < 2;
+        const auto created = runtime->create_graphics_pipeline(desc, graphics_pipelines[group]);
+        if (!created)
+        {
+            Logger::LogError("Failed to create RG graphics pipeline: " + created.error);
+            return false;
+        }
     }
     return true;
 }

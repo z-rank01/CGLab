@@ -57,6 +57,8 @@ namespace scene
         aabb local_bounds{};
         std::vector<draw_range> draws; // 启动资产为空（走 legacy buffer）
         engine::geometry_handle render_geometry = engine::invalid_geometry_handle;
+        glm::mat4 matrix{1.0F};
+        bool use_matrix = false;
     };
 
     struct ray
@@ -80,6 +82,11 @@ namespace scene
         model           = glm::rotate(model, glm::radians(transform.rotation_deg.z), glm::vec3(0.0F, 0.0F, 1.0F));
         model           = glm::scale(model, transform.scale);
         return model;
+    }
+
+    [[nodiscard]] inline glm::mat4 model_matrix(const scene_object& object)
+    {
+        return object.use_matrix ? object.matrix : model_matrix(object.transform);
     }
 
     // 用 8 角点变换求世界空间 AABB
@@ -134,6 +141,16 @@ namespace scene
             return slots[slot].id;
         }
 
+        object_id register_matrix_object(std::string name, const aabb& local_bounds, const glm::mat4& matrix,
+                                         bool read_only, engine::geometry_handle geometry)
+        {
+            const object_id id = register_object(std::move(name), local_bounds, {}, read_only, geometry);
+            scene_object* object = find_mutable(id);
+            object->matrix = matrix;
+            object->use_matrix = true;
+            return id;
+        }
+
         // 卸载对象。不存在或 read_only 返回 false。卸载选中对象时清除选择。
         bool unload(object_id id)
         {
@@ -178,6 +195,7 @@ namespace scene
                 return false;
             }
             object->transform = transform;
+            object->use_matrix = false;
             bump();
             return true;
         }
@@ -247,7 +265,7 @@ namespace scene
                     continue;
                 }
                 const scene_object& object  = slots[slot];
-                const glm::mat4 inverse     = glm::inverse(model_matrix(object.transform));
+                const glm::mat4 inverse     = glm::inverse(model_matrix(object));
                 const glm::vec3 local_origin = glm::vec3(inverse * glm::vec4(world_ray.origin, 1.0F));
                 const glm::vec3 local_dir    = glm::vec3(inverse * glm::vec4(world_ray.direction, 0.0F));
 
@@ -257,7 +275,7 @@ namespace scene
                     continue;
                 }
                 // 命中距离换算回世界空间近似：用世界射线参数化距离
-                const glm::vec3 world_hit    = glm::vec3(model_matrix(object.transform) *
+                const glm::vec3 world_hit    = glm::vec3(model_matrix(object) *
                                                          glm::vec4(local_origin + local_dir * hit_t, 1.0F));
                 const float world_distance   = glm::dot(world_hit - world_ray.origin, world_ray.direction);
                 if (world_distance >= 0.0F && world_distance < best_distance)

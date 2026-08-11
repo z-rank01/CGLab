@@ -49,7 +49,7 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
         .lifetime = render_graph::resource_lifetime_class::imported,
     };
     const render_graph::buffer_desc transform_desc{
-        .size = sizeof(glm::mat4) * 65536,
+        .size = sizeof(gpu_transform_row) * 65536,
         .usage = render_graph::buffer_usage::STORAGE_BUFFER,
         .memory = render_graph::memory_domain::upload,
         .mapping = render_graph::mapping_policy::persistent,
@@ -59,6 +59,14 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
     const render_graph::buffer_desc indirect_desc{
         .size = sizeof(VkDrawIndexedIndirectCommand) * 65536,
         .usage = render_graph::buffer_usage::INDIRECT_BUFFER,
+        .memory = render_graph::memory_domain::upload,
+        .mapping = render_graph::mapping_policy::persistent,
+        .aliasing = render_graph::aliasing_policy::forbidden,
+        .lifetime = render_graph::resource_lifetime_class::imported,
+    };
+    const render_graph::buffer_desc material_desc{
+        .size = sizeof(gpu_material_row) * 4096,
+        .usage = render_graph::buffer_usage::STORAGE_BUFFER,
         .memory = render_graph::memory_domain::upload,
         .mapping = render_graph::mapping_policy::persistent,
         .aliasing = render_graph::aliasing_policy::forbidden,
@@ -115,7 +123,7 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
     };
 
     frame_graph->add_raster_pass(render_program.pass_name,
-                                 [this, uniform_desc, transform_desc, indirect_desc, swapchain_desc, depth_desc, extent, swapchain_initialized](setup_context& ctx)
+                                 [this, uniform_desc, transform_desc, indirect_desc, material_desc, swapchain_desc, depth_desc, extent, swapchain_initialized](setup_context& ctx)
     {
         const render_graph::buffer_access_desc mesh_read{
             .usage = render_graph::buffer_usage::VERTEX_BUFFER | render_graph::buffer_usage::INDEX_BUFFER,
@@ -149,6 +157,11 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
         ctx.set_initial_state(rg_indirect, indirect_read, render_graph::access_type::read,
                               render_graph::contents_policy::preserve);
         ctx.read_buffer(rg_indirect, indirect_read);
+
+        rg_materials = ctx.import_buffer("MaterialTable", material_desc);
+        ctx.set_initial_state(rg_materials, transform_read, render_graph::access_type::read,
+                              render_graph::contents_policy::preserve);
+        ctx.read_buffer(rg_materials, transform_read);
 
         rg_swapchain = ctx.import_image("Swapchain", swapchain_desc);
         const render_graph::image_access_desc present{
@@ -185,18 +198,7 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
     {
         ++run_statistics.draw_pass_executions;
         const VkCommandBuffer commands = ctx.commands();
-        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          runtime->pipeline(graphics_pipeline));
-
         const VkDescriptorSet descriptor_set = runtime->bindless_set();
-        vkCmdBindDescriptorSets(commands,
-                                VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                runtime->pipeline_layout(graphics_pipeline),
-                                0,
-                                1,
-                                &descriptor_set,
-                                0,
-                                nullptr);
 
         const VkViewport viewport{
             .x = 0.0F,
@@ -218,19 +220,26 @@ bool vulkan_backend::build_render_graph(uint32_t image_index)
         const object_push_constants push{
             .frame_uniform_slot = frame_uniform_slots[frame_index].index,
             .transform_buffer_slot = transform_buffer_slot.index,
+            .material_buffer_slot = material_buffer_slot.index,
         };
-        vkCmdPushConstants(commands,
-                           runtime->pipeline_layout(graphics_pipeline),
-                           VK_SHADER_STAGE_VERTEX_BIT,
-                           0,
-                           sizeof(push),
-                           &push);
-        vkCmdDrawIndexedIndirect(commands,
-                                 ctx.resources.buffer(rg_indirect),
-                                 0,
-                                 indirect_draw_count,
-                                 sizeof(VkDrawIndexedIndirectCommand));
-        ++run_statistics.indirect_groups;
+        for (std::uint32_t group = 0; group < graphics_pipelines.size(); group++)
+        {
+            if (indirect_group_counts[group] == 0) continue;
+            const auto pipeline = graphics_pipelines[group];
+            const VkPipelineLayout layout = runtime->pipeline_layout(pipeline);
+            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, runtime->pipeline(pipeline));
+            vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1,
+                                    &descriptor_set, 0, nullptr);
+            vkCmdPushConstants(commands, layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(push), &push);
+            vkCmdDrawIndexedIndirect(commands,
+                                     ctx.resources.buffer(rg_indirect),
+                                     sizeof(VkDrawIndexedIndirectCommand) * indirect_group_offsets[group],
+                                     indirect_group_counts[group],
+                                     sizeof(VkDrawIndexedIndirectCommand));
+            ++run_statistics.indirect_groups;
+        }
     });
 
     const auto result = frame_graph->compile();
@@ -254,6 +263,7 @@ bool vulkan_backend::record_command(uint32_t image_index, VkCommandBuffer comman
         frame_graph->bind_imported_buffer(rg_uniform, uniform_buffer);
         frame_graph->bind_imported_buffer(rg_transforms, transform_buffer);
         frame_graph->bind_imported_buffer(rg_indirect, indirect_buffer);
+        frame_graph->bind_imported_buffer(rg_materials, material_buffer);
         frame_graph->bind_imported_image(rg_swapchain,
                                          runtime->swapchain_images().rows[image_index].image);
         const auto result = frame_graph->execute(command_buffer);

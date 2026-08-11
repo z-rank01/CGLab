@@ -68,6 +68,7 @@ private:
     // 启动资产（legacy buffer）登记的只读条目；unload 时用于查 arena 回收区间
     std::vector<std::optional<engine::geometry_handle>> runtime_geometry_slots;
     std::optional<engine::geometry_asset> initial_geometry;
+    std::optional<engine::asset_database> initial_asset;
     std::optional<std::filesystem::path> required_startup_asset;
     std::vector<engine::render_object> render_objects;
     std::uint64_t frame_serial = 0;
@@ -83,6 +84,7 @@ private:
     };
     std::unique_ptr<asset_service> asset_loader;
     std::unordered_map<asset_request_id, pending_load> pending_loads;
+    std::unordered_map<engine::geometry_handle, std::uint32_t> geometry_ref_counts;
 
     void handle_control_plane_commands();
     void handle_scene_command(const control_plane::engine_command& command);
@@ -94,6 +96,7 @@ private:
     // 异步加载管线
     void enqueue_load(std::string path, std::string client_id, nlohmann::json rpc_id);
     void drain_completed_loads();
+    [[nodiscard]] std::vector<scene::object_id> merge_asset_database(engine::asset_database asset, bool read_only);
 
     // fly 模式左键拾取：窗口坐标 → 相机射线 → registry pick
     void try_pick_object(float x, float y);

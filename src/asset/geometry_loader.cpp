@@ -8,7 +8,7 @@
 
 namespace asset
 {
-    engine::result<engine::geometry_asset> load_geometry(const std::filesystem::path& path)
+    engine::result<engine::asset_database> load_geometry(const std::filesystem::path& path)
     {
         std::string extension = path.extension().string();
         std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character)
@@ -21,7 +21,7 @@ namespace asset
             return load_gltf(path);
         }
 
-        engine::result<engine::geometry_asset> result;
+        engine::result<engine::asset_database> result;
         result.error = "Unsupported geometry asset format: " +
                        (extension.empty() ? std::string("<none>") : extension);
         return result;

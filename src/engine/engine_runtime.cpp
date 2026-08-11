@@ -89,7 +89,7 @@ void engine_runtime::initialize()
                 {
                     throw std::runtime_error("Failed to load startup asset: " + completed.front().result.error);
                 }
-                initial_geometry = std::move(completed.front().result.value);
+                initial_asset = std::move(completed.front().result.value);
                 break;
             }
             std::this_thread::yield();
@@ -129,6 +129,12 @@ void engine_runtime::initialize()
         }
         runtime_geometry_slots[id] = uploaded.value;
         initial_geometry.reset();
+    }
+    if (initial_asset)
+    {
+        const auto ids = merge_asset_database(std::move(*initial_asset), true);
+        if (ids.empty()) throw std::runtime_error("Startup asset contains no mesh instances");
+        initial_asset.reset();
     }
 
     input_events.reserve(32);
@@ -174,39 +180,92 @@ void engine_runtime::drain_completed_loads()
             continue;
         }
 
-        engine::geometry_asset& loaded_asset = completed.result.value;
-        const auto uploaded = renderer->upload_geometry(loaded_asset);
-        if (!uploaded)
-        {
-            if (control_plane && response.respond)
-            {
-                control_plane->post_response(response.client_id,
-                                             control_plane::make_error(response.rpc_id, -32000,
-                                                                       "scene.load_asset failed: " + uploaded.error));
-            }
-            continue;
-        }
-
-        const scene::aabb bounds{loaded_asset.bounds_min, loaded_asset.bounds_max};
-        const scene::object_id id = scene_registry.register_object(loaded_asset.name, bounds, {}, false, uploaded.value);
-        if (runtime_geometry_slots.size() <= id)
-        {
-            runtime_geometry_slots.resize(id + 1);
-        }
-        runtime_geometry_slots[id] = uploaded.value;
-        Logger::LogInfo("Loaded runtime asset \"" + loaded_asset.name + "\" as scene object " + std::to_string(id));
+        const std::string asset_name = completed.result.value.name;
+        const std::size_t primitive_count = completed.result.value.primitives.size();
+        const auto ids = merge_asset_database(std::move(completed.result.value), false);
+        if (ids.empty()) continue;
+        Logger::LogInfo("Loaded runtime asset \"" + asset_name + "\" with " + std::to_string(ids.size()) + " mesh instance(s)");
         if (control_plane && response.respond)
         {
             control_plane->post_response(response.client_id,
                                          control_plane::make_result(response.rpc_id,
-                                                                    {{"id", id},
-                                                                     {"name", loaded_asset.name},
-                                                                     {"primitives", loaded_asset.primitives.size()},
-                                                                     {"bounds",
-                                                                      {{"min", {bounds.min.x, bounds.min.y, bounds.min.z}},
-                                                                       {"max", {bounds.max.x, bounds.max.y, bounds.max.z}}}}}));
+                                                                    {{"id", ids.front()},
+                                                                     {"instances", ids},
+                                                                     {"name", asset_name},
+                                                                     {"primitives", primitive_count}}));
         }
     }
+}
+
+std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset_database asset, bool read_only)
+{
+    const auto uploaded_materials = renderer->upload_materials(asset);
+    if (!uploaded_materials)
+    {
+        Logger::LogError("Failed to upload glTF materials: " + uploaded_materials.error);
+        return {};
+    }
+    const std::uint32_t material_base = uploaded_materials.value;
+    std::vector<engine::geometry_handle> mesh_handles(asset.meshes.size(), engine::invalid_geometry_handle);
+    for (std::uint32_t mesh_index = 0; mesh_index < asset.meshes.size(); mesh_index++)
+    {
+        const auto& mesh = asset.meshes[mesh_index];
+        engine::geometry_asset geometry{.name = mesh.name, .bounds_min = mesh.bounds_min, .bounds_max = mesh.bounds_max};
+        geometry.primitives.reserve(mesh.primitive_count);
+        for (std::uint32_t row = 0; row < mesh.primitive_count; row++)
+        {
+            const auto& primitive = asset.primitives[mesh.first_primitive + row];
+            engine::geometry_primitive output{.material_index = material_base + primitive.material};
+            output.vertices.assign(asset.vertex_blob.begin() + primitive.vertex_offset,
+                                   asset.vertex_blob.begin() + primitive.vertex_offset + primitive.vertex_count);
+            output.indices.assign(asset.index_blob.begin() + primitive.index_offset,
+                                  asset.index_blob.begin() + primitive.index_offset + primitive.index_count);
+            geometry.primitives.push_back(std::move(output));
+        }
+        const auto uploaded = renderer->upload_geometry(geometry);
+        if (!uploaded)
+        {
+            Logger::LogError("Failed to upload glTF mesh: " + uploaded.error);
+            for (const auto handle : mesh_handles)
+                if (handle != engine::invalid_geometry_handle) renderer->retire_geometry(handle);
+            return {};
+        }
+        mesh_handles[mesh_index] = uploaded.value;
+    }
+
+    std::vector<glm::mat4> world(asset.nodes.size(), glm::mat4(1.0F));
+    std::vector<std::uint8_t> resolved(asset.nodes.size(), 0);
+    const auto resolve = [&](auto&& self, std::uint32_t index) -> glm::mat4
+    {
+        if (resolved[index] == 2) return world[index];
+        if (resolved[index] == 1) throw std::runtime_error("glTF node hierarchy contains a cycle");
+        resolved[index] = 1;
+        const auto parent = asset.nodes[index].parent;
+        world[index] = parent == engine::invalid_asset_index
+                           ? asset.nodes[index].local_transform
+                           : self(self, parent) * asset.nodes[index].local_transform;
+        resolved[index] = 2;
+        return world[index];
+    };
+    std::vector<scene::object_id> ids;
+    for (std::uint32_t node_index = 0; node_index < asset.nodes.size(); node_index++)
+    {
+        const auto& node = asset.nodes[node_index];
+        (void)resolve(resolve, node_index);
+        if (node.mesh == engine::invalid_asset_index || node.mesh >= asset.meshes.size()) continue;
+        const auto handle = mesh_handles[node.mesh];
+        const auto& mesh = asset.meshes[node.mesh];
+        const auto id = scene_registry.register_matrix_object(node.name.empty() ? mesh.name : node.name,
+                                                               {mesh.bounds_min, mesh.bounds_max}, world[node_index],
+                                                               read_only, handle);
+        if (runtime_geometry_slots.size() <= id) runtime_geometry_slots.resize(id + 1);
+        runtime_geometry_slots[id] = handle;
+        geometry_ref_counts[handle]++;
+        ids.push_back(id);
+    }
+    for (const auto handle : mesh_handles)
+        if (handle != engine::invalid_geometry_handle && !geometry_ref_counts.contains(handle)) renderer->retire_geometry(handle);
+    return ids;
 }
 
 // --- P2 场景命令 ---
@@ -246,7 +305,13 @@ void engine_runtime::handle_scene_command(const control_plane::engine_command& c
         }
         if (id < runtime_geometry_slots.size() && runtime_geometry_slots[id].has_value())
         {
-            renderer->retire_geometry(*runtime_geometry_slots[id]);
+            const auto handle = *runtime_geometry_slots[id];
+            auto references = geometry_ref_counts.find(handle);
+            if (references == geometry_ref_counts.end() || --references->second == 0)
+            {
+                renderer->retire_geometry(handle);
+                if (references != geometry_ref_counts.end()) geometry_ref_counts.erase(references);
+            }
             runtime_geometry_slots[id].reset();
         }
         control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"unloaded", true}, {"id", id}}));
@@ -642,7 +707,7 @@ bool engine_runtime::tick(std::optional<std::uint64_t> frame_limit)
             {
                 render_objects.push_back(engine::render_object{
                     .geometry = object->render_geometry,
-                    .model = scene::model_matrix(object->transform),
+                    .model = scene::model_matrix(*object),
                 });
             }
         }

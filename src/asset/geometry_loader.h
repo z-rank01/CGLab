@@ -7,5 +7,5 @@
 
 namespace asset
 {
-    [[nodiscard]] engine::result<engine::geometry_asset> load_geometry(const std::filesystem::path& path);
+    [[nodiscard]] engine::result<engine::asset_database> load_geometry(const std::filesystem::path& path);
 }

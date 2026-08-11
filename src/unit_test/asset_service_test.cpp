@@ -44,7 +44,8 @@ int main()
     const auto failed = wait_for(service, missing.value);
     service.shutdown();
     service.shutdown();
-    if (!loaded.result || failed.result || loaded.result.value.primitives.size() != 1)
+    if (!loaded.result || failed.result || loaded.result.value.primitives.size() != 1 ||
+        loaded.result.value.nodes.size() != 1)
     {
         std::cerr << "Unexpected asset service result\n";
         return EXIT_FAILURE;

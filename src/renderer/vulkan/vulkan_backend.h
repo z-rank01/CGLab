@@ -1,6 +1,7 @@
 #pragma once
 
 #include <deque>
+#include <array>
 #include <map>
 #include <utility>
 #include <glm/glm.hpp>
@@ -39,6 +40,25 @@ struct object_push_constants
 {
     std::uint32_t frame_uniform_slot = 0;
     std::uint32_t transform_buffer_slot = 0;
+    std::uint32_t material_buffer_slot = 0;
+};
+
+struct alignas(16) gpu_transform_row
+{
+    glm::mat4 model{1.0F};
+    glm::uvec4 metadata{};
+};
+
+struct alignas(16) gpu_material_row
+{
+    glm::vec4 base_color{1.0F};
+    glm::vec4 emissive_metallic{0.0F, 0.0F, 0.0F, 1.0F};
+    glm::vec4 roughness_alpha{1.0F, 0.5F, 0.0F, 0.0F};
+    glm::vec4 texture_scales{1.0F, 1.0F, 0.0F, 0.0F};
+    glm::uvec4 image_slots{};
+    glm::uvec4 sampler_slots{};
+    glm::uvec4 texcoords{};
+    glm::uvec4 emissive_texture{};
 };
 
 using vulkan_frame_status = engine::frame_status;
@@ -62,6 +82,7 @@ public:
     [[nodiscard]] engine::result<bool> initialize(interface::window& render_window,
                                                   const engine::backend_config& backend_config) override;
     [[nodiscard]] engine::result<engine::geometry_handle> upload_geometry(const engine::geometry_asset& asset) override;
+    [[nodiscard]] engine::result<std::uint32_t> upload_materials(const engine::asset_database& asset) override;
     void retire_geometry(engine::geometry_handle handle) override;
     [[nodiscard]] engine::frame_status render(const engine::render_snapshot& snapshot) override;
     void shutdown() noexcept override;
@@ -93,7 +114,7 @@ private:
     // vulkan helper members (old oop version)
     // TODO: remove these helper classes with dod version instead in the future
     interface::window* window                     = nullptr;
-    render_graph::vk_pipeline_handle graphics_pipeline;
+    std::array<render_graph::vk_pipeline_handle, 4> graphics_pipelines;
 
     // --- Vulkan Initialization Steps ---
 
@@ -145,6 +166,7 @@ private:
     render_graph::buffer_handle rg_uniform{};
     render_graph::buffer_handle rg_transforms{};
     render_graph::buffer_handle rg_indirect{};
+    render_graph::buffer_handle rg_materials{};
     swapchain_image_state_tracker swapchain_image_states;
     vulkan_run_statistics run_statistics;
     // --- P2 scene system / geometry arena ---
@@ -159,10 +181,19 @@ private:
     render_graph::vk_buffer_resource_handle geometry_resource;
     render_graph::vk_buffer_resource_handle transform_resource;
     render_graph::vk_buffer_resource_handle indirect_resource;
+    render_graph::vk_buffer_resource_handle material_resource;
     render_graph::vk_bindless_handle transform_buffer_slot;
+    render_graph::vk_bindless_handle material_buffer_slot;
     vk::Buffer transform_buffer = VK_NULL_HANDLE;
     vk::Buffer indirect_buffer = VK_NULL_HANDLE;
+    vk::Buffer material_buffer = VK_NULL_HANDLE;
     std::uint32_t indirect_draw_count = 0;
+    std::array<std::uint32_t, 4> indirect_group_offsets{};
+    std::array<std::uint32_t, 4> indirect_group_counts{};
+    std::vector<gpu_material_row> material_rows;
+    std::vector<render_graph::vk_image_resource_handle> texture_resources;
+    std::vector<render_graph::vk_bindless_handle> texture_slots;
+    std::vector<render_graph::vk_bindless_handle> sampler_slots;
 
     uint64_t submitted_frame = 1;
     uint64_t completed_frame = 0;

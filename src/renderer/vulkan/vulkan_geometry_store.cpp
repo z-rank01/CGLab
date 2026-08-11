@@ -80,6 +80,7 @@ bool vulkan_backend::stage_runtime_geometry(const std::vector<engine::geometry_p
             .first_index = static_cast<uint32_t>(index_slice.offset / sizeof(uint32_t)),
             .index_count = static_cast<uint32_t>(primitive.indices.size()),
             .vertex_offset = static_cast<int32_t>(vertex_slice.offset / sizeof(engine::vertex)),
+            .material_index = primitive.material_index,
         });
     }
     output = std::move(staged);

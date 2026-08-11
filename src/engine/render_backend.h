@@ -71,6 +71,10 @@ namespace engine
 
         [[nodiscard]] virtual result<bool> initialize(interface::window& window, const backend_config& config) = 0;
         [[nodiscard]] virtual result<geometry_handle> upload_geometry(const geometry_asset& asset) = 0;
+        [[nodiscard]] virtual result<std::uint32_t> upload_materials(const asset_database&)
+        {
+            return {.value = 0};
+        }
         virtual void retire_geometry(geometry_handle handle) = 0;
         virtual void request_resize() noexcept = 0;
         [[nodiscard]] virtual frame_status render(const render_snapshot& snapshot) = 0;
