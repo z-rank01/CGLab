@@ -2,7 +2,7 @@
 
 #include "apps/application_options.h"
 #include "apps/application_runner.h"
-#include "render_graph_vulkan/create_vulkan_backend.h"
+#include "apps/gltf_render_recipe.h"
 
 namespace
 {
@@ -49,15 +49,11 @@ int main(int argc, char** argv)
                         .open_browser = options.ui_open_browser,
                     },
             };
-            engine::vulkan::render_program program{
-                .pass_name   = "GltfSponzaPass",
-                .clear_color = {0.03F, 0.04F, 0.08F, 1.0F},
-            };
             const auto frames = options.smoke_test ? std::optional<std::uint64_t>(options.frame_limit.value_or(3)) : options.frame_limit;
             return apps::application_setup_result{.request = apps::application_run_request{
                                                       .runtime     = std::move(config),
                                                       .sample      = {.name = "GltfSponzaSample", .required_startup_asset = asset_path.string()},
-                                                      .renderer    = engine::vulkan::create_backend(std::move(program)),
+                                                      .renderer    = apps::create_gltf_render_driver(),
                                                       .frame_limit = frames,
                                                       .require_validation_clean = options.validation,
                                                       .enforce_smoke_contract   = options.smoke_test,

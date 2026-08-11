@@ -35,6 +35,8 @@ add_executable(TriangleSample
 
 add_executable(GltfSponzaSample
     gltf_sponza_sample.cpp
+    gltf_render_recipe.cpp
+    gltf_render_recipe.h
 )
 
 foreach(cglab_app IN ITEMS TriangleSample GltfSponzaSample)
@@ -57,7 +59,7 @@ foreach(cglab_app IN ITEMS TriangleSample GltfSponzaSample)
 endforeach()
 
 target_link_libraries(TriangleSample PRIVATE cglab_sdl_vulkan_surface)
-target_link_libraries(GltfSponzaSample PRIVATE cglab_render_graph_vulkan)
+target_link_libraries(GltfSponzaSample PRIVATE cglab_sdl_vulkan_surface)
 
 # Preserve the paths used by existing scripts and documentation.
 set_target_properties(TriangleSample GltfSponzaSample PROPERTIES

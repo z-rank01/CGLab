@@ -1,0 +1,408 @@
+#include "apps/gltf_render_recipe.h"
+
+#include <algorithm>
+#include <array>
+#include <filesystem>
+#include <fstream>
+#include <span>
+
+#include <glm/glm.hpp>
+
+#include "platform/vulkan/render_graph_driver.h"
+
+namespace apps
+{
+    namespace
+    {
+        constexpr uint64_t geometry_capacity = 128ull * 1024ull * 1024ull;
+        constexpr uint32_t max_draws = 65536;
+        constexpr uint32_t max_materials = 4096;
+
+        struct frame_uniform { glm::mat4 model{1.0F}; glm::mat4 view{1.0F}; glm::mat4 projection{1.0F}; };
+        struct transform_row { glm::mat4 model{1.0F}; glm::uvec4 metadata{}; };
+        struct material_gpu_row
+        {
+            glm::vec4 base_color{1.0F};
+            glm::vec4 emissive_metallic{0.0F, 0.0F, 0.0F, 1.0F};
+            glm::vec4 roughness_alpha{1.0F, 0.5F, 0.0F, 0.0F};
+            glm::vec4 texture_scales{1.0F, 1.0F, 0.0F, 0.0F};
+            glm::uvec4 image_slots{};
+            glm::uvec4 sampler_slots{};
+            glm::uvec4 texcoords{};
+            glm::uvec4 emissive_texture{};
+        };
+        struct push_constants
+        {
+            uint32_t frame_uniform_slot = 0;
+            uint32_t transform_buffer_slot = 0;
+            uint32_t material_buffer_slot = 0;
+        };
+        struct geometry_row { std::vector<engine::draw_range> draws; bool alive = true; };
+        struct draw_candidate
+        {
+            glm::mat4 model{1.0F};
+            engine::draw_range range;
+            float distance_squared = 0.0F;
+        };
+
+        struct recipe_state
+        {
+            render_graph::device_buffer_handle geometry;
+            render_graph::device_buffer_handle transforms;
+            render_graph::device_buffer_handle indirect;
+            render_graph::device_buffer_handle materials;
+            std::vector<render_graph::device_buffer_handle> frame_uniforms;
+            std::array<render_graph::device_pipeline_handle, 4> pipelines;
+            uint32_t transform_slot = 0;
+            uint32_t material_slot = 0;
+            std::vector<uint32_t> frame_slots;
+            std::vector<geometry_row> geometries;
+            std::vector<material_gpu_row> material_rows{1};
+            uint64_t geometry_cursor = 0;
+            std::vector<transform_row> transform_rows;
+            std::vector<render_graph::indexed_indirect_command> commands;
+            std::array<render_graph::draw_indexed_indirect_row, 4> draws;
+            push_constants push;
+        };
+
+        bool read_spirv(const std::filesystem::path& path, std::vector<uint32_t>& words)
+        {
+            std::ifstream input(path, std::ios::binary | std::ios::ate);
+            if (!input) return false;
+            const auto size = input.tellg();
+            if (size <= 0 || size % static_cast<std::streamoff>(sizeof(uint32_t)) != 0) return false;
+            words.resize(static_cast<size_t>(size) / sizeof(uint32_t));
+            input.seekg(0);
+            return static_cast<bool>(input.read(reinterpret_cast<char*>(words.data()), size));
+        }
+
+        uint64_t align_up(uint64_t value, uint64_t alignment)
+        { return (value + alignment - 1) / alignment * alignment; }
+
+        render_graph::sampler_address_mode address_mode(engine::sampler_wrap value)
+        {
+            if (value == engine::sampler_wrap::clamp_to_edge) return render_graph::sampler_address_mode::clamp_to_edge;
+            if (value == engine::sampler_wrap::mirrored_repeat) return render_graph::sampler_address_mode::mirrored_repeat;
+            return render_graph::sampler_address_mode::repeat;
+        }
+
+        engine::result<bool> initialize(void* value,
+                                        render_graph::render_device& device,
+                                        const engine::backend_config& config)
+        {
+            auto& state = *static_cast<recipe_state*>(value);
+            std::vector<render_graph::buffer_create_row> buffers{
+                {{.size = geometry_capacity,
+                  .usage = render_graph::buffer_usage::TRANSFER_DST | render_graph::buffer_usage::VERTEX_BUFFER |
+                           render_graph::buffer_usage::INDEX_BUFFER,
+                  .memory = render_graph::memory_domain::device_local,
+                  .aliasing = render_graph::aliasing_policy::forbidden,
+                  .lifetime = render_graph::resource_lifetime_class::persistent}},
+                {{.size = sizeof(transform_row) * max_draws,
+                  .usage = render_graph::buffer_usage::STORAGE_BUFFER,
+                  .memory = render_graph::memory_domain::upload,
+                  .mapping = render_graph::mapping_policy::persistent,
+                  .lifetime = render_graph::resource_lifetime_class::persistent}},
+                {{.size = sizeof(render_graph::indexed_indirect_command) * max_draws,
+                  .usage = render_graph::buffer_usage::INDIRECT_BUFFER,
+                  .memory = render_graph::memory_domain::upload,
+                  .mapping = render_graph::mapping_policy::persistent,
+                  .lifetime = render_graph::resource_lifetime_class::persistent}},
+                {{.size = sizeof(material_gpu_row) * max_materials,
+                  .usage = render_graph::buffer_usage::STORAGE_BUFFER,
+                  .memory = render_graph::memory_domain::upload,
+                  .mapping = render_graph::mapping_policy::persistent,
+                  .lifetime = render_graph::resource_lifetime_class::persistent}},
+            };
+            for (uint32_t frame = 0; frame < config.frames_in_flight; ++frame)
+                buffers.push_back({{.size = sizeof(frame_uniform),
+                                    .usage = render_graph::buffer_usage::UNIFORM_BUFFER,
+                                    .memory = render_graph::memory_domain::upload,
+                                    .mapping = render_graph::mapping_policy::persistent,
+                                    .lifetime = render_graph::resource_lifetime_class::persistent}});
+
+            std::vector<uint32_t> vertex_shader;
+            std::vector<uint32_t> fragment_shader;
+            const auto shader_path = std::filesystem::path(config.working_directory) / "src" / "shader";
+            if (!read_spirv(shader_path / "gltf.vert.spv", vertex_shader) ||
+                !read_spirv(shader_path / "gltf.frag.spv", fragment_shader))
+                return {.error = "Failed to read glTF Render Graph shaders"};
+            std::vector<render_graph::pipeline_create_row> pipelines;
+            for (uint32_t group = 0; group < 4; ++group)
+            {
+                render_graph::graphics_pipeline_desc pipeline;
+                pipeline.shaders = {
+                    {.stage = render_graph::shader_stage::vertex, .binary = vertex_shader},
+                    {.stage = render_graph::shader_stage::fragment, .binary = fragment_shader},
+                };
+                pipeline.vertex_bindings = {{.binding = 0, .stride = sizeof(engine::vertex)}};
+                pipeline.vertex_attributes = {
+                    {.location = 0, .binding = 0, .format = render_graph::vertex_format::float3, .offset = offsetof(engine::vertex, position)},
+                    {.location = 1, .binding = 0, .format = render_graph::vertex_format::float4, .offset = offsetof(engine::vertex, color)},
+                    {.location = 2, .binding = 0, .format = render_graph::vertex_format::float3, .offset = offsetof(engine::vertex, normal)},
+                    {.location = 3, .binding = 0, .format = render_graph::vertex_format::float4, .offset = offsetof(engine::vertex, tangent)},
+                    {.location = 4, .binding = 0, .format = render_graph::vertex_format::float2, .offset = offsetof(engine::vertex, uv0)},
+                    {.location = 5, .binding = 0, .format = render_graph::vertex_format::float2, .offset = offsetof(engine::vertex, uv1)},
+                };
+                pipeline.cull = (group & 1u) != 0 ? render_graph::cull_mode::none : render_graph::cull_mode::back;
+                pipeline.blend = group >= 2;
+                pipeline.depth_write = group < 2;
+                pipeline.color_formats = {render_graph::format::UNDEFINED};
+                pipeline.depth_format = render_graph::format::D32_SFLOAT;
+                pipeline.push_constants = {{.stage_mask = render_graph::shader_stage_vertex_bit |
+                                                           render_graph::shader_stage_fragment_bit,
+                                            .size = sizeof(push_constants)}};
+                pipelines.push_back({std::move(pipeline)});
+            }
+            auto created = device.apply_resource_changes({.buffer_creates = buffers,
+                                                           .pipeline_creates = pipelines});
+            if (!created) return {.error = created.error};
+            state.geometry = created.buffers[0];
+            state.transforms = created.buffers[1];
+            state.indirect = created.buffers[2];
+            state.materials = created.buffers[3];
+            state.frame_uniforms.assign(created.buffers.begin() + 4, created.buffers.end());
+            std::copy_n(created.pipelines.begin(), 4, state.pipelines.begin());
+
+            std::vector<render_graph::bindless_publish_row> publishes{
+                {.table = render_graph::bindless_table_kind::storage_buffers,
+                 .buffer = state.transforms, .size = sizeof(transform_row) * max_draws},
+                {.table = render_graph::bindless_table_kind::storage_buffers,
+                 .buffer = state.materials, .size = sizeof(material_gpu_row) * max_materials},
+            };
+            for (const auto buffer : state.frame_uniforms)
+                publishes.push_back({.table = render_graph::bindless_table_kind::uniform_buffers,
+                                     .buffer = buffer, .size = sizeof(frame_uniform)});
+            const render_graph::buffer_upload_row default_material{
+                state.materials, 0, std::as_bytes(std::span(state.material_rows))};
+            auto bound = device.apply_resource_changes({.buffer_uploads = std::span(&default_material, 1),
+                                                         .bindless_publishes = publishes});
+            if (!bound) return {.error = bound.error};
+            state.transform_slot = bound.bindless_slots[0];
+            state.material_slot = bound.bindless_slots[1];
+            state.frame_slots.assign(bound.bindless_slots.begin() + 2, bound.bindless_slots.end());
+            return {.value = true};
+        }
+
+        engine::result<uint32_t> upload_materials(recipe_state& state,
+                                                   render_graph::render_device& device,
+                                                   const engine::asset_database& asset)
+        {
+            if (state.material_rows.size() + asset.materials.size() > max_materials)
+                return {.error = "GPU material table capacity exhausted"};
+            std::vector<render_graph::image_create_row> image_creates;
+            for (const auto& image : asset.images)
+                image_creates.push_back({{.fmt = render_graph::format::R8G8B8A8_UNORM,
+                                          .extent = {image.width, image.height, 1},
+                                          .usage = render_graph::image_usage::TRANSFER_DST |
+                                                   render_graph::image_usage::SAMPLED,
+                                          .memory = render_graph::memory_domain::device_local,
+                                          .aliasing = render_graph::aliasing_policy::forbidden,
+                                          .lifetime = render_graph::resource_lifetime_class::persistent}});
+            std::vector<render_graph::sampler_create_row> sampler_creates;
+            for (const auto& sampler : asset.samplers)
+                sampler_creates.push_back({{
+                    .min_filter = sampler.min_filter == engine::sampler_filter::nearest
+                                      ? render_graph::sampler_filter::nearest : render_graph::sampler_filter::linear,
+                    .mag_filter = sampler.mag_filter == engine::sampler_filter::nearest
+                                      ? render_graph::sampler_filter::nearest : render_graph::sampler_filter::linear,
+                    .address_u = address_mode(sampler.wrap_u),
+                    .address_v = address_mode(sampler.wrap_v),
+                }});
+            auto created = device.apply_resource_changes({.image_creates = image_creates,
+                                                           .sampler_creates = sampler_creates});
+            if (!created) return {.error = created.error};
+            std::vector<render_graph::image_upload_row> image_uploads;
+            std::vector<render_graph::bindless_publish_row> publishes;
+            for (uint32_t index = 0; index < asset.images.size(); ++index)
+            {
+                const auto& image = asset.images[index];
+                image_uploads.push_back({created.images[index], image.width, image.height, 0, image.pixels});
+                publishes.push_back({.table = render_graph::bindless_table_kind::sampled_images,
+                                     .image = created.images[index]});
+            }
+            for (const auto sampler : created.samplers)
+                publishes.push_back({.table = render_graph::bindless_table_kind::samplers, .sampler = sampler});
+            auto published = device.apply_resource_changes({.image_uploads = image_uploads,
+                                                             .bindless_publishes = publishes});
+            if (!published) return {.error = published.error};
+            const auto image_slot = [&](const engine::texture_ref& ref, uint32_t fallback = 0u)
+            { return ref.image < asset.images.size() ? published.bindless_slots[ref.image] : fallback; };
+            const auto sampler_slot = [&](const engine::texture_ref& ref)
+            {
+                const auto base = asset.images.size();
+                return ref.sampler < asset.samplers.size() ? published.bindless_slots[base + ref.sampler] : 0u;
+            };
+            const uint32_t base = static_cast<uint32_t>(state.material_rows.size());
+            for (const auto& source : asset.materials)
+            {
+                const float alpha = source.alpha == engine::alpha_mode::mask ? 1.0F
+                                  : source.alpha == engine::alpha_mode::blend ? 2.0F : 0.0F;
+                state.material_rows.push_back({
+                    .base_color = source.base_color_factor,
+                    .emissive_metallic = {source.emissive_factor, source.metallic_factor},
+                    .roughness_alpha = {source.roughness_factor, source.alpha_cutoff, alpha,
+                                        source.double_sided ? 1.0F : 0.0F},
+                    .texture_scales = {source.normal_texture.scale, source.occlusion_texture.scale, 0.0F, 0.0F},
+                    .image_slots = {image_slot(source.base_color_texture), image_slot(source.metallic_roughness_texture),
+                                    image_slot(source.normal_texture, 1), image_slot(source.occlusion_texture)},
+                    .sampler_slots = {sampler_slot(source.base_color_texture), sampler_slot(source.metallic_roughness_texture),
+                                      sampler_slot(source.normal_texture), sampler_slot(source.occlusion_texture)},
+                    .texcoords = {source.base_color_texture.texcoord, source.metallic_roughness_texture.texcoord,
+                                  source.normal_texture.texcoord, source.occlusion_texture.texcoord},
+                    .emissive_texture = {image_slot(source.emissive_texture), sampler_slot(source.emissive_texture),
+                                         source.emissive_texture.texcoord, 0},
+                });
+            }
+            const render_graph::buffer_upload_row upload{
+                state.materials, sizeof(material_gpu_row) * base,
+                std::as_bytes(std::span(state.material_rows).subspan(base))};
+            const auto updated = device.apply_resource_changes({.buffer_uploads = std::span(&upload, 1)});
+            if (!updated) return {.error = updated.error};
+            return {.value = base};
+        }
+
+        engine::result<engine::resource_change_result> apply_changes(
+            void* value, render_graph::render_device& device, engine::resource_change_batch batch)
+        {
+            auto& state = *static_cast<recipe_state*>(value);
+            engine::result<engine::resource_change_result> output;
+            for (const auto& row : batch.material_uploads)
+            {
+                if (!row.asset) return {.error = "glTF material upload row is empty"};
+                const auto uploaded = upload_materials(state, device, *row.asset);
+                if (!uploaded) return {.error = uploaded.error};
+                output.value.material_bases.push_back(uploaded.value);
+            }
+            for (const auto& row : batch.geometry_uploads)
+            {
+                if (!row.asset) return {.error = "glTF geometry upload row is empty"};
+                geometry_row geometry;
+                std::vector<render_graph::buffer_upload_row> uploads;
+                for (const auto& primitive : row.asset->primitives)
+                {
+                    const uint64_t vertex_offset = align_up(state.geometry_cursor, alignof(engine::vertex));
+                    const uint64_t vertex_size = primitive.vertices.size() * sizeof(engine::vertex);
+                    const uint64_t index_offset = align_up(vertex_offset + vertex_size, alignof(uint32_t));
+                    const uint64_t index_size = primitive.indices.size() * sizeof(uint32_t);
+                    if (index_offset + index_size > geometry_capacity) return {.error = "glTF geometry arena exhausted"};
+                    uploads.push_back({state.geometry, vertex_offset, std::as_bytes(std::span(primitive.vertices))});
+                    uploads.push_back({state.geometry, index_offset, std::as_bytes(std::span(primitive.indices))});
+                    geometry.draws.push_back({
+                        .first_index = static_cast<uint32_t>(index_offset / sizeof(uint32_t)),
+                        .index_count = static_cast<uint32_t>(primitive.indices.size()),
+                        .vertex_offset = static_cast<int32_t>(vertex_offset / sizeof(engine::vertex)),
+                        .material_index = primitive.material_index,
+                    });
+                    state.geometry_cursor = index_offset + index_size;
+                }
+                const auto uploaded = device.apply_resource_changes({.buffer_uploads = uploads});
+                if (!uploaded) return {.error = uploaded.error};
+                output.value.geometry_handles.push_back(static_cast<engine::geometry_handle>(state.geometries.size()));
+                state.geometries.push_back(std::move(geometry));
+            }
+            for (const auto& row : batch.geometry_retires)
+                if (row.handle < state.geometries.size()) state.geometries[row.handle].alive = false;
+            return output;
+        }
+
+        render_graph::frame_build_result build_frame(
+            void* value, render_graph::render_device& device, const engine::render_frame_packet& packet,
+            const render_graph::frame_environment& environment, render_graph::frame_plan& plan)
+        {
+            auto& state = *static_cast<recipe_state*>(value);
+            if (packet.camera_rows.empty()) return {.error = "glTF frame has no camera"};
+            std::array<std::vector<draw_candidate>, 4> groups;
+            const glm::vec3 camera_position = glm::vec3(glm::inverse(packet.camera_rows.front().view)[3]);
+            uint32_t candidate_count = 0;
+            for (const auto& instance : packet.instance_rows)
+            {
+                if (instance.mesh >= state.geometries.size() || instance.transform >= packet.transform_rows.size()) continue;
+                const auto& geometry = state.geometries[instance.mesh];
+                if (!geometry.alive) continue;
+                const auto& model = packet.transform_rows[instance.transform];
+                for (const auto& range : geometry.draws)
+                {
+                    if (++candidate_count > max_draws) return {.error = "GPU draw table capacity exhausted"};
+                    const uint32_t material_index = range.material_index < state.material_rows.size()
+                                                      ? range.material_index : 0;
+                    const auto& material = state.material_rows[material_index];
+                    const bool blend = material.roughness_alpha.z == 2.0F;
+                    const bool double_sided = material.roughness_alpha.w != 0.0F;
+                    const uint32_t group = (blend ? 2u : 0u) + (double_sided ? 1u : 0u);
+                    const glm::vec3 position = glm::vec3(model[3]);
+                    groups[group].push_back({model, range,
+                        glm::dot(position - camera_position, position - camera_position)});
+                }
+            }
+            for (uint32_t group = 2; group < groups.size(); ++group)
+                std::stable_sort(groups[group].begin(), groups[group].end(),
+                    [](const auto& left, const auto& right)
+                    { return left.distance_squared > right.distance_squared; });
+
+            state.transform_rows.clear();
+            state.commands.clear();
+            uint64_t command_offset = 0;
+            for (uint32_t group = 0; group < groups.size(); ++group)
+            {
+                state.draws[group] = {
+                    .pipeline = state.pipelines[group],
+                    .vertex_buffer = state.geometry,
+                    .index_buffer = state.geometry,
+                    .indirect_buffer = state.indirect,
+                    .indirect_offset = command_offset,
+                    .draw_count = static_cast<uint32_t>(groups[group].size()),
+                    .stride = sizeof(render_graph::indexed_indirect_command),
+                };
+                for (const auto& candidate : groups[group])
+                {
+                    const uint32_t draw_index = static_cast<uint32_t>(state.commands.size());
+                    state.transform_rows.push_back({.model = candidate.model,
+                                                    .metadata = {candidate.range.material_index, 0, 0, 0}});
+                    state.commands.push_back({candidate.range.index_count, 1, candidate.range.first_index,
+                                              candidate.range.vertex_offset, draw_index});
+                }
+                command_offset = state.commands.size() * sizeof(render_graph::indexed_indirect_command);
+            }
+            frame_uniform uniform{.view = packet.camera_rows.front().view,
+                                  .projection = packet.camera_rows.front().projection};
+            uniform.projection[1][1] *= -1.0F;
+            std::array<render_graph::buffer_upload_row, 3> uploads{
+                render_graph::buffer_upload_row{state.frame_uniforms[environment.frame_index], 0,
+                                                std::as_bytes(std::span(&uniform, 1))},
+                render_graph::buffer_upload_row{state.transforms, 0,
+                                                std::as_bytes(std::span(state.transform_rows))},
+                render_graph::buffer_upload_row{state.indirect, 0,
+                                                std::as_bytes(std::span(state.commands))},
+            };
+            const auto updated = device.apply_resource_changes({.buffer_uploads = uploads});
+            if (!updated) return {.error = updated.error};
+            state.push = {
+                .frame_uniform_slot = state.frame_slots[environment.frame_index],
+                .transform_buffer_slot = state.transform_slot,
+                .material_buffer_slot = state.material_slot,
+            };
+            plan.cache_key = 0x474c544650425200ull;
+            plan.pass_name = "GltfSponzaPass";
+            plan.clear_color = {0.03F, 0.04F, 0.08F, 1.0F};
+            plan.push_constants = std::as_bytes(std::span(&state.push, 1));
+            plan.push_constant_stage_mask = render_graph::shader_stage_vertex_bit |
+                                            render_graph::shader_stage_fragment_bit;
+            plan.indexed_indirect_draws = state.draws;
+            return {};
+        }
+
+        const platform::vulkan::render_recipe_api recipe_api{
+            .initialize = &initialize,
+            .apply_resource_changes = &apply_changes,
+            .build_frame = &build_frame,
+            .shutdown = [](void*, render_graph::render_device&) noexcept {},
+            .destroy = [](void* value) noexcept { delete static_cast<recipe_state*>(value); },
+        };
+    } // namespace
+
+    engine::render_driver create_gltf_render_driver()
+    {
+        return platform::vulkan::create_render_graph_driver({new recipe_state, &recipe_api});
+    }
+} // namespace apps
