@@ -45,7 +45,10 @@ glTF adapter 输出 CPU Asset Database：node/parent/local transform、mesh、pr
 
 ## Render Graph 与 Vulkan
 
-RG Core 的 render device、buffer/image、pipeline、resource change、frame recipe 和 command 描述与 API 无关；Vulkan lowering 负责选择 Vk usage、memory flags 和格式兼容性。DX12/Metal 当前只有 lowering contract 和 fake tests。
+RG Core 的 render device、buffer/image、pipeline、resource change、frame recipe 和 command 描述与 API 无关；
+资源 hash、range、compatibility 与同步编译只读取公共描述，backend-specific capability 校验通过显式
+function table 注入。Vulkan lowering 负责选择 Vk usage、memory flags 和格式兼容性。DX12/Metal 当前只有
+lowering contract 和 fake tests。
 
 Vulkan runtime 以集中表保存 device、queue、frame、swapchain image、resource、allocation、bindless slot、pipeline 和 retirement 状态，并显式执行：
 
@@ -58,6 +61,10 @@ acquire -> realize_resources -> record_batches -> submit -> present -> collect_r
 固定 bindless ABI 包含 sampled images、samplers、storage images、uniform buffers 和 storage buffers。slot 0 是默认资源；CPU handle 使用 index + generation。Vulkan 要求 runtime descriptor array、partially bound、update-after-bind 和 non-uniform indexing，不提供传统 descriptor fallback。
 
 Dynamic Rendering 保留，attachment format 进入 pipeline key。Triangle 与 glTF 分别拥有自己的 recipe；glTF recipe 按 opaque/mask、single/double-sided、blend 分组，透明行按相机距离排序，以 indexed indirect 批量录制。RG backend 不知道 shader 路径或 glTF/PBR 语义。稳定场景不会逐帧分配 descriptor，也不会因上传行数变化重新编译 graph。
+
+RG 的公共头唯一真源位于子仓库 `include/render_graph/`。`render_graph::core` 与
+`render_graph::vulkan` 使用 BUILD/INSTALL interface，可通过安装后的 CMake package 在源码树外消费；库内诊断
+只返回结构化结果或写入宿主提供的 diagnostic sink，不直接写宿主日志。
 
 ## 设计约束
 

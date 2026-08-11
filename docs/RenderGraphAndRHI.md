@@ -34,7 +34,10 @@ GPU scene tables + indirect groups
 acquire -> upload/barrier -> dynamic rendering -> submit -> present -> retire
 ```
 
-`resource_change_batch` 把 geometry/material/image/sampler 的创建、更新和回收集中到帧边界。兼容便捷函数仍可构造单行 batch，但不会绕过该入口。
+`resource_change_batch` 把 geometry/material/image/sampler 的创建、更新和回收集中到帧边界，并使用
+validate → provisional prepare → pending work prepare → commit 的原子事务。任一行失败都会销毁 provisional
+native objects、回滚 pending uploads，且不发布 handle 或 bindless slot；diagnostic 保留 phase、row kind、index
+和原因。
 
 ## 资源与内存
 
@@ -71,5 +74,8 @@ glTF Core 2.0 静态 PBR 支持 base color、metallic-roughness、normal、occlu
 - swapchain resize 只使尺寸/格式相关状态失效；
 - staging、resource、descriptor slot 与 pipeline retirement 都由 submission 序号控制；
 - graph 只在 recipe、尺寸、格式或兼容性变化时重编译。
+
+所有 arena buffer 都通过统一 native range 解析：barrier、copy、vertex/index/indirect binding 与 buffer
+descriptor 使用 `base_offset + logical_offset`，lowering 前验证溢出和 slice 边界。
 
 架构扫描禁止 active `src/` 出现 GPU allocation、descriptor、pipeline、command、submit/present side effect；仅 surface adapter 可调用 `SDL_Vulkan_CreateSurface`，其他 Vulkan side effect 必须位于 RG Vulkan backend。
