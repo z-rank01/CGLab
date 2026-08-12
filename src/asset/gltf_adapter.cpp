@@ -182,7 +182,8 @@ namespace asset
     engine::result<engine::asset_database> load_gltf(const std::filesystem::path& path)
     {
         engine::result<engine::asset_database> result;
-        if (!std::filesystem::is_regular_file(path))
+        std::error_code filesystem_error;
+        if (!std::filesystem::is_regular_file(path, filesystem_error) || filesystem_error)
         {
             result.error = "Asset file does not exist: " + path.string();
             return result;
@@ -353,6 +354,28 @@ namespace asset
                     return result;
                 }
                 output.nodes[child].parent = index;
+            }
+        }
+        // Reject cyclic or malformed node hierarchies on the worker side so the
+        // main thread never walks an unbounded parent chain.
+        for (std::uint32_t index = 0; index < output.nodes.size(); index++)
+        {
+            std::uint32_t cursor = index;
+            for (std::size_t depth = 0; depth <= output.nodes.size(); depth++)
+            {
+                const auto parent = output.nodes[cursor].parent;
+                if (parent == engine::invalid_asset_index) break;
+                if (parent >= output.nodes.size())
+                {
+                    result.error = "glTF node contains invalid parent index";
+                    return result;
+                }
+                if (depth == output.nodes.size())
+                {
+                    result.error = "glTF node hierarchy contains a cycle";
+                    return result;
+                }
+                cursor = parent;
             }
         }
         if (output.primitives.empty())

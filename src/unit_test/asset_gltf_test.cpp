@@ -98,6 +98,26 @@ int main()
         return EXIT_FAILURE;
     }
 
+    const std::filesystem::path cyclic_gltf = temp_dir / "cglab_cyclic_hierarchy_test.gltf";
+    model.extensionsRequired.clear();
+    model.extensionsUsed.clear();
+    tinygltf::Node cycle_a;
+    cycle_a.name = "CycleA";
+    cycle_a.children = {4};
+    tinygltf::Node cycle_b;
+    cycle_b.name = "CycleB";
+    cycle_b.children = {3};
+    model.nodes.push_back(cycle_a);
+    model.nodes.push_back(cycle_b);
+    if (!tiny_loader.WriteGltfSceneToFile(&model, cyclic_gltf.string(), true, true, false, false))
+        return EXIT_FAILURE;
+    const auto cyclic = asset::load_geometry(cyclic_gltf);
+    if (cyclic || cyclic.error.find("cycle") == std::string::npos)
+    {
+        std::cerr << "Cyclic node hierarchy was not rejected\n";
+        return EXIT_FAILURE;
+    }
+
     const auto unsupported = asset::load_geometry(temp_dir / "model.obj");
     if (unsupported || unsupported.error.find("Unsupported geometry asset format") == std::string::npos)
     {
@@ -110,5 +130,6 @@ int main()
     std::filesystem::remove(uppercase_gltf, filesystem_error);
     std::filesystem::remove(binary_glb, filesystem_error);
     std::filesystem::remove(required_extension_gltf, filesystem_error);
+    std::filesystem::remove(cyclic_gltf, filesystem_error);
     return EXIT_SUCCESS;
 }

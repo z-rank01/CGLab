@@ -250,10 +250,16 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
 
     std::vector<glm::mat4> world(asset.nodes.size(), glm::mat4(1.0F));
     std::vector<std::uint8_t> resolved(asset.nodes.size(), 0);
+    bool hierarchy_cycle = false;
     const auto resolve = [&](auto&& self, std::uint32_t index) -> glm::mat4
     {
         if (resolved[index] == 2) return world[index];
-        if (resolved[index] == 1) throw std::runtime_error("glTF node hierarchy contains a cycle");
+        // Loaders reject cyclic hierarchies on the worker side; stay defensive here.
+        if (resolved[index] == 1)
+        {
+            hierarchy_cycle = true;
+            return glm::mat4(1.0F);
+        }
         resolved[index] = 1;
         const auto parent = asset.nodes[index].parent;
         world[index] = parent == engine::invalid_asset_index
@@ -267,6 +273,16 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
     {
         const auto& node = asset.nodes[node_index];
         (void)resolve(resolve, node_index);
+        if (hierarchy_cycle)
+        {
+            Logger::LogError("Rejected asset with a cyclic node hierarchy: " + asset.name);
+            std::vector<geometry_retire_row> rollback_rows;
+            for (const auto handle : mesh_handles)
+                if (handle != engine::invalid_geometry_handle) rollback_rows.push_back({handle});
+            if (!rollback_rows.empty())
+                (void)renderer->apply_resource_changes({.geometry_retires = rollback_rows});
+            return {};
+        }
         if (node.mesh == engine::invalid_asset_index || node.mesh >= asset.meshes.size()) continue;
         const auto handle = mesh_handles[node.mesh];
         const auto& mesh = asset.meshes[node.mesh];

@@ -92,7 +92,21 @@ namespace asset
             {
                 resolved = base_directory / resolved;
             }
-            completed_request output{.id = request.id, .result = load_geometry(resolved)};
+            // A failing load must become a value-type error result; the worker
+            // never lets an exception escape and kill the process.
+            completed_request output{.id = request.id};
+            try
+            {
+                output.result = load_geometry(resolved);
+            }
+            catch (const std::exception& error)
+            {
+                output.result.error = std::string("Asset load threw an exception: ") + error.what();
+            }
+            catch (...)
+            {
+                output.result.error = "Asset load failed with an unknown exception";
+            }
             {
                 std::lock_guard lock(mutex);
                 completed.push_back(std::move(output));
