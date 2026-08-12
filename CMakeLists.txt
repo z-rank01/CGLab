@@ -31,12 +31,16 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # -----------------------------------------------------------------------------
 
 option(CGLAB_BUILD_DCL_SAMPLES "Build digital-content-loader sample executables" OFF)
+option(CGLAB_BUILD_DCL_TESTS "Build digital-content-loader unit tests" ${BUILD_TESTING})
 option(CGLAB_BUILD_RENDER_GRAPH_SAMPLES "Build render-graph sample executables" OFF)
 option(CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS "Build render-graph CTest executable" ${BUILD_TESTING})
 option(CGLAB_RENDER_GRAPH_SHARED "Build render_graph as a shared library (DLL)" OFF)
 
 set(DCL_BUILD_SAMPLES ${CGLAB_BUILD_DCL_SAMPLES}
     CACHE BOOL "Build sample/test executables (digital-content-loader)" FORCE
+)
+set(DCL_BUILD_TESTS ${CGLAB_BUILD_DCL_TESTS}
+    CACHE BOOL "Build digital-content-loader unit tests" FORCE
 )
 set(RENDER_GRAPH_BUILD_SAMPLES ${CGLAB_BUILD_RENDER_GRAPH_SAMPLES}
     CACHE BOOL "Build render-graph sample executables" FORCE
@@ -57,6 +61,16 @@ find_package(glm CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 
+# digital-content-loader provides the format-agnostic asset row-table model
+# (dcl::core) that engine public headers alias, so it must be added before
+# src/engine. Third-party sample executables are excluded from the default ALL
+# target; test executables must join the default build so CTest can run them.
+if(CGLAB_BUILD_DCL_SAMPLES OR CGLAB_BUILD_DCL_TESTS)
+    add_subdirectory(third_party/digital-content-loader)
+else()
+    add_subdirectory(third_party/digital-content-loader EXCLUDE_FROM_ALL)
+endif()
+
 # -----------------------------------------------------------------------------
 # Foundation libraries
 # -----------------------------------------------------------------------------
@@ -66,9 +80,6 @@ add_subdirectory(src/engine)
 add_subdirectory(src/_interface)
 add_subdirectory(src/control_plane)
 
-# Third-party sample executables are excluded from the default ALL target. Their
-# library targets are still built when a CGLab target links against them.
-add_subdirectory(third_party/digital-content-loader EXCLUDE_FROM_ALL)
 add_subdirectory(src/asset)
 
 if(CGLAB_BUILD_RENDER_GRAPH_SAMPLES OR CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS)

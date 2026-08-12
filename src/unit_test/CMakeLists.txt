@@ -38,7 +38,7 @@ target_link_libraries(cglab_camera_rig_tests PRIVATE cglab_engine_core)
 cglab_register_test(cglab_camera_rig_tests cglab.camera_rig)
 
 add_executable(cglab_scene_registry_tests scene_registry_test.cpp)
-target_link_libraries(cglab_scene_registry_tests PRIVATE glm::glm)
+target_link_libraries(cglab_scene_registry_tests PRIVATE glm::glm dcl::core)
 cglab_register_test(cglab_scene_registry_tests cglab.scene_registry)
 
 add_executable(cglab_control_plane_protocol_tests
@@ -68,6 +68,10 @@ add_test(
 
 add_executable(cglab_asset_gltf_tests asset_gltf_test.cpp)
 target_link_libraries(cglab_asset_gltf_tests PRIVATE cglab_asset_runtime dcl::gltf)
+# Fixtures are generated with tinygltf's writer; dcl_gltf keeps tinygltf on its
+# PRIVATE interface, so the test locates the headers itself.
+find_path(CGLAB_TINYGLTF_INCLUDE_DIR tiny_gltf.h REQUIRED)
+target_include_directories(cglab_asset_gltf_tests PRIVATE ${CGLAB_TINYGLTF_INCLUDE_DIR})
 target_compile_definitions(cglab_asset_gltf_tests
     PRIVATE CGLAB_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
 )

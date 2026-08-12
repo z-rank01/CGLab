@@ -14,7 +14,7 @@ target_include_directories(cglab_engine_core INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
 )
 
-target_link_libraries(cglab_engine_core INTERFACE glm::glm)
+target_link_libraries(cglab_engine_core INTERFACE glm::glm dcl::core)
 
 add_library(cglab_engine_runtime STATIC
     engine_runtime.cpp
