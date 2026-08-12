@@ -52,9 +52,6 @@ set(RENDER_GRAPH_BUILD_SHARED ${CGLAB_RENDER_GRAPH_SHARED}
 # External packages
 # -----------------------------------------------------------------------------
 
-find_package(Vulkan REQUIRED)
-find_package(vk-bootstrap CONFIG REQUIRED)
-find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
@@ -95,14 +92,6 @@ endif()
 # -----------------------------------------------------------------------------
 # Configure summary
 # -----------------------------------------------------------------------------
-
-if(Vulkan_FOUND)
-    message(STATUS "Vulkan headers/loader: ${Vulkan_INCLUDE_DIRS}")
-    message(STATUS "Vulkan libraries: ${Vulkan_LIBRARIES}")
-    message(STATUS "Vulkan version: ${Vulkan_VERSION}")
-else()
-    message(FATAL_ERROR "Vulkan SDK not found. Please install the Vulkan SDK.")
-endif()
 
 message(STATUS "C++ compiler: ${CMAKE_CXX_COMPILER}")
 message(STATUS "C++ compiler ID: ${CMAKE_CXX_COMPILER_ID}")

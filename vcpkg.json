@@ -5,7 +5,6 @@
   "homepage": "https://github.com/z-rank01/VulkanFunctionalFramework",
   "dependencies": [
     "vulkan",
-    "vk-bootstrap",
     "stb",
     "nlohmann-json",
     "ixwebsocket",

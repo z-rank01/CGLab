@@ -28,6 +28,25 @@ foreach(_header IN LISTS _engine_headers)
     endforeach()
 endforeach()
 
+# No active parent-repository source may include Vulkan or VMA headers directly.
+# Platform code reaches Vulkan only through SDL_vulkan.h and the Render Graph
+# public headers.
+file(GLOB_RECURSE _all_sources
+    LIST_DIRECTORIES false
+    "${CGLAB_SOURCE_DIR}/src/*.h"
+    "${CGLAB_SOURCE_DIR}/src/*.hpp"
+    "${CGLAB_SOURCE_DIR}/src/*.cpp"
+)
+foreach(_source IN LISTS _all_sources)
+    file(READ "${_source}" _contents)
+    if(_contents MATCHES "#[ \t]*include[ \t]*[<\"](vulkan/|vulkan\\.h|vk_mem_alloc)")
+        file(RELATIVE_PATH _relative "${CGLAB_SOURCE_DIR}" "${_source}")
+        message(FATAL_ERROR
+            "Direct Vulkan/VMA header include escaped the Render Graph submodule: ${_relative}"
+        )
+    endif()
+endforeach()
+
 if(EXISTS "${CGLAB_SOURCE_DIR}/src/renderer")
     message(FATAL_ERROR "src/renderer must not exist; Render Graph owns the rendering layer")
 endif()
