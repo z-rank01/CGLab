@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "_interface/sdl_window.h"
 #include "engine/engine_runtime.h"
 #include "utility/logger.h"
 
@@ -18,7 +19,11 @@ namespace apps
     {
         try
         {
-            engine::engine_runtime runtime(std::move(request.runtime), std::move(request.renderer));
+            if (!request.window)
+            {
+                request.window = std::make_unique<interface::sdl_window>();
+            }
+            engine::engine_runtime runtime(std::move(request.runtime), std::move(request.renderer), std::move(request.window));
             runtime.configure_sample(std::move(request.sample));
             runtime.initialize();
             const bool succeeded = runtime.tick(request.frame_limit);

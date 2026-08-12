@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 
+#include "_interface/window.h"
 #include "apps/application_options.h"
 #include "engine/render_backend.h"
 #include "engine/runtime_config.h"
@@ -19,6 +20,8 @@ namespace apps
         engine::runtime_config runtime;
         engine::sample sample;
         engine::render_driver renderer;
+        // Null lets the runner create the default platform window.
+        std::unique_ptr<interface::window> window;
         std::optional<std::uint64_t> frame_limit;
         bool require_validation_clean = false;
         bool enforce_smoke_contract = false;

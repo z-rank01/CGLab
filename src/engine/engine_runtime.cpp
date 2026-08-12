@@ -6,7 +6,6 @@
 #include <thread>
 #include <utility>
 
-#include "_interface/sdl_window.h" // For default implementation
 #include "asset/asset_service.h"
 #include "utility/logger.h"
 
@@ -38,10 +37,10 @@ engine_runtime::~engine_runtime()
 
 void engine_runtime::initialize()
 {
-    // initialize sdl window
+    // The composition point (application runner) injects the platform window.
     if (!window)
     {
-        window = std::make_unique<interface::sdl_window>();
+        throw std::invalid_argument("engine_runtime requires a platform window");
     }
     interface::window_config win_config;
     win_config = config.window;

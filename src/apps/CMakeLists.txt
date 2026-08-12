@@ -14,6 +14,7 @@ target_link_libraries(cglab_application_runner
     PUBLIC
         cglab_engine_runtime
     PRIVATE
+        cglab_platform_sdl
         utility
 )
 

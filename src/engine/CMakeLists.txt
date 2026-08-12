@@ -32,7 +32,6 @@ target_link_libraries(cglab_engine_runtime
     PUBLIC
         cglab_engine_core
     PRIVATE
-        cglab_platform_sdl
         cglab_asset_runtime
         control_plane
         utility
