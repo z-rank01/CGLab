@@ -30,7 +30,7 @@
       "windows": {
         "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      "args": ["configure", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--tests", "${input:buildTests}", "--legacy", "${input:buildLegacy}"],
+      "args": ["configure", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--tests", "${input:buildTests}"],
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },
@@ -41,7 +41,7 @@
       "windows": {
         "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      "args": ["configure", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--tests", "${input:buildTests}", "--legacy", "${input:buildLegacy}", "--fresh"],
+      "args": ["configure", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--tests", "${input:buildTests}", "--fresh"],
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },
@@ -52,7 +52,7 @@
       "windows": {
         "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      "args": ["build", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "${input:buildTarget}", "--jobs", "${input:buildJobs}", "--tests", "${input:buildTests}", "--legacy", "${input:buildLegacy}"],
+      "args": ["build", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "${input:buildTarget}", "--jobs", "${input:buildJobs}", "--tests", "${input:buildTests}"],
       "options": { "cwd": "${workspaceFolder}" },
       "group": { "kind": "build", "isDefault": true },
       "problemMatcher": []
@@ -64,7 +64,7 @@
       "windows": {
         "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      "args": ["build", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "${input:arbitraryTarget}", "--jobs", "${input:buildJobs}", "--tests", "${input:buildTests}", "--legacy", "${input:buildLegacy}"],
+      "args": ["build", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "${input:arbitraryTarget}", "--jobs", "${input:buildJobs}", "--tests", "${input:buildTests}"],
       "options": { "cwd": "${workspaceFolder}" },
       "group": "build",
       "problemMatcher": []
@@ -76,7 +76,7 @@
       "windows": {
         "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      "args": ["test", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--jobs", "${input:buildJobs}", "--legacy", "OFF"],
+      "args": ["test", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--jobs", "${input:buildJobs}"],
       "options": { "cwd": "${workspaceFolder}" },
       "group": "test",
       "problemMatcher": []
@@ -126,29 +126,6 @@
       "args": ["deps", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--triplet", "${input:vcpkgTriplet}"],
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
-    },
-    {
-      "label": "[CGLab] Advanced: build legacy",
-      "type": "process",
-      "command": "${workspaceFolder}/scripts/cglab.sh",
-      "windows": {
-        "command": "${workspaceFolder}/scripts/cglab.cmd"
-      },
-      "args": ["build", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "VulkanSampleLegacy", "--jobs", "${input:buildJobs}", "--legacy", "ON"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "group": "build",
-      "problemMatcher": []
-    },
-    {
-      "label": "[CGLab] Configure legacy",
-      "type": "process",
-      "command": "${workspaceFolder}/scripts/cglab.sh",
-      "windows": {
-        "command": "${workspaceFolder}/scripts/cglab.cmd"
-      },
-      "args": ["configure", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--legacy", "ON"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "problemMatcher": []
     }
   ],
   "inputs": [
@@ -170,13 +147,6 @@
       "id": "buildTests",
       "type": "pickString",
       "description": "是否配置 CTest targets",
-      "options": ["OFF", "ON"],
-      "default": "OFF"
-    },
-    {
-      "id": "buildLegacy",
-      "type": "pickString",
-      "description": "是否启用 VulkanSampleLegacy",
       "options": ["OFF", "ON"],
       "default": "OFF"
     },
