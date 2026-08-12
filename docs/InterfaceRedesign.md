@@ -17,7 +17,7 @@
 **与 v1 设计的偏差（刻意决策，非遗漏）**：
 1. per-object 变换用 **push constant mat4**（v1 写的是 per-draw uniform 数组）——不改 descriptor 布局，代价最小。
 2. 运行时几何进 **geometry arena**（64MB+16MB device-local，bump+空闲链表回收），上传批次经 RG cache key 图变体做一次性 copy（v1 写的是 ring staging）——与 legacy `mesh_upload_pending` 同一模式，RG 无需结构改动。
-3. glTF 节点变换在 **worker 线程侧烘焙进顶点**（v1 设想主线程烘焙）——异步目标不变，主线程零解析开销；层级信息丢失记入 `Architecture.md` 欠债清单。
+3. ~~glTF 节点变换在 worker 线程侧烘焙进顶点~~（已作废）：DCL 重构后 adapter 保留 node/parent/local transform 行，world transform 由主线程合并时沿 parent 链解析；层级信息不再丢失。
 4. 拾取为 fly 模式左键（v1 未定具体键位）；orbit 左键仍是环绕，不冲突。
 
 ## 2. 剩余目标（未做部分）

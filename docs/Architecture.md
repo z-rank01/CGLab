@@ -9,7 +9,7 @@ TriangleSample / GltfSponzaSample
         |-- cglab_application_runner
         |       `-- cglab_engine_runtime
         |              |-- cglab_engine_core
-        |              |-- cglab_asset_runtime --> cglab_asset_gltf
+        |              |-- cglab_asset_runtime --> cglab_asset_gltf --> dcl::gltf (DCL)
         |              `-- cglab_platform_sdl
         |-- Sample-specific API-neutral recipe
         `-- cglab_sdl_vulkan_surface
@@ -41,7 +41,7 @@ publish_telemetry
 
 phase 顺序显式固定。worker 只写私有值类型结果，主线程在帧边界合并；load、unload、resize、pause/step 都转换为 request rows。关闭流程可重复执行。
 
-glTF adapter 输出 CPU Asset Database：node/parent/local transform、mesh、primitive、material、image、sampler 行和共享 vertex/index blobs。节点变换不烘焙进顶点，同一 mesh 可由多个 node 实例化。当前支持 Core 2.0 静态 metallic-roughness PBR；动画、蒙皮、morph、KHR 材质扩展和 IBL 不在当前范围。
+CPU Asset Database 行表模型（node/parent/local transform、mesh、primitive、material、image、sampler 行和共享 vertex/index blobs）由子仓库 `third_party/digital-content-loader`（DCL）的 `dcl::core` 定义，格式无关，glTF 与未来的 FBX/OBJ loader 共用同一输出；glTF 加载实现（`dcl::gltf`）也在 DCL 内，主仓 `cglab_asset_gltf` 只做 DCL 结果到 Engine 契约的薄映射，Engine 公共头通过 `using` 别名复用 DCL 行类型而不引入 glTF 类型。节点变换不烘焙进顶点，同一 mesh 可由多个 node 实例化。当前支持 Core 2.0 静态 metallic-roughness PBR；动画、蒙皮、morph、KHR 材质扩展和 IBL 不在当前范围。
 
 ## Render Graph 与 Vulkan
 
@@ -75,5 +75,14 @@ compiled-plan rows。graph/compiler 的 `compiler_state`、DAG 与 free-function
 - Engine、资产和 graph recipe 保持 API 无关；特殊能力由 backend capabilities 和结构化诊断表达。
 - 新 GPU 资源、descriptor、pipeline 或 command side effect 只能进入 RG Vulkan backend。
 - 构建时的 `ArchitectureContract.cmake` 固化这些依赖和调用边界。
+
+## 还债清单（2026-08 准则审查）
+
+- `update_scene_transforms` 当前是空 phase：矩阵在 merge/extract 时解析，该 phase 名存实亡，应承担 dirty transform 批量重算或调整固定表语义。
+- `poll_events` 内有两处提前副作用（resize 直接 `request_resize`、拾取命中后即时发布遥测），应改为请求行并归并到 `publish_telemetry` 出口。
+- DI 风格不统一：`render_driver` 为 opaque state + function table，`asset_service`/`window` 为虚接口。
+- `scene_registry` 为胖 AoS 行（内含 `std::string`/`std::vector`）且 `find` 为 O(n) 线性扫描，可改为 id→slot 索引。
+- runtime 合并加载结果时把共享 blob 切片回拷为每 primitive 一份的 `geometry_asset` vectors（SoA→AoS 回退点）。
+- RG Vulkan backend：`vk_graph_executor` 与 `vk_runtime` 双资源表中心并存；executor 侧 retirement 以 frame 命名但实际按 submission 序号驱动；bindless 默认资源内含 default normal map（PBR 语义下沉）；`backend_capabilities()` 返回硬编码默认值而非设备实测。
 
 更多执行细节见 [RenderGraphAndRHI.md](RenderGraphAndRHI.md)，runtime 组合方式见 [ApplicationRuntime.md](ApplicationRuntime.md)。
