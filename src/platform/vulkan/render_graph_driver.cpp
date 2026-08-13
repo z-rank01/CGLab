@@ -41,6 +41,13 @@ namespace platform::vulkan
                     .frames_in_flight = config.frames_in_flight,
                     .validation = config.validation,
                     .surface = make_sdl_surface_provider(window),
+                    .diagnostics = {nullptr, [](void*, render_graph::diagnostic_severity severity, std::string_view message)
+                    {
+                        std::cerr << "[RenderGraph][" << (severity == render_graph::diagnostic_severity::error ? "Error"
+                                                            : severity == render_graph::diagnostic_severity::warning ? "Warning"
+                                                                                                                     : "Info")
+                                  << "] " << message << '\n';
+                    }},
                 });
                 if (!created) return engine::result<bool>{.error = created.error};
                 state.device = std::move(created.device);

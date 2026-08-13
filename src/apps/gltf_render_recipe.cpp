@@ -14,7 +14,7 @@ namespace apps
 {
     namespace
     {
-        constexpr uint64_t geometry_capacity = 128ull * 1024ull * 1024ull;
+        constexpr uint64_t geometry_capacity = 256ull * 1024ull * 1024ull;
         constexpr uint32_t max_draws = 65536;
         constexpr uint32_t max_materials = 4096;
 
