@@ -37,6 +37,8 @@ Actions:
   setup        Initialize submodules, pinned vcpkg, dependencies and Debug.
   deps         Bootstrap vcpkg and install the manifest for the selected triplet.
   configure    Configure one CMake preset.
+  normalize-ccdb
+               Lowercase drive letters in generated compile_commands.json files.
   build        Build one target (default: TriangleSample).
   test         Configure with tests, build all and run CTest.
   smoke        Build and run TriangleSample or GltfSponzaSample.
@@ -350,7 +352,30 @@ function Configure-Project([bool]$ForceTests = $false) {
     $arguments += @("--preset", $preset, "-DBUILD_TESTING=$(if ($ForceTests) { 'ON' } else { $Options.Tests })")
     Push-Location $Root
     try { Invoke-Native "cmake" $arguments } finally { Pop-Location }
+    Invoke-NormalizeCompileCommands
     return $preset
+}
+
+function Invoke-NormalizeCompileCommands {
+    if (-not $IsWindowsHost) { return }
+    $files = Get-ChildItem (Join-Path $Root "build") -Recurse -File -Filter "compile_commands.json" -ErrorAction SilentlyContinue
+    $changed = 0
+    foreach ($file in $files) {
+        $json = [IO.File]::ReadAllText($file.FullName)
+        # VS Code sends file URIs with a lowercase drive letter; clangd must see the
+        # same spelling in the compilation database, or rename edits get duplicated
+        # per file ("Rename failed to apply edits"). Rewrite both slash variants:
+        # "D:/..." and JSON-escaped "D:\\...".
+        $normalized = [regex]::Replace($json, '([A-Z]):(?=[/\\])', { param($match) $match.Value.ToLowerInvariant() })
+        if ($normalized -cne $json) {
+            $encoding = New-Object System.Text.UTF8Encoding($false)
+            [IO.File]::WriteAllText($file.FullName, $normalized, $encoding)
+            $relative = $file.FullName.Substring($Root.Length + 1)
+            Write-Host "  [ok] normalized drive letters in $relative"
+            $changed++
+        }
+    }
+    if ($changed -eq 0) { Write-Host "  [ok] compile_commands.json files already lowercase" }
 }
 
 function Build-Target([string]$Preset, [string]$Target) {
@@ -407,6 +432,7 @@ try {
         }
         "deps" { Install-Dependencies }
         "configure" { Configure-Project | Out-Null }
+        "normalize-ccdb" { Invoke-NormalizeCompileCommands }
         "build" { Build-Target (Configure-Project) $Options.Target }
         "test" {
             $preset = Configure-Project $true

@@ -35,6 +35,17 @@
       "problemMatcher": []
     },
     {
+      "label": "[CGLab] Normalize compile_commands",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/cglab.sh",
+      "windows": {
+        "command": "${workspaceFolder}/scripts/cglab.cmd"
+      },
+      "args": ["normalize-ccdb"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
       "label": "[CGLab] Configure fresh",
       "type": "process",
       "command": "${workspaceFolder}/scripts/cglab.sh",
