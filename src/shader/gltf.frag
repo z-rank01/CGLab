@@ -147,7 +147,12 @@ void main()
     vec3 emissive = material.emissive_metallic.xyz *
                     texture(sampler2D(sampled_images[emissive_image], samplers[emissive_sampler]),
                             material_uv(material.emissive_texture.z)).rgb;
-    vec3 ambient = base_color.rgb * 0.03 * occlusion;
+    // 半球环境光：天空/地面双色按法线朝向混合，金属材质（diffuse≈0）靠它
+    // 提供无 IBL 时的近似环境反射，避免整体发黑。
+    vec3 sky_tint = vec3(0.55, 0.62, 0.72);
+    vec3 ground_tint = vec3(0.30, 0.27, 0.24);
+    vec3 ambient_color = mix(ground_tint, sky_tint, 0.5 + 0.5 * normal.y);
+    vec3 ambient = base_color.rgb * ambient_color * 0.35 * occlusion;
     // 阴影只调制平行光贡献（点光保持无阴影，避免双重遮挡）
     float shadow = sample_shadow(world_position, normal, sun_direction,
                                  light_uniforms[light_slot].shadow_texel_size);

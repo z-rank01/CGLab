@@ -1,4 +1,5 @@
 #include <filesystem>
+#include <limits>
 
 #include "apps/application_options.h"
 #include "apps/application_runner.h"
@@ -10,6 +11,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "engine/render_backend.h"
+#include "scene/scene_registry.h"
 
 namespace
 {
@@ -88,11 +90,13 @@ int main(int argc, char** argv)
                     },
             };
             const auto frames = options.smoke_test ? std::optional<std::uint64_t>(options.frame_limit.value_or(3)) : options.frame_limit;
+            // 平面贴地状态：首帧把平面移到物件包围盒最低点之下（对任意 glb 自适应）
+            auto plane_fit = std::make_shared<bool>(false);
             engine::sample sample{
                 .name = "ShadowSample",
                 .startup_geometry = make_ground_plane(),
                 .required_startup_asset = asset_path.string(),
-                .update = [](engine::runtime_services& services, float)
+                .update = [plane_fit](engine::runtime_services& services, float)
                 {
                     // 冷色补光：照亮物件背光面（无阴影，避免与主光阴影打架）
                     apps::lights_table lights;
@@ -117,6 +121,34 @@ int main(int argc, char** argv)
                     sun.view_proj[1][1] *= -1.0F;
                     sun.ortho_box = {-extent, extent, -extent, extent};
                     services.channels.publish_state<apps::sun_light>(&sun);
+
+                    // 平面贴地（一次性）：物件原点常在包围盒中心（如 helmet），平面
+                    // 需移到物件最低点之下，否则下半截插进地里。扫描除平面外的
+                    // 存活对象世界 AABB 取最低点。
+                    if (*plane_fit)
+                    {
+                        return;
+                    }
+                    float asset_min_y = std::numeric_limits<float>::max();
+                    scene::object_id plane_id = scene::invalid_object_id;
+                    for (const scene::scene_object* object : services.scene.objects())
+                    {
+                        if (object->name == "GroundPlane")
+                        {
+                            plane_id = object->id;
+                            continue;
+                        }
+                        const auto world_bounds = scene::transform_bounds(object->local_bounds,
+                                                                         scene::model_matrix(*object));
+                        asset_min_y = std::min(asset_min_y, world_bounds.min.y);
+                    }
+                    if (plane_id != scene::invalid_object_id && asset_min_y < std::numeric_limits<float>::max())
+                    {
+                        scene::object_transform transform{};
+                        transform.position = {0.0F, asset_min_y - 0.02F, 0.0F};
+                        (void)services.scene.set_transform(plane_id, transform);
+                        *plane_fit = true;
+                    }
                 },
             };
             return apps::application_setup_result{.request = apps::application_run_request{
