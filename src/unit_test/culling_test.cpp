@@ -139,7 +139,7 @@ namespace
     void test_cull_instances_conservative_out_of_range()
     {
         engine::culling_manager manager;
-        engine::attach_culling(manager, 0, true);
+        (void)engine::attach_culling(manager, 0, true);
 
         // 句柄越界 / transform 越界：保守判可见
         std::vector<engine::instance_row> instances{{.mesh = 99, .transform = 99}};
@@ -158,7 +158,7 @@ namespace
         // 无组件：直通语义由调用方保证（present == 0）
         check(manager.present.empty(), "no component rows by default");
 
-        engine::attach_culling(manager, 0, false);
+        (void)engine::attach_culling(manager, 0, false);
         check(manager.present[0] == 1 && manager.enabled[0] == 0, "attach with disabled switch");
 
         engine::set_culling_enabled(manager, 0, true);
@@ -170,7 +170,7 @@ namespace
         engine::detach_culling(manager, 0);
         check(manager.present[0] == 0 && manager.enabled[0] == 0, "detach clears component row");
 
-        engine::attach_culling(manager, 2, true);
+        (void)engine::attach_culling(manager, 2, true);
         check(manager.present.size() == 3 && manager.present[2] == 1, "attach grows columns to camera index");
     }
 } // namespace
