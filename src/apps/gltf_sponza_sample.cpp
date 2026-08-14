@@ -3,6 +3,7 @@
 #include "apps/application_options.h"
 #include "apps/application_runner.h"
 #include "apps/gltf_render_recipe.h"
+#include "apps/lights_table.h"
 
 namespace
 {
@@ -50,9 +51,24 @@ int main(int argc, char** argv)
                     },
             };
             const auto frames = options.smoke_test ? std::optional<std::uint64_t>(options.frame_limit.value_or(3)) : options.frame_limit;
+            // F3：插件侧发布光源表（每帧两盏灯：暖色主光 + 冷色补光）。
+            // 引擎零改动——sample 经 services.channels 发布组件表通道，
+            // gltf recipe 在 build_frame 经 find_state 消费。
+            engine::sample sample{
+                .name = "GltfSponzaSample",
+                .required_startup_asset = asset_path.string(),
+                .update = [](engine::runtime_services& services, float)
+                {
+                    apps::lights_table lights;
+                    lights.positions = {{-1.0F, 3.0F, 2.0F}, {2.0F, 2.0F, -1.0F}};
+                    lights.colors = {{1.0F, 0.9F, 0.8F}, {0.4F, 0.6F, 1.0F}};
+                    lights.intensities = {3.0F, 2.0F};
+                    services.channels.publish_state<apps::lights_table>(&lights);
+                },
+            };
             return apps::application_setup_result{.request = apps::application_run_request{
                                                       .runtime     = std::move(config),
-                                                      .sample      = {.name = "GltfSponzaSample", .required_startup_asset = asset_path.string()},
+                                                      .sample      = std::move(sample),
                                                       .renderer    = apps::create_gltf_render_driver(),
                                                       .frame_limit = frames,
                                                       .require_validation_clean = options.validation,

@@ -773,6 +773,9 @@ bool engine_runtime::tick(std::optional<std::uint64_t> frame_limit)
     while (!window->should_close())
     {
         frame_phase_context context;
+        // F2 修正：帧首清零（发布窗口 = 整帧；sample 系统在 run_sample_systems 发布，
+        // 若在 extract 里 clear 会冲掉其通道）。extract 只发布，不 clear。
+        extract.channels.clear();
         const auto frame_begin = std::chrono::steady_clock::now();
         std::array<std::uint64_t, measure::phase_count> phase_us{};
         for (std::uint32_t phase_index = 0; phase_index < measure::phase_count; ++phase_index)
@@ -854,6 +857,7 @@ void engine_runtime::run_sample_systems(frame_phase_context& context)
         .scene = scene_registry,
         .cameras = camera_container,
         .active_camera = camera_entity_index,
+        .channels = extract.channels,
         .request_asset = [this](std::filesystem::path path)
         {
             auto requested = loads.asset_loader->request(std::move(path));
@@ -912,8 +916,7 @@ void engine_runtime::extract_render_packet(frame_phase_context& context)
     }
 
     // F2：发布帧通道（camera / instance / transform；instance 为剔除后的行）。
-    // 帧首 clear：发布窗口 = 阶段表顺序（extract 位于 submit 之前），每通道单写者。
-    extract.channels.clear();
+    // 帧首已 clear（tick 循环），此处只发布——发布窗口 = 阶段表顺序，每通道单写者。
     extract.channels.publish_rows<engine::camera_row>(extract.render_cameras);
     extract.channels.publish_rows<engine::instance_row>(extract.frame_instance_rows);
     extract.channels.publish_rows<glm::mat4>(extract.render_transforms);

@@ -26,10 +26,20 @@ layout(set = 0, binding = 4, std430) readonly buffer MaterialTable {
     MaterialRow rows[];
 } material_tables[];
 
+// F3：光源表（复用 binding 4 storage buffer 表，按 lights_buffer_slot 索引；
+// std430 三列连续；light_positions/light_colors 为 vec4 行）
+layout(set = 0, binding = 4, std430) readonly buffer LightTable {
+    vec4 light_positions[];
+    vec4 light_colors[];
+    float light_intensities[];
+} light_tables[];
+
 layout(push_constant) uniform ObjectPush {
     uint frame_uniform_slot;
     uint transform_buffer_slot;
     uint material_buffer_slot;
+    uint lights_buffer_slot;
+    uint light_count;
 } object_push;
 
 const float PI = 3.14159265359;
@@ -65,6 +75,14 @@ void main()
     if (dot(tangent_raw, tangent_raw) > 1e-10 && dot(bitangent_raw, bitangent_raw) > 1e-10)
         normal = normalize(mat3(normalize(tangent_raw), normalize(bitangent_raw), base_normal) * tangent_normal);
     vec3 light_direction = normalize(vec3(-0.4, -1.0, -0.3));
+    float light_intensity = 3.0;
+    if (object_push.light_count > 0)
+    {
+        // F3：光源表第一盏灯（方向 = 灯 → 片元；强度来自通道）
+        uint light_slot = nonuniformEXT(object_push.lights_buffer_slot);
+        light_direction = normalize(light_tables[light_slot].light_positions[0].xyz - world_position);
+        light_intensity = light_tables[light_slot].light_intensities[0];
+    }
     vec3 view_direction = normalize(-world_position);
     vec3 half_vector = normalize(view_direction - light_direction);
     uint mr_image = nonuniformEXT(material.image_slots.y);
@@ -90,6 +108,6 @@ void main()
                     texture(sampler2D(sampled_images[emissive_image], samplers[emissive_sampler]),
                             material_uv(material.emissive_texture.z)).rgb;
     vec3 ambient = base_color.rgb * 0.03 * occlusion;
-    vec3 color = ambient + (diffuse + specular) * ndotl * 3.0 + emissive;
+    vec3 color = ambient + (diffuse + specular) * ndotl * light_intensity + emissive;
     out_color = vec4(color, base_color.a);
 }

@@ -33,6 +33,8 @@ layout(push_constant) uniform ObjectPush {
     uint frame_uniform_slot;
     uint transform_buffer_slot;
     uint material_buffer_slot;
+    uint lights_buffer_slot;
+    uint light_count; // 与 frag 的 ObjectPush 布局一致（本 stage 未消费）
 } object_push;
 
 void main() 

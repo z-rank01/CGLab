@@ -1,7 +1,9 @@
 #include "apps/gltf_render_recipe.h"
+#include "apps/lights_table.h"
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <span>
@@ -19,6 +21,8 @@ namespace apps
         constexpr uint64_t geometry_capacity = 256ull * 1024ull * 1024ull;
         constexpr uint32_t max_draws = 65536;
         constexpr uint32_t max_materials = 4096;
+        // F3：光源表上传容量（SoA 三列连续布局：positions | colors | intensities）
+        constexpr uint32_t max_lights = 64;
 
         struct frame_uniform { glm::mat4 model{1.0F}; glm::mat4 view{1.0F}; glm::mat4 projection{1.0F}; };
         struct transform_row { glm::mat4 model{1.0F}; glm::uvec4 metadata{}; };
@@ -38,6 +42,8 @@ namespace apps
             uint32_t frame_uniform_slot = 0;
             uint32_t transform_buffer_slot = 0;
             uint32_t material_buffer_slot = 0;
+            uint32_t lights_buffer_slot = 0; // F3：光源表所在 storage buffer 表 slot
+            uint32_t light_count = 0;        // F3：本帧光源数（0 = 无光源，shader 回退硬编码方向光）
         };
         struct geometry_row { std::vector<engine::draw_range> draws; bool alive = true; };
         struct draw_candidate
@@ -53,10 +59,12 @@ namespace apps
             render_graph::device_buffer_handle transforms;
             render_graph::device_buffer_handle indirect;
             render_graph::device_buffer_handle materials;
+            render_graph::device_buffer_handle lights; // F3：光源表（positions | colors | intensities 三列连续）
             std::vector<render_graph::device_buffer_handle> frame_uniforms;
             std::array<render_graph::device_pipeline_handle, 4> pipelines;
             uint32_t transform_slot = 0;
             uint32_t material_slot = 0;
+            uint32_t lights_slot = 0;
             std::vector<uint32_t> frame_slots;
             std::vector<geometry_row> geometries;
             std::vector<material_gpu_row> material_rows{1};
@@ -119,6 +127,12 @@ namespace apps
                   .memory = render_graph::memory_domain::upload,
                   .mapping = render_graph::mapping_policy::persistent,
                   .lifetime = render_graph::resource_lifetime_class::persistent}},
+                // F3：光源表 buffer（positions | colors | intensities 三列连续，std430 布局）
+                {{.size = sizeof(glm::vec4) * max_lights * 2 + sizeof(float) * max_lights,
+                  .usage = render_graph::buffer_usage::STORAGE_BUFFER,
+                  .memory = render_graph::memory_domain::upload,
+                  .mapping = render_graph::mapping_policy::persistent,
+                  .lifetime = render_graph::resource_lifetime_class::persistent}},
             };
             for (uint32_t frame = 0; frame < config.frames_in_flight; ++frame)
                 buffers.push_back({{.size = sizeof(frame_uniform),
@@ -167,7 +181,8 @@ namespace apps
             state.transforms = created.buffers[1];
             state.indirect = created.buffers[2];
             state.materials = created.buffers[3];
-            state.frame_uniforms.assign(created.buffers.begin() + 4, created.buffers.end());
+            state.lights = created.buffers[4];
+            state.frame_uniforms.assign(created.buffers.begin() + 5, created.buffers.end());
             std::copy_n(created.graphics_pipelines.begin(), 4, state.pipelines.begin());
 
             std::vector<render_graph::bindless_publish_row> publishes{
@@ -175,6 +190,8 @@ namespace apps
                  .buffer = state.transforms, .size = sizeof(transform_row) * max_draws},
                 {.table = render_graph::bindless_table_kind::storage_buffers,
                  .buffer = state.materials, .size = sizeof(material_gpu_row) * max_materials},
+                {.table = render_graph::bindless_table_kind::storage_buffers,
+                 .buffer = state.lights, .size = sizeof(glm::vec4) * max_lights * 2 + sizeof(float) * max_lights},
             };
             for (const auto buffer : state.frame_uniforms)
                 publishes.push_back({.table = render_graph::bindless_table_kind::uniform_buffers,
@@ -186,7 +203,8 @@ namespace apps
             if (!bound) return {.error = bound.error};
             state.transform_slot = bound.bindless_slots[0];
             state.material_slot = bound.bindless_slots[1];
-            state.frame_slots.assign(bound.bindless_slots.begin() + 2, bound.bindless_slots.end());
+            state.lights_slot = bound.bindless_slots[2];
+            state.frame_slots.assign(bound.bindless_slots.begin() + 3, bound.bindless_slots.end());
             return {.value = true};
         }
 
@@ -394,28 +412,58 @@ namespace apps
             frame_uniform uniform{.view = camera_rows.front().view,
                                   .projection = camera_rows.front().projection};
             uniform.projection[1][1] *= -1.0F;
-            std::array<render_graph::buffer_upload_row, 3> uploads{
+            // F3：帧通道消费光源表（缺失 → 无光源，shader 回退硬编码方向光——编写者责任）。
+            const apps::lights_table* lights = packet.channels->find_state<apps::lights_table>();
+            const std::uint32_t light_count = (lights != nullptr && lights->count() <= max_lights)
+                                                  ? static_cast<std::uint32_t>(lights->count())
+                                                  : 0U;
+            std::vector<glm::vec4> gpu_positions;
+            std::vector<glm::vec4> gpu_colors;
+            std::vector<float> gpu_intensities;
+            if (light_count > 0)
+            {
+                gpu_positions.reserve(light_count);
+                gpu_colors.reserve(light_count);
+                gpu_intensities.reserve(light_count);
+                for (std::uint32_t i = 0; i < light_count; ++i)
+                {
+                    gpu_positions.push_back(glm::vec4(lights->positions[i], 0.0F));
+                    gpu_colors.push_back(glm::vec4(lights->colors[i], 1.0F));
+                    gpu_intensities.push_back(lights->intensities[i]);
+                }
+            }
+            std::array<render_graph::buffer_upload_row, 6> uploads{
                 render_graph::buffer_upload_row{state.frame_uniforms[environment.frame_index], 0,
                                                 std::as_bytes(std::span(&uniform, 1))},
                 render_graph::buffer_upload_row{state.transforms, 0,
                                                 std::as_bytes(std::span(state.transform_rows))},
                 render_graph::buffer_upload_row{state.indirect, 0,
                                                 std::as_bytes(std::span(state.commands))},
+                render_graph::buffer_upload_row{state.lights, 0,
+                                                std::as_bytes(std::span(gpu_positions))},
+                render_graph::buffer_upload_row{state.lights, sizeof(glm::vec4) * max_lights,
+                                                std::as_bytes(std::span(gpu_colors))},
+                render_graph::buffer_upload_row{state.lights, sizeof(glm::vec4) * max_lights * 2,
+                                                std::as_bytes(std::span(gpu_intensities))},
             };
-            const auto updated = device.apply_resource_changes({.buffer_uploads = uploads});
+            const std::uint32_t upload_count = light_count > 0 ? 6U : 3U;
+            const auto updated = device.apply_resource_changes(
+                {.buffer_uploads = std::span(uploads.data(), upload_count)});
             if (!updated) return {.error = updated.error};
             if (packet.counters)
             {
                 // draw/upload 计数回填（A0）：本帧命令数 + 加载帧的 staging 行数
                 packet.counters->draw_commands = state.commands.size();
                 packet.counters->buffer_upload_count =
-                    uploads.size() + std::exchange(state.staged_buffer_upload_count, 0);
+                    upload_count + std::exchange(state.staged_buffer_upload_count, 0);
                 packet.counters->image_upload_count = std::exchange(state.staged_image_upload_count, 0);
             }
             state.push = {
                 .frame_uniform_slot = state.frame_slots[environment.frame_index],
                 .transform_buffer_slot = state.transform_slot,
                 .material_buffer_slot = state.material_slot,
+                .lights_buffer_slot = state.lights_slot,
+                .light_count = light_count,
             };
             plan.cache_key = 0x474c544650425200ull;
             state.frame_resources = {{
