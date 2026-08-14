@@ -76,6 +76,17 @@ compiled-plan rows。graph/compiler 的 `compiler_state`、DAG 与 free-function
 - 新 GPU 资源、descriptor、pipeline 或 command side effect 只能进入 RG Vulkan backend。
 - 构建时的 `ArchitectureContract.cmake` 固化这些依赖和调用边界。
 
+**行表命名约定**（与 DCL "asset database"、RG 子仓 `*_rows → *_table` 卫生对齐；不采用 record/tuple——
+SoA 语义下 `row` 是"横跨并行列的逻辑切片"，`record` 暗示连续存储 blob，`tuple` 与 `std::tuple` 撞名）：
+
+- 多列 SoA 容器 → `*_table`（如 RG 的 `compiled_pass_table`）；
+- 同质 vector/span（元素 = 逻辑行）→ 复数 `*_rows`（如 `instance_rows`、`transform_rows`）；
+- 单个元素 → `*_row`（如 `instance_row`、`buffer_upload_row`）；
+- 标量计数 → `*_count`（如 `frame_counters.visible_count`），**禁止用 `*_rows` 命名计数**；
+- 组件 + 管理器文件以管理器命名（如 `culling_manager.h`），"system"一词只属于每帧系统函数
+  （如 `cull_instances`）；组件存储与系统执行上下文（transient scratch）同处 manager，
+  纯函数数学放 `_interface/`。
+
 ## 还债清单（2026-08 准则审查）
 
 - `update_scene_transforms` 当前是空 phase：矩阵在 merge/extract 时解析，该 phase 名存实亡，应承担 dirty transform 批量重算或调整固定表语义。
