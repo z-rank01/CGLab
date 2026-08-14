@@ -727,12 +727,12 @@ void engine_runtime::publish_frame_telemetry()
                                                                 {"phase_us", std::move(phase_us)},
                                                                 {"quantiles", std::move(quantiles)},
                                                                 {"counters",
-                                                                 {{"instances", frame_counters.instance_rows},
-                                                                  {"visible", frame_counters.visible_rows},
-                                                                  {"culled", frame_counters.culled_rows},
+                                                                 {{"instances", frame_counters.instance_count},
+                                                                  {"visible", frame_counters.visible_count},
+                                                                  {"culled", frame_counters.culled_count},
                                                                   {"draws", frame_counters.draw_commands},
-                                                                  {"buffer_uploads", frame_counters.buffer_upload_rows},
-                                                                  {"image_uploads", frame_counters.image_upload_rows}}},
+                                                                  {"buffer_uploads", frame_counters.buffer_upload_count},
+                                                                  {"image_uploads", frame_counters.image_upload_count}}},
                                                             }));
 
     publish_scene_telemetry_if_changed();
@@ -786,12 +786,12 @@ bool engine_runtime::tick(std::optional<std::uint64_t> frame_limit)
         if (metrics_ring)
         {
             std::array<std::uint64_t, measure::counter_slot_count> counter_slots{};
-            counter_slots[0] = frame_counters.instance_rows;
-            counter_slots[1] = frame_counters.visible_rows;
-            counter_slots[2] = frame_counters.culled_rows;
+            counter_slots[0] = frame_counters.instance_count;
+            counter_slots[1] = frame_counters.visible_count;
+            counter_slots[2] = frame_counters.culled_count;
             counter_slots[3] = frame_counters.draw_commands;
-            counter_slots[4] = frame_counters.buffer_upload_rows;
-            counter_slots[5] = frame_counters.image_upload_rows;
+            counter_slots[4] = frame_counters.buffer_upload_count;
+            counter_slots[5] = frame_counters.image_upload_count;
             measure::push(*metrics_ring,
                           static_cast<std::uint64_t>(
                               std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() -
@@ -874,7 +874,7 @@ void engine_runtime::extract_render_packet(frame_phase_context& context)
         render_transforms.push_back(scene::model_matrix(*object));
         render_instances.push_back({.mesh = object->render_geometry, .transform = transform});
     }
-    frame_counters.instance_rows = render_instances.size();
+    frame_counters.instance_count = render_instances.size();
     render_cameras = {engine::camera_row{
         .view = interface::get_view_matrix(camera_container.transforms[camera_entity_index]),
         .projection = interface::get_projection_matrix(camera_container.transforms[camera_entity_index],
@@ -892,12 +892,12 @@ void engine_runtime::extract_render_packet(frame_phase_context& context)
         frame_instance_rows = engine::cull_instances(culling, camera_entity_index, view_projection,
                                                      render_instances, render_transforms,
                                                      mesh_bounds_min, mesh_bounds_max, &culled);
-        frame_counters.visible_rows = frame_instance_rows.size();
-        frame_counters.culled_rows = culled;
+        frame_counters.visible_count = frame_instance_rows.size();
+        frame_counters.culled_count = culled;
     }
     else
     {
-        frame_counters.visible_rows = render_instances.size();
+        frame_counters.visible_count = render_instances.size();
     }
 }
 

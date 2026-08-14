@@ -47,14 +47,15 @@ namespace engine
 
     // 帧计数器（A0）：engine 填 instance/visible/culled，recipe 填 draw/upload 行数。
     // 主线程单写者：engine 在 extract 阶段清零并填自己的字段，recipe 在 build_frame 只写自己的字段。
+    // 命名约定：标量计数用 *_count（*_rows 只用于真正的行表/span）。
     struct frame_counters
     {
-        std::uint64_t instance_rows = 0;
-        std::uint64_t visible_rows = 0;
-        std::uint64_t culled_rows = 0;
+        std::uint64_t instance_count = 0;
+        std::uint64_t visible_count = 0;
+        std::uint64_t culled_count = 0;
         std::uint64_t draw_commands = 0;
-        std::uint64_t buffer_upload_rows = 0;
-        std::uint64_t image_upload_rows = 0;
+        std::uint64_t buffer_upload_count = 0;
+        std::uint64_t image_upload_count = 0;
     };
 
     // 加载分段报告（A0）：worker 填 load_us（dcl::load_gltf 全程，单次黑盒调用），
