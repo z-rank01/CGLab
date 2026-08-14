@@ -66,6 +66,10 @@ add_test(
         -P ${PROJECT_SOURCE_DIR}/cmake/ArchitectureContract.cmake
 )
 
+add_executable(cglab_culling_tests culling_test.cpp)
+target_link_libraries(cglab_culling_tests PRIVATE cglab_engine_core)
+cglab_register_test(cglab_culling_tests cglab.culling)
+
 add_executable(cglab_measure_tests measure_test.cpp)
 target_link_libraries(cglab_measure_tests PRIVATE measure)
 cglab_register_test(cglab_measure_tests cglab.measure)
