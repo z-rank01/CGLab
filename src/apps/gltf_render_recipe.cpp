@@ -45,7 +45,6 @@ namespace apps
             uint32_t lights_buffer_slot = 0; // 光源表所在 storage buffer 表 slot
             uint32_t light_count = 0;        // 本帧光源数（0 = 无光源，shader 回退硬编码方向光）
         };
-        struct geometry_row { std::vector<engine::draw_range> draws; bool alive = true; };
         struct draw_candidate
         {
             glm::mat4 model{1.0F};
@@ -66,7 +65,12 @@ namespace apps
             uint32_t material_slot = 0;
             uint32_t lights_slot = 0;
             std::vector<uint32_t> frame_slots;
-            std::vector<geometry_row> geometries;
+            // geometry 列（CSR，与 scene_registry 同款模式）：扁平 draw 列 + 每 mesh
+            // begin/count 切片 + 存活列；mesh handle 直接索引列槽（build_frame 热路径直读列）。
+            std::vector<engine::draw_range> geometry_draws;
+            std::vector<std::uint32_t> geometry_draw_begins;
+            std::vector<std::uint32_t> geometry_draw_counts;
+            std::vector<std::uint8_t> geometry_alive;
             std::vector<material_gpu_row> material_rows{1};
             uint64_t geometry_cursor = 0;
             std::vector<transform_row> transform_rows;
@@ -75,6 +79,8 @@ namespace apps
             uint64_t staged_buffer_upload_count = 0;
             uint64_t staged_image_upload_count = 0;
             std::array<render_graph::draw_indexed_indirect_row, 4> draws;
+            // 每帧分组 scratch（帧间复用，clear 后重建，稳态零分配）
+            std::array<std::vector<draw_candidate>, 4> group_scratch;
             push_constants push;
             std::array<render_graph::frame_resource_row, 5> frame_resources;
             std::array<render_graph::frame_buffer_access_row, 3> frame_buffer_accesses;
@@ -309,14 +315,20 @@ namespace apps
                 if (!plan) return {.error = plan.error};
                 std::vector<render_graph::buffer_upload_row> uploads;
                 uploads.reserve(plan.primitives.size() * 2);
-                std::vector<geometry_row> created;
-                created.reserve(row.mesh_count);
+                // 先建本地列，上传成功后才并入 state（失败不污染状态）
+                std::vector<engine::draw_range> created_draws;
+                created_draws.reserve(plan.primitives.size());
+                std::vector<std::uint32_t> created_begins;
+                created_begins.reserve(row.mesh_count);
+                std::vector<std::uint32_t> created_counts;
+                created_counts.reserve(row.mesh_count);
                 std::size_t primitive_index = 0;
                 for (std::uint32_t mesh = 0; mesh < row.mesh_count; ++mesh)
                 {
-                    geometry_row geometry;
-                    geometry.draws.reserve(plan.mesh_primitive_counts[mesh]);
-                    for (std::uint32_t k = 0; k < plan.mesh_primitive_counts[mesh]; ++k)
+                    const std::uint32_t draw_count = plan.mesh_primitive_counts[mesh];
+                    created_begins.push_back(static_cast<std::uint32_t>(created_draws.size()));
+                    created_counts.push_back(draw_count);
+                    for (std::uint32_t k = 0; k < draw_count; ++k)
                     {
                         const auto& pp = plan.primitives[primitive_index++];
                         uploads.push_back({state.geometry, pp.vertex_byte_offset,
@@ -325,25 +337,30 @@ namespace apps
                         uploads.push_back({state.geometry, pp.index_byte_offset,
                                            std::as_bytes(std::span(row.asset->index_blob)
                                                              .subspan(pp.index_element_offset, pp.index_count))});
-                        geometry.draws.push_back({.first_index = pp.first_index,
+                        created_draws.push_back({.first_index = pp.first_index,
                                                   .index_count = pp.index_count,
                                                   .vertex_offset = pp.vertex_offset,
                                                   .material_index = pp.material_index});
                     }
-                    created.push_back(std::move(geometry));
                 }
                 const auto uploaded = device.apply_resource_changes({.buffer_uploads = uploads});
                 if (!uploaded) return {.error = uploaded.error};
                 state.staged_buffer_upload_count += uploads.size();
                 state.geometry_cursor = plan.cursor;
-                for (auto& geometry : created)
+                const std::size_t first_draw_index = state.geometry_draws.size();
+                state.geometry_draws.insert(state.geometry_draws.end(), created_draws.begin(), created_draws.end());
+                for (std::size_t i = 0; i < created_begins.size(); ++i)
                 {
-                    output.value.geometry_handles.push_back(static_cast<engine::geometry_handle>(state.geometries.size()));
-                    state.geometries.push_back(std::move(geometry));
+                    output.value.geometry_handles.push_back(
+                        static_cast<engine::geometry_handle>(state.geometry_draw_begins.size()));
+                    state.geometry_draw_begins.push_back(
+                        static_cast<std::uint32_t>(first_draw_index + created_begins[i]));
+                    state.geometry_draw_counts.push_back(created_counts[i]);
+                    state.geometry_alive.push_back(1);
                 }
             }
             for (const auto& row : batch.geometry_retires)
-                if (row.handle < state.geometries.size()) state.geometries[row.handle].alive = false;
+                if (row.handle < state.geometry_alive.size()) state.geometry_alive[row.handle] = 0;
             return output;
         }
 
@@ -357,18 +374,26 @@ namespace apps
             const auto instance_rows = packet.channels->find_rows<engine::instance_row>();
             const auto transform_rows = packet.channels->find_rows<glm::mat4>();
             if (camera_rows.empty()) return {.error = "glTF frame has no camera"};
-            std::array<std::vector<draw_candidate>, 4> groups;
+            // 分组 scratch 帧间复用（clear 后重建，稳态零分配）
+            std::array<std::vector<draw_candidate>, 4>& groups = state.group_scratch;
+            for (auto& group : groups)
+                group.clear();
             const glm::vec3 camera_position = glm::vec3(glm::inverse(camera_rows.front().view)[3]);
             uint32_t candidate_count = 0;
             for (const auto& instance : instance_rows)
             {
-                if (instance.mesh >= state.geometries.size() || instance.transform >= transform_rows.size()) continue;
-                const auto& geometry = state.geometries[instance.mesh];
-                if (!geometry.alive) continue;
+                if (instance.mesh >= state.geometry_draw_begins.size() || instance.transform >= transform_rows.size())
+                    continue;
+                if (state.geometry_alive[instance.mesh] == 0) continue;
                 const auto& model = transform_rows[instance.transform];
-                for (const auto& range : geometry.draws)
+                // CSR 直读列：mesh handle → 扁平 draw 列切片（无堆指针追逐）
+                const std::uint32_t draw_end = state.geometry_draw_begins[instance.mesh] +
+                                               state.geometry_draw_counts[instance.mesh];
+                for (std::uint32_t draw_slot = state.geometry_draw_begins[instance.mesh]; draw_slot < draw_end;
+                     ++draw_slot)
                 {
                     if (++candidate_count > max_draws) return {.error = "GPU draw table capacity exhausted"};
+                    const auto& range = state.geometry_draws[draw_slot];
                     const uint32_t material_index = range.material_index < state.material_rows.size()
                                                       ? range.material_index : 0;
                     const auto& material = state.material_rows[material_index];

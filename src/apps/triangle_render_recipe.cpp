@@ -22,7 +22,6 @@ namespace apps
         struct frame_uniform { glm::mat4 model{1.0F}; glm::mat4 view{1.0F}; glm::mat4 projection{1.0F}; };
         struct transform_row { glm::mat4 model{1.0F}; glm::uvec4 metadata{}; };
         struct push_constants { uint32_t frame_slot = 0; uint32_t transform_slot = 0; };
-        struct geometry_row { std::vector<engine::draw_range> draws; bool alive = true; };
 
         struct recipe_state
         {
@@ -33,7 +32,13 @@ namespace apps
             render_graph::device_pipeline_handle pipeline;
             uint32_t transform_slot = 0;
             std::vector<uint32_t> frame_slots;
-            std::vector<geometry_row> geometries;
+            // geometry 列（CSR，与 scene_registry 同款模式）：扁平 draw 列 + 每 mesh
+            // begin/count 切片 + 存活列；mesh handle 直接索引列槽，无逐行堆分配、
+            // 无每帧指针追逐（build_frame 热路径直读列）。
+            std::vector<engine::draw_range> geometry_draws;
+            std::vector<std::uint32_t> geometry_draw_begins;
+            std::vector<std::uint32_t> geometry_draw_counts;
+            std::vector<std::uint8_t> geometry_alive;
             uint64_t geometry_cursor = 0;
             std::vector<transform_row> transform_rows;
             std::vector<render_graph::indexed_indirect_command> commands;
@@ -150,14 +155,20 @@ namespace apps
                 if (!plan) return {.error = plan.error};
                 std::vector<render_graph::buffer_upload_row> uploads;
                 uploads.reserve(plan.primitives.size() * 2);
-                std::vector<geometry_row> created;
-                created.reserve(row.mesh_count);
+                // 先建本地列，上传成功后才并入 state（失败不污染状态）
+                std::vector<engine::draw_range> created_draws;
+                created_draws.reserve(plan.primitives.size());
+                std::vector<std::uint32_t> created_begins;
+                created_begins.reserve(row.mesh_count);
+                std::vector<std::uint32_t> created_counts;
+                created_counts.reserve(row.mesh_count);
                 std::size_t primitive_index = 0;
                 for (std::uint32_t mesh = 0; mesh < row.mesh_count; ++mesh)
                 {
-                    geometry_row geometry;
-                    geometry.draws.reserve(plan.mesh_primitive_counts[mesh]);
-                    for (std::uint32_t k = 0; k < plan.mesh_primitive_counts[mesh]; ++k)
+                    const std::uint32_t draw_count = plan.mesh_primitive_counts[mesh];
+                    created_begins.push_back(static_cast<std::uint32_t>(created_draws.size()));
+                    created_counts.push_back(draw_count);
+                    for (std::uint32_t k = 0; k < draw_count; ++k)
                     {
                         const auto& pp = plan.primitives[primitive_index++];
                         uploads.push_back({state.geometry, pp.vertex_byte_offset,
@@ -166,25 +177,30 @@ namespace apps
                         uploads.push_back({state.geometry, pp.index_byte_offset,
                                            std::as_bytes(std::span(row.asset->index_blob)
                                                              .subspan(pp.index_element_offset, pp.index_count))});
-                        geometry.draws.push_back({.first_index = pp.first_index,
+                        created_draws.push_back({.first_index = pp.first_index,
                                                   .index_count = pp.index_count,
                                                   .vertex_offset = pp.vertex_offset,
                                                   .material_index = pp.material_index});
                     }
-                    created.push_back(std::move(geometry));
                 }
                 const auto uploaded = device.apply_resource_changes({.buffer_uploads = uploads});
                 if (!uploaded) return {.error = uploaded.error};
                 state.staged_buffer_upload_count += uploads.size();
                 state.geometry_cursor = plan.cursor;
-                for (auto& geometry : created)
+                const std::size_t first_draw_index = state.geometry_draws.size();
+                state.geometry_draws.insert(state.geometry_draws.end(), created_draws.begin(), created_draws.end());
+                for (std::size_t i = 0; i < created_begins.size(); ++i)
                 {
-                    output.value.geometry_handles.push_back(static_cast<engine::geometry_handle>(state.geometries.size()));
-                    state.geometries.push_back(std::move(geometry));
+                    output.value.geometry_handles.push_back(
+                        static_cast<engine::geometry_handle>(state.geometry_draw_begins.size()));
+                    state.geometry_draw_begins.push_back(
+                        static_cast<std::uint32_t>(first_draw_index + created_begins[i]));
+                    state.geometry_draw_counts.push_back(created_counts[i]);
+                    state.geometry_alive.push_back(1);
                 }
             }
             for (const auto& row : batch.geometry_retires)
-                if (row.handle < state.geometries.size()) state.geometries[row.handle].alive = false;
+                if (row.handle < state.geometry_alive.size()) state.geometry_alive[row.handle] = 0;
             return output;
         }
 
@@ -202,11 +218,16 @@ namespace apps
             state.commands.clear();
             for (const auto& instance : instance_rows)
             {
-                if (instance.mesh >= state.geometries.size() || instance.transform >= transform_rows.size()) continue;
-                const auto& geometry = state.geometries[instance.mesh];
-                if (!geometry.alive) continue;
-                for (const auto& range : geometry.draws)
+                if (instance.mesh >= state.geometry_draw_begins.size() || instance.transform >= transform_rows.size())
+                    continue;
+                if (state.geometry_alive[instance.mesh] == 0) continue;
+                // CSR 直读列：mesh handle → 扁平 draw 列切片（无堆指针追逐）
+                const std::uint32_t draw_end = state.geometry_draw_begins[instance.mesh] +
+                                               state.geometry_draw_counts[instance.mesh];
+                for (std::uint32_t draw_slot = state.geometry_draw_begins[instance.mesh]; draw_slot < draw_end;
+                     ++draw_slot)
                 {
+                    const auto& range = state.geometry_draws[draw_slot];
                     const uint32_t draw_index = static_cast<uint32_t>(state.commands.size());
                     state.transform_rows.push_back({.model = transform_rows[instance.transform]});
                     state.commands.push_back({range.index_count, 1, range.first_index,
