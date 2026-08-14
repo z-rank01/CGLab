@@ -2,11 +2,21 @@
 
 // engine::culling_manager —— 相机可选视锥剔除组件（A1，Component + Manager）。
 //
-// - 能力 = 行存在：present 列表达"该相机挂了剔除组件"（无行 = 无剔除能力，直通），
-//   enabled 列是运行时开关。不存在独立 component 结构体——manager 的列即唯一真相。
-// - 每帧 cull_instances 是 CSR 两遍法（掩码列 → 前缀和 → 散布压实进单写者 scratch），
-//   稳态零分配；作用于 render_frame_packet 输入侧，recipe/RG/glTF 零改动。
-// - 数据行按相机索引对齐；纯函数（frustum/AABB）在 _interface/culling.h。
+// 角色分工（本项目不是严格 ECS，"system" 一词只属于系统函数本身）：
+// - 组件列（纯数据，manager 的列即唯一真相）：
+//     present  = 能力存在（无行 = 无剔除能力，直通；存在性代替布尔）
+//     enabled  = 运行时开关
+// - 系统执行上下文（transient，帧内有效、帧间复用）：
+//     frustums = cull_instances 的派生缓存；flags/visible_scratch = CSR 两遍法工作区
+//     last_visible/last_culled = 系统输出观测（telemetry 消费）
+// - 组件生命周期：attach/detach/set_culling_enabled（registry 职责，非每帧逻辑）
+// - 系统函数（每帧、帧边界副作用出口）：cull_instances
+//   纯函数（frustum/AABB 数学）在 _interface/culling.h。
+//
+// 约束：
+// - cull_instances 是 CSR 两遍法（掩码列 → 压实散布进单写者 scratch），稳态零分配；
+//   作用于 render_frame_packet 输入侧，recipe/RG/glTF 零改动。
+// - 数据行按相机索引对齐。
 
 #include <cstddef>
 #include <cstdint>
@@ -72,7 +82,7 @@ namespace engine
     // 每帧剔除 pass（CSR 两遍法）：
     //   1) 逐 instance 计算世界 AABB（mesh 局部 bounds × 世界变换，8 角点），
     //      写入 flags 掩码列；
-    //   2) 前缀和压实进 visible_scratch。
+    //   2) 压实散布进 visible_scratch。
     // 输入：instances/transforms 为 packet 行，mesh_bounds_* 按 geometry_handle 索引
     // （越界句柄/transform 保守判可见）。返回本帧可见行（指向 scratch，下一次调用前有效）。
     [[nodiscard]] inline std::span<const engine::instance_row> cull_instances(

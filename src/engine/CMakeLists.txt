@@ -4,7 +4,7 @@ target_sources(cglab_engine_core INTERFACE
     geometry.h
     geometry_upload_plan.h
     render_backend.h
-    culling_system.h
+    culling_manager.h
     ../_interface/input.h
     ../_interface/input_router.h
     ../_interface/camera_component.h

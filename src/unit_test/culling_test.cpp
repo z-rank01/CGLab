@@ -10,7 +10,7 @@
 #include <glm/ext/matrix_transform.hpp>
 
 #include "_interface/culling.h"
-#include "engine/culling_system.h"
+#include "engine/culling_manager.h"
 
 namespace
 {

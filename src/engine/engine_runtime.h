@@ -14,7 +14,7 @@
 #include "control_plane/control_plane_server.h"
 #include "engine/render_backend.h"
 #include "engine/asset_service.h"
-#include "engine/culling_system.h"
+#include "engine/culling_manager.h"
 #include "engine/runtime_config.h"
 #include "engine/sample.h"
 #include "measure/frame_metrics.h"

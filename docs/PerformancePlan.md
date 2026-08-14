@@ -31,7 +31,7 @@ indirect draw 以 `vertex_offset/first_index` 引用；分配/同步/生命周�
 | 阶段 | 内容 | 落点 | 状态 |
 |---|---|---|---|
 | **A0** | 测量设施：阶段计时、计数器、样本环、分位数聚合；telemetry 增量字段；加载分段报告 | `src/measure/`（leaf）+ `engine_runtime` + 协议 | ✅ `da42119e` + `7d2d26ec` |
-| **A1** | 视锥剔除：相机可选组件 + 管理器；纯函数 frustum/AABB；CSR 两遍法压实；CullingSample | `_interface/culling.h`、`engine/culling_system.h`、`extract_render_packet`、控制平面 | ✅ `942f9fdc` + `6e012c4e` + `dee0a36e` |
+| **A1** | 视锥剔除：相机可选组件 + 管理器；纯函数 frustum/AABB；CSR 两遍法压实；CullingSample | `_interface/culling.h`、`engine/culling_manager.h`、`extract_render_packet`、控制平面 | ✅ `942f9fdc` + `6e012c4e` + `dee0a36e` |
 | **A2** | 加载路径：零拷贝 blob span 上传 + 整资产单事务；删 SoA→AoS 回拷 | `render_backend.h` 契约、`geometry_upload_plan.h`、recipe、`merge_asset_database` | ✅ `2953d3bf` + `2b0d23d9` |
 
 前置依赖：A0 先行（A1/A2 的收益度量依赖 A0）；A1 与 A2 互相独立，可并行。
@@ -195,7 +195,7 @@ namespace interface::culling
 ```
 
 ```cpp
-// src/engine/culling_system.h —— 组件 + 管理器（行按相机索引对齐）
+// src/engine/culling_manager.h —— 组件 + 管理器（行按相机索引对齐）
 //
 // 无独立 component 结构体：manager 的列即唯一真相——present 列表达"能力存在"
 // （无行 = 无剔除能力，存在性代替布尔），enabled 列表达运行时开关。
@@ -264,7 +264,7 @@ namespace engine
 ### 与 glTF/RG 的解耦边界（契约检查）
 
 - `_interface/culling.h`：零引擎依赖（单测友好）；
-- `engine/culling_system.h`：只依赖 engine 行类型 + scene AABB 工具，不出现 recipe/RG 类型；
+- `engine/culling_manager.h`：只依赖 engine 行类型 + scene AABB 工具，不出现 recipe/RG 类型；
 - recipe、RG backend、DCL **零改动**（A1 完全不触碰渲染侧）；
 - 粒度：A1 = instance 级（每 node/mesh 一个 AABB 测试）；primitive/draw 级与 GPU-driven 剔除归 C2。
 
