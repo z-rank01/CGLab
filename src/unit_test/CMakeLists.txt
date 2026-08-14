@@ -74,6 +74,10 @@ add_executable(cglab_loading_plan_tests loading_plan_test.cpp)
 target_link_libraries(cglab_loading_plan_tests PRIVATE cglab_engine_core)
 cglab_register_test(cglab_loading_plan_tests cglab.loading_plan)
 
+add_executable(cglab_loading_benchmark_tests loading_benchmark_test.cpp)
+target_link_libraries(cglab_loading_benchmark_tests PRIVATE cglab_engine_core)
+cglab_register_test(cglab_loading_benchmark_tests cglab.loading_benchmark)
+
 add_executable(cglab_culling_tests culling_test.cpp)
 target_link_libraries(cglab_culling_tests PRIVATE cglab_engine_core)
 cglab_register_test(cglab_culling_tests cglab.culling)
