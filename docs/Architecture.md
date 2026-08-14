@@ -86,4 +86,6 @@ compiled-plan rows。graph/compiler 的 `compiler_state`、DAG 与 free-function
 - ~~RG compiler 丢失了最初设计的 pass culling（无 output 根 → 全部 pass/资源都参与调度与物理分配），持久资源经 `apply_resource_changes` 急切物化；`culling_compile` 等测试名为占位。偏差分析与实施方案见子仓 `docs/ArchitectureAndInternals.md` §13。~~ ✅ 已修复（2026-08-12）：pass culling 已恢复（§6.4），transient 惰性分配已生效，持久资源急切物化保持原样。
 - RG Vulkan backend：`vk_graph_executor` 与 `vk_runtime` 双资源表中心并存；executor 侧 retirement 以 frame 命名但实际按 submission 序号驱动；bindless 默认资源内含 default normal map（PBR 语义下沉）；`backend_capabilities()` 返回硬编码默认值而非设备实测。
 
+> 性能相关实施计划（测量 / 视锥剔除 / 加载路径，含 B/C 路线记录）见 [PerformancePlan.md](PerformancePlan.md)。
+
 更多执行细节见 [RenderGraphAndRHI.md](RenderGraphAndRHI.md)，runtime 组合方式见 [ApplicationRuntime.md](ApplicationRuntime.md)。
