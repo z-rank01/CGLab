@@ -40,7 +40,14 @@ add_executable(GltfSponzaSample
     gltf_render_recipe.h
 )
 
-foreach(cglab_app IN ITEMS TriangleSample GltfSponzaSample)
+# CullingSample（A1）：GltfSponzaSample 的剔除演示变体，复用同一 recipe。
+add_executable(CullingSample
+    culling_sample.cpp
+    gltf_render_recipe.cpp
+    gltf_render_recipe.h
+)
+
+foreach(cglab_app IN ITEMS TriangleSample GltfSponzaSample CullingSample)
     target_include_directories(${cglab_app}
         PRIVATE ${PROJECT_SOURCE_DIR}/src
     )
@@ -61,8 +68,9 @@ endforeach()
 
 target_link_libraries(TriangleSample PRIVATE cglab_sdl_vulkan_surface)
 target_link_libraries(GltfSponzaSample PRIVATE cglab_sdl_vulkan_surface)
+target_link_libraries(CullingSample PRIVATE cglab_sdl_vulkan_surface)
 
 # Preserve the paths used by existing scripts and documentation.
-set_target_properties(TriangleSample GltfSponzaSample PROPERTIES
+set_target_properties(TriangleSample GltfSponzaSample CullingSample PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )

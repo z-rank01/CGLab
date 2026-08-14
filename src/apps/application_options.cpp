@@ -88,6 +88,11 @@ namespace apps
                 result.options.no_ui = true;
                 continue;
             }
+            if (argument == "--culling")
+            {
+                result.options.culling = true;
+                continue;
+            }
             if (argument == "--ui-open-browser")
             {
                 result.options.ui_open_browser = true;
@@ -126,11 +131,12 @@ namespace apps
         {
             usage += " [--asset <path>]";
         }
-        usage += "\n           [--no-ui] [--ui-port <port>] [--ui-open-browser]\n";
+        usage += "\n           [--no-ui] [--ui-port <port>] [--ui-open-browser] [--culling]\n";
         usage += "  --no-ui            Disable the control plane WebSocket server (Web UI backend).\n";
         usage += "  --ui-port <port>   Control plane port in [1024, 65535] (default 17381); explicit port\n";
         usage += "                     also enables the control plane under --smoke-test for protocol tests.\n";
         usage += "  --ui-open-browser  Reserved (P3): open the Web UI in the default browser on start.\n";
+        usage += "  --culling          Enable per-instance frustum culling on the active camera (A1).\n";
         if (cli.accepts_asset)
         {
             usage += "  --asset <path>     Startup geometry asset (.gltf or .glb).\n";

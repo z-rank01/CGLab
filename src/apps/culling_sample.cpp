@@ -4,6 +4,13 @@
 #include "apps/application_runner.h"
 #include "apps/gltf_render_recipe.h"
 
+// CullingSample（A1）：GltfSponzaSample 的剔除演示变体。
+// - 启动相机恒带视锥剔除组件（CullingSample 的定位就是演示剔除能力）；
+// - 复用 gltf recipe + sponza 资产，渲染侧零改动；
+// - dev console 可经 camera.set_culling 运行时开关，观察
+//   telemetry.frame.counters.{visible,culled,draws} 与 fps 变化。
+// TriangleSample / GltfSponzaSample 默认不带剔除（行为不变），可选 --culling 开启。
+
 namespace
 {
     std::filesystem::path startup_asset(const apps::application_options& options)
@@ -26,7 +33,7 @@ int main(int argc, char** argv)
     return apps::run_application(
         argc,
         argv,
-        "GltfSponzaSample",
+        "CullingSample",
         [](const apps::application_options& options)
         {
             const std::filesystem::path asset_path = startup_asset(options);
@@ -38,7 +45,7 @@ int main(int argc, char** argv)
             }
 
             engine::runtime_config config{
-                .window            = {.title = "GltfSponzaSample", .width = 1280, .height = 720},
+                .window            = {.title = "CullingSample", .width = 1280, .height = 720},
                 .working_directory = CGLAB_SOURCE_DIR,
                 .frames_in_flight  = 3,
                 .validation        = options.validation,
@@ -52,12 +59,12 @@ int main(int argc, char** argv)
             const auto frames = options.smoke_test ? std::optional<std::uint64_t>(options.frame_limit.value_or(3)) : options.frame_limit;
             return apps::application_setup_result{.request = apps::application_run_request{
                                                       .runtime     = std::move(config),
-                                                      .sample      = {.name = "GltfSponzaSample", .required_startup_asset = asset_path.string()},
+                                                      .sample      = {.name = "CullingSample", .required_startup_asset = asset_path.string()},
                                                       .renderer    = apps::create_gltf_render_driver(),
                                                       .frame_limit = frames,
                                                       .require_validation_clean = options.validation,
                                                       .enforce_smoke_contract   = options.smoke_test,
-                                                      .culling_enabled          = options.culling,
+                                                      .culling_enabled          = true,
                                                   }};
         },
         {.accepts_asset = true});

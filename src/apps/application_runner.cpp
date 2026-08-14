@@ -26,6 +26,10 @@ namespace apps
             engine::engine_runtime runtime(std::move(request.runtime), std::move(request.renderer), std::move(request.window));
             runtime.configure_sample(std::move(request.sample));
             runtime.initialize();
+            if (request.culling_enabled)
+            {
+                runtime.set_camera_culling(true);
+            }
             const bool succeeded = runtime.tick(request.frame_limit);
             runtime.shutdown();
             if (!succeeded)
