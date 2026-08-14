@@ -87,12 +87,34 @@ SoA 语义下 `row` 是"横跨并行列的逻辑切片"，`record` 暗示连续�
   （如 `cull_instances`）；组件存储与系统执行上下文（transient scratch）同处 manager，
   纯函数数学放 `_interface/`。
 
+**实体/帧数据术语**（F 系列帧通道，2026-08-14；详见 `EngineLayerDoDPlan.md` §1）：
+
+- **component（组件）**：挂在实体上的那份数据的类型（光源组件、probe 组件、相机组件），
+  与 EnTT/flecs/Bevy 的 component 语义一致。
+- **component table（组件表）**：某类组件的全量 SoA 表，即 `*_table`
+  （未来 `lights_table`、`probe_table`）。帧间传递的是整张表，不是单个 component。
+- **frame channel（帧通道）**：`frame_channels` 内的一次发布槽位——类型键控的
+  `{id, 行指针, 行数}` 行。命名避开 Bevy `Resource`（与 GPU 资源撞名）与 EnTT `ctx`
+  （与 `frame_phase_context` 撞名）。**引擎保证秩序**（帧首清零、发布窗口 = 阶段表顺序、
+  每通道单写者、生存期 = 单帧），**编写者保证语义**（缺通道/内容错误是编写者责任）。
+- **state（状态通道）**：非实体的帧级单例数据（view-projection、时间、配置），
+  复用通道机制，不单独造词。
+
+## 帧通道（F 系列）
+
+`render_frame_packet` 不再承载固定字段集合，而是携带一个 `frame_channels` 行表
+（`engine/frame_channels.h`）：生产者（engine 的 extract 阶段）在帧首 `clear()` 后按阶段表
+顺序发布类型键控通道，消费者（recipe 的 `build_frame`）经 `find_rows<T>()`/`find_state<T>()`
+按类型取用。内置五类行（camera / instance / transform / material / mesh）是 extract 发布的
+前五个通道；光源表、probe 表等新组件表由 sample 侧发布、recipe 侧消费，engine 零改动。
+查找为小表线性扫（通道数 ~10），数据只存指针不复制，生存期 = 单帧。
+
 ## 还债清单（2026-08 准则审查）
 
-- `update_scene_transforms` 当前是空 phase：矩阵在 merge/extract 时解析，该 phase 名存实亡，应承担 dirty transform 批量重算或调整固定表语义。
-- `poll_events` 内有两处提前副作用（resize 直接 `request_resize`、拾取命中后即时发布遥测），应改为请求行并归并到 `publish_telemetry` 出口。
+- ~~`update_scene_transforms` 当前是空 phase：矩阵在 merge/extract 时解析，该 phase 名存实亡，应承担 dirty transform 批量重算或调整固定表语义。~~ ✅ 已修复（2026-08-14，D2）：脏行批量重算矩阵缓存（`refresh_matrices`），静态场景零矩阵数学，见 `EngineLayerDoDPlan.md`。
+- ~~`poll_events` 内有两处提前副作用（resize 直接 `request_resize`、拾取命中后即时发布遥测），应改为请求行并归并到 `publish_telemetry` 出口。~~ ✅ 已修复（2026-08-14，D2）：resize 请求在 submit 前边界执行、拾取请求在 telemetry 出口执行（pick 命中高亮延后一帧），见 `EngineLayerDoDPlan.md`。
 - DI 风格不统一：`render_driver` 为 opaque state + function table，`asset_service`/`window` 为虚接口。
-- `scene_registry` 为胖 AoS 行（内含 `std::string`/`std::vector`）且 `find` 为 O(n) 线性扫描，可改为 id→slot 索引。
+- ~~`scene_registry` 为胖 AoS 行（内含 `std::string`/`std::vector`）且 `find` 为 O(n) 线性扫描，可改为 id→slot 索引。~~ ✅ 已修复（2026-08-14，D1/D2）：id→slot 直接寻址 O(1) 查找 + active_slots 紧凑索引 + 热列直读（extract -97.8%），见 `EngineLayerDoDPlan.md`。
 - ~~runtime 合并加载结果时把共享 blob 切片回拷为每 primitive 一份的 `geometry_asset` vectors（SoA→AoS 回退点）。~~ ✅ 已修复（2026-08，A2）：`geometry_upload_row` 改为引用共享 blob 的批量行，整资产单事务零拷贝上传；`geometry_asset` AoS 已删除，见 [PerformancePlan.md](PerformancePlan.md)。
 - ~~RG compiler 丢失了最初设计的 pass culling（无 output 根 → 全部 pass/资源都参与调度与物理分配），持久资源经 `apply_resource_changes` 急切物化；`culling_compile` 等测试名为占位。偏差分析与实施方案见子仓 `docs/ArchitectureAndInternals.md` §13。~~ ✅ 已修复（2026-08-12）：pass culling 已恢复（§6.4），transient 惰性分配已生效，持久资源急切物化保持原样。
 - RG Vulkan backend：`vk_graph_executor` 与 `vk_runtime` 双资源表中心并存；executor 侧 retirement 以 frame 命名但实际按 submission 序号驱动；bindless 默认资源内含 default normal map（PBR 语义下沉）；`backend_capabilities()` 返回硬编码默认值而非设备实测。

@@ -137,7 +137,8 @@ struct frame_channels {
 | D0 | 契约 + 基线（✅ 2026-08-14：`ArchitectureContract.cmake` 增 DoD 检查，`scene_registry` `vector<bool>`→`uint8_t`，新增 `cglab.extract_benchmark`；41/41 绿，基线 11975/12711µs） | `7e8e4844` |
 | D1 | scene_registry 索引化（✅ 2026-08-14：id→slot 直接寻址 O(1) 查找、active_slots 紧凑索引、draws 扁平列 + draw_begin/count 切片、scene_object 保留为冷路径记录；公共 API 不变；41/41 绿；基准 ≈持平） | `ad20b09d` |
 | D2 | extract 列式化（✅ 2026-08-14：热列 visible/matrices/dirty/geometries + refresh_matrices 增量重算、update_scene_transforms 做实、poll_events resize/拾取副作用归并到帧边界、transform_bounds 闭式解；41/41 绿 + Triangle/GltfSponza GPU smoke 6 帧通过；基准 265/271µs，**-97.8%**。注：pick 反馈延后到 telemetry 出口，命中高亮晚一帧——还债清单钦点方向） | `ef595a96` |
-| D3 | context 收敛 + 成员分簇（✅ 2026-08-14：frame_phase_context 4 bool → frame_stop_reason 枚举 + rendered（stop 语义互斥）；render_this_frame 降为 submit 局部变量；成员按职责分簇 frame_loads/frame_extract/frame_telemetry（组织性，无行为变化）；41/41 绿） | — |
+| D3 | context 收敛 + 成员分簇（✅ 2026-08-14：frame_phase_context 4 bool → frame_stop_reason 枚举 + rendered（stop 语义互斥）；render_this_frame 降为 submit 局部变量；成员按职责分簇 frame_loads/frame_extract/frame_telemetry（组织性，无行为变化）；41/41 绿） | `c66e1d3a` |
+| F1 | frame_channels 核心（✅ 2026-08-14：`engine/frame_channels.h` 类型键控通道（静态原子 id + publish_rows/publish_state/find_rows/find_state + 帧首 clear + 每通道单写者）；`cglab.frame_channels` 单测 7 项；`Architecture.md` 术语表并入命名约定 + 新增「帧通道」节 + 还债清单勾销 D1/D2 三条；42/42 绿） | — |
 | D1 | scene_registry 拆列 + id→slot | — |
 | D2 | extract 列式 + phase 做实 + 归并 | — |
 | D3 | context 收敛 | — |
