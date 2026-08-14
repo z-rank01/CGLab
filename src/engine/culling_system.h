@@ -71,7 +71,8 @@ namespace engine
 
     // 每帧剔除 pass（CSR 两遍法）：
     //   1) 逐 instance 计算世界 AABB（mesh 局部 bounds × 世界变换，8 角点），
-    //      写入 flags 掩码列；2) 前缀和压实进 visible_scratch。
+    //      写入 flags 掩码列；
+    //   2) 前缀和压实进 visible_scratch。
     // 输入：instances/transforms 为 packet 行，mesh_bounds_* 按 geometry_handle 索引
     // （越界句柄/transform 保守判可见）。返回本帧可见行（指向 scratch，下一次调用前有效）。
     [[nodiscard]] inline std::span<const engine::instance_row> cull_instances(
@@ -104,7 +105,7 @@ namespace engine
                 continue;
             }
             const scene::aabb world = scene::transform_bounds(
-                scene::aabb{mesh_bounds_min[mesh], mesh_bounds_max[mesh]}, transforms[instance.transform]);
+                scene::aabb{.min=mesh_bounds_min[mesh], .max=mesh_bounds_max[mesh]}, transforms[instance.transform]);
             if (interface::culling::test_aabb(frustum, world.min, world.max))
             {
                 manager.flags[i] = 1;
@@ -112,16 +113,14 @@ namespace engine
             }
         }
 
-        // 第二遍：前缀和压实（单次散布，零分配）
+        // 第二遍：压实散布（单次遍历，零分配）
         manager.visible_scratch.clear();
         manager.visible_scratch.reserve(instances.size()); // 只增长；稳态零分配
-        std::uint32_t write = 0;
         for (std::size_t i = 0; i < instances.size(); ++i)
         {
             if (manager.flags[i] != 0)
             {
                 manager.visible_scratch.push_back(instances[i]);
-                ++write;
             }
         }
 
