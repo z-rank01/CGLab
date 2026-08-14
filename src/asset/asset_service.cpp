@@ -2,6 +2,7 @@
 
 #include "asset/geometry_loader.h"
 
+#include <chrono>
 #include <iterator>
 
 namespace
@@ -95,6 +96,7 @@ namespace asset
             // A failing load must become a value-type error result; the worker
             // never lets an exception escape and kill the process.
             completed_request output{.id = request.id};
+            const auto load_begin = std::chrono::steady_clock::now();
             try
             {
                 output.result = load_geometry(resolved);
@@ -106,6 +108,18 @@ namespace asset
             catch (...)
             {
                 output.result.error = "Asset load failed with an unknown exception";
+            }
+            output.report.path = resolved.string();
+            output.report.load_us =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now() - load_begin)
+                                               .count());
+            if (output.result)
+            {
+                const auto& asset = output.result.value;
+                output.report.vertex_bytes = asset.vertex_blob.size() * sizeof(engine::vertex);
+                output.report.index_bytes = asset.index_blob.size() * sizeof(std::uint32_t);
+                output.report.image_count = static_cast<std::uint32_t>(asset.images.size());
             }
             {
                 std::lock_guard lock(mutex);

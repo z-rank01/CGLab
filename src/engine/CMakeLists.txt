@@ -35,6 +35,7 @@ target_link_libraries(cglab_engine_runtime
         cglab_asset_runtime
         control_plane
         utility
+        measure
         $<$<PLATFORM_ID:Windows>:bcrypt>
 )
 

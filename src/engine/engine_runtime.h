@@ -16,6 +16,7 @@
 #include "engine/asset_service.h"
 #include "engine/runtime_config.h"
 #include "engine/sample.h"
+#include "measure/frame_metrics.h"
 #include "scene/scene_registry.h"
 
 namespace engine
@@ -90,10 +91,16 @@ private:
     std::vector<completed_asset_request> completed_asset_rows;
     std::vector<geometry_retire_row> pending_geometry_retires;
 
+    // --- A0 测量设施 ---
+    // metrics_ring 约 885KB，必须堆上持有（禁止栈上实例化）。
+    std::unique_ptr<measure::metrics_ring> metrics_ring;
+    engine::frame_counters frame_counters; // 每帧清零，extract 填实例/可见/剔除，recipe 回填 draw/upload
+
     void handle_control_plane_commands();
     void handle_scene_command(const control_plane::engine_command& command);
     void publish_frame_telemetry();
     void publish_scene_telemetry_if_changed();
+    void publish_load_telemetry(const engine::load_report& report) const;
     [[nodiscard]] nlohmann::json current_camera_state() const;
     [[nodiscard]] nlohmann::json current_scene_state() const;
 
@@ -101,7 +108,8 @@ private:
     void enqueue_load(std::string path, std::string client_id, nlohmann::json rpc_id);
     void collect_completed_loads();
     void apply_completed_loads();
-    [[nodiscard]] std::vector<scene::object_id> merge_asset_database(engine::asset_database asset, bool read_only);
+    [[nodiscard]] std::vector<scene::object_id> merge_asset_database(engine::asset_database asset, bool read_only,
+                                                                     engine::load_report* report = nullptr);
 
     struct frame_phase_context
     {

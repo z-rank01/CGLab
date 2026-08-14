@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <span>
+#include <utility>
 
 #include <glm/glm.hpp>
 
@@ -37,6 +38,9 @@ namespace apps
             std::vector<render_graph::indexed_indirect_command> commands;
             push_constants push;
             render_graph::draw_indexed_indirect_row draw;
+            // A0：加载帧的 staging 上传行数（build_frame 回填后清零）
+            uint64_t staged_buffer_upload_rows = 0;
+            uint64_t staged_image_upload_rows = 0;
             std::array<render_graph::frame_resource_row, 5> frame_resources;
             std::array<render_graph::frame_buffer_access_row, 3> frame_buffer_accesses;
             std::array<render_graph::frame_attachment_row, 2> frame_attachments;
@@ -163,6 +167,7 @@ namespace apps
                 }
                 const auto uploaded = device.apply_resource_changes({.buffer_uploads = uploads});
                 if (!uploaded) return {.error = uploaded.error};
+                state.staged_buffer_upload_rows += uploads.size();
                 output.value.geometry_handles.push_back(static_cast<engine::geometry_handle>(state.geometries.size()));
                 state.geometries.push_back(std::move(geometry));
             }
@@ -205,6 +210,14 @@ namespace apps
             };
             const auto updated = device.apply_resource_changes({.buffer_uploads = uploads});
             if (!updated) return {.error = updated.error};
+            if (packet.counters)
+            {
+                // draw/upload 计数回填（A0）：本帧命令数 + 加载帧的 staging 行数
+                packet.counters->draw_commands = state.commands.size();
+                packet.counters->buffer_upload_rows =
+                    uploads.size() + std::exchange(state.staged_buffer_upload_rows, 0);
+                packet.counters->image_upload_rows = std::exchange(state.staged_image_upload_rows, 0);
+            }
             state.push = {.frame_slot = state.frame_slots[environment.frame_index],
                           .transform_slot = state.transform_slot};
             state.draw = {

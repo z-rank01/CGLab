@@ -134,12 +134,18 @@ void engine_runtime::initialize()
     }
     if (initial_asset)
     {
-        const auto ids = merge_asset_database(std::move(*initial_asset), true);
+        engine::load_report report;
+        const auto ids = merge_asset_database(std::move(*initial_asset), true, &report);
         if (ids.empty()) throw std::runtime_error("Startup asset contains no mesh instances");
+        Logger::LogInfo("Loaded startup asset \"" + report.path + "\" in " + std::to_string(report.load_us) +
+                        "us (merge " + std::to_string(report.merge_us) + "us, upload " +
+                        std::to_string(report.upload_us) + "us, " + std::to_string(report.vertex_bytes + report.index_bytes) +
+                        " bytes)");
         initial_asset.reset();
     }
 
     input_events.reserve(32);
+    metrics_ring = std::make_unique<measure::metrics_ring>();
     last_frame_time = std::chrono::high_resolution_clock::now();
 }
 
@@ -190,9 +196,17 @@ void engine_runtime::apply_completed_loads()
 
         const std::string asset_name = completed.result.value.name;
         const std::size_t primitive_count = completed.result.value.primitives.size();
-        const auto ids = merge_asset_database(std::move(completed.result.value), false);
+        const auto ids = merge_asset_database(std::move(completed.result.value), false, &completed.report);
         if (ids.empty()) continue;
-        Logger::LogInfo("Loaded runtime asset \"" + asset_name + "\" with " + std::to_string(ids.size()) + " mesh instance(s)");
+        Logger::LogInfo("Loaded runtime asset \"" + asset_name + "\" with " + std::to_string(ids.size()) + " mesh instance(s)" +
+                        " in " + std::to_string(completed.report.load_us) + "us (merge " +
+                        std::to_string(completed.report.merge_us) + "us, upload " +
+                        std::to_string(completed.report.upload_us) + "us, " +
+                        std::to_string(completed.report.vertex_bytes + completed.report.index_bytes) + " bytes)");
+        if (control_plane)
+        {
+            publish_load_telemetry(completed.report);
+        }
         if (control_plane && response.respond)
         {
             control_plane->post_response(response.client_id,
@@ -206,10 +220,21 @@ void engine_runtime::apply_completed_loads()
     completed_asset_rows.clear();
 }
 
-std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset_database asset, bool read_only)
+std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset_database asset, bool read_only,
+                                                                   engine::load_report* report)
 {
+    const auto merge_begin = std::chrono::steady_clock::now();
+    std::uint64_t upload_us = 0;
+    const auto track_upload = [&upload_us](const auto& begin)
+    {
+        upload_us += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count());
+    };
+
     const material_upload_row material_row{&asset};
+    const auto upload_begin = std::chrono::steady_clock::now();
     const auto material_changes = renderer->apply_resource_changes({.material_uploads = std::span(&material_row, 1)});
+    track_upload(upload_begin);
     if (!material_changes || material_changes.value.material_bases.size() != 1)
     {
         Logger::LogError("Failed to upload glTF materials: " + material_changes.error);
@@ -233,7 +258,9 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
             geometry.primitives.push_back(std::move(output));
         }
         const geometry_upload_row geometry_row{&geometry};
+        const auto geometry_upload_begin = std::chrono::steady_clock::now();
         const auto geometry_changes = renderer->apply_resource_changes({.geometry_uploads = std::span(&geometry_row, 1)});
+        track_upload(geometry_upload_begin);
         if (!geometry_changes || geometry_changes.value.geometry_handles.size() != 1)
         {
             Logger::LogError("Failed to upload glTF mesh: " + geometry_changes.error);
@@ -296,6 +323,12 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
     for (const auto handle : mesh_handles)
         if (handle != engine::invalid_geometry_handle && !geometry_ref_counts.contains(handle))
             pending_geometry_retires.push_back({handle});
+    if (report)
+    {
+        report->merge_us = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - merge_begin).count());
+        report->upload_us = upload_us;
+    }
     return ids;
 }
 
@@ -658,6 +691,28 @@ void engine_runtime::publish_frame_telemetry()
     const float smoothed_fps = smoothed_frame_time > 0.0F ? 1.0F / smoothed_frame_time : 0.0F;
 
     const engine::render_statistics stats = renderer->statistics();
+
+    // A0 扩展：阶段耗时均值、帧时分位数、帧计数
+    static constexpr std::array phase_names{
+        "poll_events", "consume_control_commands", "merge_asset_results", "update_scene_transforms",
+        "update_cameras", "run_sample_systems", "extract_render_packet", "apply_resource_changes",
+        "submit_render_packet", "publish_telemetry",
+    };
+    nlohmann::json phase_us = nlohmann::json::object();
+    nlohmann::json quantiles = nlohmann::json::object();
+    if (metrics_ring)
+    {
+        for (std::uint32_t p = 0; p < measure::phase_count; ++p)
+        {
+            const auto q = measure::summarize(*metrics_ring, 1 + p);
+            phase_us[phase_names[p]] = q.p50;
+        }
+        const auto frame_q = measure::summarize(*metrics_ring, 0);
+        quantiles = {{"frame_p50_ms", frame_q.p50 / 1000.0},
+                     {"frame_p95_ms", frame_q.p95 / 1000.0},
+                     {"frame_p99_ms", frame_q.p99 / 1000.0}};
+    }
+
     control_plane->publish(control_plane::make_notification("telemetry.frame",
                                                             {
                                                                 {"fps", smoothed_fps},
@@ -671,9 +726,35 @@ void engine_runtime::publish_frame_telemetry()
                                                                 {"validation_errors", validation_error_count()},
                                                                 {"paused", frame_paused},
                                                                 {"camera", current_camera_state()},
+                                                                {"phase_us", std::move(phase_us)},
+                                                                {"quantiles", std::move(quantiles)},
+                                                                {"counters",
+                                                                 {{"instances", frame_counters.instance_rows},
+                                                                  {"visible", frame_counters.visible_rows},
+                                                                  {"culled", frame_counters.culled_rows},
+                                                                  {"draws", frame_counters.draw_commands},
+                                                                  {"buffer_uploads", frame_counters.buffer_upload_rows},
+                                                                  {"image_uploads", frame_counters.image_upload_rows}}},
                                                             }));
 
     publish_scene_telemetry_if_changed();
+}
+
+void engine_runtime::publish_load_telemetry(const engine::load_report& report) const
+{
+    control_plane->publish(control_plane::make_notification("telemetry.load",
+                                                            {
+                                                                {"path", report.path},
+                                                                {"load_us", report.load_us},
+                                                                {"merge_us", report.merge_us},
+                                                                {"upload_us", report.upload_us},
+                                                                {"vertex_bytes", report.vertex_bytes},
+                                                                {"index_bytes", report.index_bytes},
+                                                                {"images", report.image_count},
+                                                                {"parse_us", report.parse_us},
+                                                                {"convert_us", report.convert_us},
+                                                                {"decode_us", report.decode_us},
+                                                            }));
 }
 
 bool engine_runtime::tick(std::optional<std::uint64_t> frame_limit)
@@ -694,7 +775,32 @@ bool engine_runtime::tick(std::optional<std::uint64_t> frame_limit)
     while (!window->should_close())
     {
         frame_phase_context context;
-        for (const frame_phase phase : phase_table) (this->*phase)(context);
+        const auto frame_begin = std::chrono::steady_clock::now();
+        std::array<std::uint64_t, measure::phase_count> phase_us{};
+        for (std::uint32_t phase_index = 0; phase_index < measure::phase_count; ++phase_index)
+        {
+            const auto phase_begin = std::chrono::steady_clock::now();
+            (this->*phase_table[phase_index])(context);
+            phase_us[phase_index] = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - phase_begin)
+                    .count());
+        }
+        if (metrics_ring)
+        {
+            std::array<std::uint64_t, measure::counter_slot_count> counter_slots{};
+            counter_slots[0] = frame_counters.instance_rows;
+            counter_slots[1] = frame_counters.visible_rows;
+            counter_slots[2] = frame_counters.culled_rows;
+            counter_slots[3] = frame_counters.draw_commands;
+            counter_slots[4] = frame_counters.buffer_upload_rows;
+            counter_slots[5] = frame_counters.image_upload_rows;
+            measure::push(*metrics_ring,
+                          static_cast<std::uint64_t>(
+                              std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() -
+                                                                                    frame_begin)
+                                  .count()),
+                          phase_us, counter_slots);
+        }
         if (context.stop_failure) return false;
         if (context.stop_success) return true;
         if (context.rendered && frame_limit && ++rendered_frames >= *frame_limit) return true;
@@ -760,6 +866,7 @@ void engine_runtime::run_sample_systems(frame_phase_context& context)
 void engine_runtime::extract_render_packet(frame_phase_context& context)
 {
     if (context.stop_success) return;
+    frame_counters = {};
     render_instances.clear();
     render_transforms.clear();
     for (const scene::scene_object* object : scene_registry.objects())
@@ -769,6 +876,8 @@ void engine_runtime::extract_render_packet(frame_phase_context& context)
         render_transforms.push_back(scene::model_matrix(*object));
         render_instances.push_back({.mesh = object->render_geometry, .transform = transform});
     }
+    frame_counters.instance_rows = render_instances.size();
+    frame_counters.visible_rows = render_instances.size();
     render_cameras = {engine::camera_row{
         .view = interface::get_view_matrix(camera_container.transforms[camera_entity_index]),
         .projection = interface::get_projection_matrix(camera_container.transforms[camera_entity_index],
@@ -810,6 +919,7 @@ void engine_runtime::submit_render_packet(frame_phase_context& context)
         .camera_rows = render_cameras,
         .instance_rows = render_instances,
         .transform_rows = render_transforms,
+        .counters = &frame_counters,
     };
     const engine::frame_status status = renderer->render(packet);
     context.stop_failure = status == engine::frame_status::failed;

@@ -45,6 +45,35 @@ namespace engine
         std::uint32_t transform = 0;
     };
 
+    // 帧计数器（A0）：engine 填 instance/visible/culled，recipe 填 draw/upload 行数。
+    // 主线程单写者：engine 在 extract 阶段清零并填自己的字段，recipe 在 build_frame 只写自己的字段。
+    struct frame_counters
+    {
+        std::uint64_t instance_rows = 0;
+        std::uint64_t visible_rows = 0;
+        std::uint64_t culled_rows = 0;
+        std::uint64_t draw_commands = 0;
+        std::uint64_t buffer_upload_rows = 0;
+        std::uint64_t image_upload_rows = 0;
+    };
+
+    // 加载分段报告（A0）：worker 填 load_us（dcl::load_gltf 全程，单次黑盒调用），
+    // 主线程在 merge 边界补 merge_us/upload_us。parse/convert/decode 三段细分依赖
+    // DCL 侧可选计时装点，未装点时保持 0。
+    struct load_report
+    {
+        std::string path;
+        std::uint64_t load_us = 0;
+        std::uint64_t merge_us = 0;
+        std::uint64_t upload_us = 0;
+        std::uint64_t vertex_bytes = 0;
+        std::uint64_t index_bytes = 0;
+        std::uint32_t image_count = 0;
+        std::uint64_t parse_us = 0;
+        std::uint64_t convert_us = 0;
+        std::uint64_t decode_us = 0;
+    };
+
     struct render_frame_packet
     {
         std::uint64_t frame_serial = 0;
@@ -53,6 +82,8 @@ namespace engine
         std::span<const glm::mat4> transform_rows;
         std::span<const std::uint32_t> material_handles;
         std::span<const geometry_handle> mesh_handles;
+        // 帧计数回填（可空）：recipe 只写自己的字段（draw/upload 行数）。
+        frame_counters* counters = nullptr;
     };
 
     struct backend_config

@@ -12,6 +12,10 @@ target_link_libraries(cglab_asset_gltf
     PRIVATE dcl::gltf
 )
 
+if(MSVC)
+    target_compile_options(cglab_asset_gltf PRIVATE /W4 /FS /utf-8)
+endif()
+
 add_library(cglab_asset_runtime STATIC
     asset_service.cpp
     asset_service.h
@@ -26,3 +30,7 @@ target_include_directories(cglab_asset_runtime PUBLIC
 target_link_libraries(cglab_asset_runtime
     PUBLIC cglab_asset_gltf
 )
+
+if(MSVC)
+    target_compile_options(cglab_asset_runtime PRIVATE /W4 /FS /utf-8)
+endif()
