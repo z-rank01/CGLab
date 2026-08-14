@@ -21,13 +21,13 @@ engine_runtime::engine_runtime(runtime_config runtime_config,
                                engine::render_driver render_backend,
                                std::unique_ptr<interface::window> platform_window,
                                std::unique_ptr<asset_service> assets)
-    : window(std::move(platform_window)), renderer(std::move(render_backend)), asset_loader(std::move(assets)),
-      config(std::move(runtime_config))
+    : window(std::move(platform_window)), renderer(std::move(render_backend)), config(std::move(runtime_config))
 {
     if (!renderer)
     {
         throw std::invalid_argument("engine_runtime requires a render backend");
     }
+    loads.asset_loader = std::move(assets);
 }
 
 engine_runtime::~engine_runtime()
@@ -68,22 +68,22 @@ void engine_runtime::initialize()
         }
     }
 
-    if (!asset_loader)
+    if (!loads.asset_loader)
     {
-        asset_loader = std::make_unique<asset::asset_service>();
+        loads.asset_loader = std::make_unique<asset::asset_service>();
     }
-    asset_loader->start(config.working_directory);
+    loads.asset_loader->start(config.working_directory);
     engine::load_report startup_report;
-    if (required_startup_asset)
+    if (loads.required_startup_asset)
     {
-        const auto requested = asset_loader->request(*required_startup_asset);
+        const auto requested = loads.asset_loader->request(*loads.required_startup_asset);
         if (!requested)
         {
             throw std::runtime_error("Failed to queue startup asset: " + requested.error);
         }
         for (;;)
         {
-            auto completed = asset_loader->drain_completed();
+            auto completed = loads.asset_loader->drain_completed();
             if (!completed.empty())
             {
                 if (!completed.front().result)
@@ -91,12 +91,12 @@ void engine_runtime::initialize()
                     throw std::runtime_error("Failed to load startup asset: " + completed.front().result.error);
                 }
                 startup_report = std::move(completed.front().report);
-                initial_asset = std::move(completed.front().result.value);
+                loads.initial_asset = std::move(completed.front().result.value);
                 break;
             }
             std::this_thread::yield();
         }
-        required_startup_asset.reset();
+        loads.required_startup_asset.reset();
     }
 
     const engine::backend_config backend_config{
@@ -111,30 +111,30 @@ void engine_runtime::initialize()
         throw std::runtime_error("Failed to initialize render backend: " + initialized.error);
     }
 
-    if (initial_geometry)
+    if (loads.initial_geometry)
     {
         engine::load_report report;
-        const auto ids = merge_asset_database(std::move(*initial_geometry), true, &report);
+        const auto ids = merge_asset_database(std::move(*loads.initial_geometry), true, &report);
         if (ids.empty()) throw std::runtime_error("Startup geometry contains no mesh instances");
         Logger::LogInfo("Loaded startup geometry in " + std::to_string(report.merge_us) + "us (upload " +
                         std::to_string(report.upload_us) + "us, " +
                         std::to_string(report.vertex_bytes + report.index_bytes) + " bytes)");
-        initial_geometry.reset();
+        loads.initial_geometry.reset();
     }
-    if (initial_asset)
+    if (loads.initial_asset)
     {
-        const auto ids = merge_asset_database(std::move(*initial_asset), true, &startup_report);
+        const auto ids = merge_asset_database(std::move(*loads.initial_asset), true, &startup_report);
         if (ids.empty()) throw std::runtime_error("Startup asset contains no mesh instances");
         Logger::LogInfo("Loaded startup asset \"" + startup_report.path + "\" in " +
                         std::to_string(startup_report.load_us) + "us (merge " +
                         std::to_string(startup_report.merge_us) + "us, upload " +
                         std::to_string(startup_report.upload_us) + "us, " +
                         std::to_string(startup_report.vertex_bytes + startup_report.index_bytes) + " bytes)");
-        initial_asset.reset();
+        loads.initial_asset.reset();
     }
 
     input_events.reserve(32);
-    metrics_ring = std::make_unique<measure::metrics_ring>();
+    telemetry.metrics_ring = std::make_unique<measure::metrics_ring>();
     last_frame_time = std::chrono::high_resolution_clock::now();
 }
 
@@ -142,7 +142,7 @@ void engine_runtime::initialize()
 
 void engine_runtime::enqueue_load(std::string path, std::string client_id, nlohmann::json rpc_id)
 {
-    const auto requested = asset_loader->request(std::move(path));
+    const auto requested = loads.asset_loader->request(std::move(path));
     if (!requested)
     {
         if (control_plane)
@@ -151,27 +151,27 @@ void engine_runtime::enqueue_load(std::string path, std::string client_id, nlohm
         }
         return;
     }
-    pending_loads.emplace(requested.value,
+    loads.pending_loads.emplace(requested.value,
                           pending_load{.client_id = std::move(client_id), .rpc_id = std::move(rpc_id), .respond = true});
 }
 
 void engine_runtime::collect_completed_loads()
 {
-    for (completed_asset_request& completed : asset_loader->drain_completed())
-        completed_asset_rows.push_back(std::move(completed));
+    for (completed_asset_request& completed : loads.asset_loader->drain_completed())
+        loads.completed_asset_rows.push_back(std::move(completed));
 }
 
 void engine_runtime::apply_completed_loads()
 {
-    for (completed_asset_request& completed : completed_asset_rows)
+    for (completed_asset_request& completed : loads.completed_asset_rows)
     {
-        const auto pending = pending_loads.find(completed.id);
-        if (pending == pending_loads.end())
+        const auto pending = loads.pending_loads.find(completed.id);
+        if (pending == loads.pending_loads.end())
         {
             continue;
         }
         pending_load response = std::move(pending->second);
-        pending_loads.erase(pending);
+        loads.pending_loads.erase(pending);
         if (!completed.result)
         {
             if (control_plane && response.respond)
@@ -206,7 +206,7 @@ void engine_runtime::apply_completed_loads()
                                                                      {"primitives", primitive_count}}));
         }
     }
-    completed_asset_rows.clear();
+    loads.completed_asset_rows.clear();
 }
 
 std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset_database asset, bool read_only,
@@ -251,13 +251,13 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
             // A1：维护按 geometry_handle 索引的 mesh bounds 表（extract 剔除消费）
             if (handle != engine::invalid_geometry_handle)
             {
-                if (mesh_bounds_min.size() <= handle)
+                if (extract.mesh_bounds_min.size() <= handle)
                 {
-                    mesh_bounds_min.resize(handle + 1, glm::vec3(0.0F));
-                    mesh_bounds_max.resize(handle + 1, glm::vec3(0.0F));
+                    extract.mesh_bounds_min.resize(handle + 1, glm::vec3(0.0F));
+                    extract.mesh_bounds_max.resize(handle + 1, glm::vec3(0.0F));
                 }
-                mesh_bounds_min[handle] = asset.meshes[mesh_index].bounds_min;
-                mesh_bounds_max[handle] = asset.meshes[mesh_index].bounds_max;
+                extract.mesh_bounds_min[handle] = asset.meshes[mesh_index].bounds_min;
+                extract.mesh_bounds_max[handle] = asset.meshes[mesh_index].bounds_max;
             }
         }
     }
@@ -303,14 +303,14 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
         const auto id = scene_registry.register_matrix_object(node.name.empty() ? mesh.name : node.name,
                                                                {mesh.bounds_min, mesh.bounds_max}, world[node_index],
                                                                read_only, handle);
-        if (runtime_geometry_slots.size() <= id) runtime_geometry_slots.resize(id + 1);
-        runtime_geometry_slots[id] = handle;
-        geometry_ref_counts[handle]++;
+        if (extract.runtime_geometry_slots.size() <= id) extract.runtime_geometry_slots.resize(id + 1);
+        extract.runtime_geometry_slots[id] = handle;
+        loads.geometry_ref_counts[handle]++;
         ids.push_back(id);
     }
     for (const auto handle : mesh_handles)
-        if (handle != engine::invalid_geometry_handle && !geometry_ref_counts.contains(handle))
-            pending_geometry_retires.push_back({handle});
+        if (handle != engine::invalid_geometry_handle && !loads.geometry_ref_counts.contains(handle))
+            loads.pending_geometry_retires.push_back({handle});
     if (report)
     {
         report->merge_us = static_cast<std::uint64_t>(
@@ -355,16 +355,16 @@ void engine_runtime::handle_scene_command(const control_plane::engine_command& c
                                          control_plane::make_error(command.id, -32602, "Failed to unload scene object " + std::to_string(id)));
             break;
         }
-        if (id < runtime_geometry_slots.size() && runtime_geometry_slots[id].has_value())
+        if (id < extract.runtime_geometry_slots.size() && extract.runtime_geometry_slots[id].has_value())
         {
-            const auto handle = *runtime_geometry_slots[id];
-            auto references = geometry_ref_counts.find(handle);
-            if (references == geometry_ref_counts.end() || --references->second == 0)
+            const auto handle = *extract.runtime_geometry_slots[id];
+            auto references = loads.geometry_ref_counts.find(handle);
+            if (references == loads.geometry_ref_counts.end() || --references->second == 0)
             {
-                pending_geometry_retires.push_back({handle});
-                if (references != geometry_ref_counts.end()) geometry_ref_counts.erase(references);
+                loads.pending_geometry_retires.push_back({handle});
+                if (references != loads.geometry_ref_counts.end()) loads.geometry_ref_counts.erase(references);
             }
-            runtime_geometry_slots[id].reset();
+            extract.runtime_geometry_slots[id].reset();
         }
         control_plane->post_response(command.client_id, control_plane::make_result(command.id, {{"unloaded", true}, {"id", id}}));
         break;
@@ -623,11 +623,11 @@ void engine_runtime::publish_scene_telemetry_if_changed()
         return;
     }
     const std::uint64_t revision = scene_registry.revision();
-    if (revision == last_published_scene_revision)
+    if (revision == telemetry.last_published_scene_revision)
     {
         return;
     }
-    last_published_scene_revision = revision;
+    telemetry.last_published_scene_revision = revision;
     control_plane->publish(control_plane::make_notification("telemetry.scene", current_scene_state()));
 }
 
@@ -677,16 +677,16 @@ void engine_runtime::publish_frame_telemetry()
     {
         return;
     }
-    telemetry_accumulator += delta_time;
-    if (telemetry_accumulator < telemetry_interval_seconds)
+    telemetry.telemetry_accumulator += delta_time;
+    if (telemetry.telemetry_accumulator < telemetry_interval_seconds)
     {
         return;
     }
-    telemetry_accumulator = 0.0F;
+    telemetry.telemetry_accumulator = 0.0F;
 
     // 帧时间指数滑动平均，抑制单帧抖动
-    smoothed_frame_time      = smoothed_frame_time * 0.9F + delta_time * 0.1F;
-    const float smoothed_fps = smoothed_frame_time > 0.0F ? 1.0F / smoothed_frame_time : 0.0F;
+    telemetry.smoothed_frame_time      = telemetry.smoothed_frame_time * 0.9F + delta_time * 0.1F;
+    const float smoothed_fps = telemetry.smoothed_frame_time > 0.0F ? 1.0F / telemetry.smoothed_frame_time : 0.0F;
 
     const engine::render_statistics stats = renderer->statistics();
 
@@ -698,14 +698,14 @@ void engine_runtime::publish_frame_telemetry()
     };
     nlohmann::json phase_us = nlohmann::json::object();
     nlohmann::json quantiles = nlohmann::json::object();
-    if (metrics_ring)
+    if (telemetry.metrics_ring)
     {
         for (std::uint32_t p = 0; p < measure::phase_count; ++p)
         {
-            const auto q = measure::summarize(*metrics_ring, 1 + p);
+            const auto q = measure::summarize(*telemetry.metrics_ring, 1 + p);
             phase_us[phase_names[p]] = q.p50;
         }
-        const auto frame_q = measure::summarize(*metrics_ring, 0);
+        const auto frame_q = measure::summarize(*telemetry.metrics_ring, 0);
         quantiles = {{"frame_p50_ms", frame_q.p50 / 1000.0},
                      {"frame_p95_ms", frame_q.p95 / 1000.0},
                      {"frame_p99_ms", frame_q.p99 / 1000.0}};
@@ -714,7 +714,7 @@ void engine_runtime::publish_frame_telemetry()
     control_plane->publish(control_plane::make_notification("telemetry.frame",
                                                             {
                                                                 {"fps", smoothed_fps},
-                                                                {"frame_time_ms", smoothed_frame_time * 1000.0F},
+                                                                {"frame_time_ms", telemetry.smoothed_frame_time * 1000.0F},
                                                                 {"presented_frames", stats.presented_frames},
                                                                 {"draw_pass_executions", stats.draw_pass_executions},
                                                                 {"upload_pass_executions", stats.upload_pass_executions},
@@ -727,12 +727,12 @@ void engine_runtime::publish_frame_telemetry()
                                                                 {"phase_us", std::move(phase_us)},
                                                                 {"quantiles", std::move(quantiles)},
                                                                 {"counters",
-                                                                 {{"instances", frame_counters.instance_count},
-                                                                  {"visible", frame_counters.visible_count},
-                                                                  {"culled", frame_counters.culled_count},
-                                                                  {"draws", frame_counters.draw_commands},
-                                                                  {"buffer_uploads", frame_counters.buffer_upload_count},
-                                                                  {"image_uploads", frame_counters.image_upload_count}}},
+                                                                 {{"instances", telemetry.frame_counters.instance_count},
+                                                                  {"visible", telemetry.frame_counters.visible_count},
+                                                                  {"culled", telemetry.frame_counters.culled_count},
+                                                                  {"draws", telemetry.frame_counters.draw_commands},
+                                                                  {"buffer_uploads", telemetry.frame_counters.buffer_upload_count},
+                                                                  {"image_uploads", telemetry.frame_counters.image_upload_count}}},
                                                             }));
 
     publish_scene_telemetry_if_changed();
@@ -783,24 +783,24 @@ bool engine_runtime::tick(std::optional<std::uint64_t> frame_limit)
                 std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - phase_begin)
                     .count());
         }
-        if (metrics_ring)
+        if (telemetry.metrics_ring)
         {
             std::array<std::uint64_t, measure::counter_slot_count> counter_slots{};
-            counter_slots[0] = frame_counters.instance_count;
-            counter_slots[1] = frame_counters.visible_count;
-            counter_slots[2] = frame_counters.culled_count;
-            counter_slots[3] = frame_counters.draw_commands;
-            counter_slots[4] = frame_counters.buffer_upload_count;
-            counter_slots[5] = frame_counters.image_upload_count;
-            measure::push(*metrics_ring,
+            counter_slots[0] = telemetry.frame_counters.instance_count;
+            counter_slots[1] = telemetry.frame_counters.visible_count;
+            counter_slots[2] = telemetry.frame_counters.culled_count;
+            counter_slots[3] = telemetry.frame_counters.draw_commands;
+            counter_slots[4] = telemetry.frame_counters.buffer_upload_count;
+            counter_slots[5] = telemetry.frame_counters.image_upload_count;
+            measure::push(*telemetry.metrics_ring,
                           static_cast<std::uint64_t>(
                               std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() -
                                                                                     frame_begin)
                                   .count()),
                           phase_us, counter_slots);
         }
-        if (context.stop_failure) return false;
-        if (context.stop_success) return true;
+        if (context.stop == frame_stop_reason::failure) return false;
+        if (context.stop == frame_stop_reason::user_requested) return true;
         if (context.rendered && frame_limit && ++rendered_frames >= *frame_limit) return true;
     }
     return true;
@@ -822,17 +822,17 @@ void engine_runtime::poll_events(frame_phase_context& context)
             camera_container.transforms[camera_entity_index].mode == interface::camera_mode::fly)
             pending_pick_request = pending_pick{.x = event.mouse_button.x, .y = event.mouse_button.y};
     }
-    context.stop_success = window->should_close();
+    context.stop = window->should_close() ? frame_stop_reason::user_requested : frame_stop_reason::none;
 }
 
 void engine_runtime::consume_control_commands(frame_phase_context& context)
 {
-    if (!context.stop_success) handle_control_plane_commands();
+    if (context.stop != frame_stop_reason::user_requested) handle_control_plane_commands();
 }
 
 void engine_runtime::merge_asset_results(frame_phase_context& context)
 {
-    if (!context.stop_success) collect_completed_loads();
+    if (context.stop != frame_stop_reason::user_requested) collect_completed_loads();
 }
 
 void engine_runtime::update_scene_transforms(frame_phase_context&)
@@ -844,20 +844,20 @@ void engine_runtime::update_scene_transforms(frame_phase_context&)
 
 void engine_runtime::update_cameras(frame_phase_context& context)
 {
-    if (!context.stop_success) interface::tick(camera_container, camera_update_context, input_events, delta_time);
+    if (context.stop != frame_stop_reason::user_requested) interface::tick(camera_container, camera_update_context, input_events, delta_time);
 }
 
 void engine_runtime::run_sample_systems(frame_phase_context& context)
 {
-    if (context.stop_success || !sample_definition.update) return;
+    if (context.stop == frame_stop_reason::user_requested || !sample_definition.update) return;
     runtime_services services{
         .scene = scene_registry,
         .cameras = camera_container,
         .active_camera = camera_entity_index,
         .request_asset = [this](std::filesystem::path path)
         {
-            auto requested = asset_loader->request(std::move(path));
-            if (requested) pending_loads.emplace(requested.value, pending_load{});
+            auto requested = loads.asset_loader->request(std::move(path));
+            if (requested) loads.pending_loads.emplace(requested.value, pending_load{});
             return requested;
         },
         .post_message = [](std::string_view message) { Logger::LogInfo(std::string(message)); },
@@ -867,26 +867,26 @@ void engine_runtime::run_sample_systems(frame_phase_context& context)
 
 void engine_runtime::extract_render_packet(frame_phase_context& context)
 {
-    if (context.stop_success) return;
-    frame_counters = {};
-    render_instances.clear();
-    render_transforms.clear();
+    if (context.stop == frame_stop_reason::user_requested) return;
+    telemetry.frame_counters = {};
+    extract.render_instances.clear();
+    extract.render_transforms.clear();
     // D2：沿紧凑 slot 索引直读热列（visible/matrices/geometries），
     // 不触碰 scene_object 记录；矩阵在 update_scene_transforms 已刷新。
     const std::vector<std::size_t>& slots = scene_registry.slot_indices();
-    render_instances.reserve(slots.size());
-    render_transforms.reserve(slots.size());
+    extract.render_instances.reserve(slots.size());
+    extract.render_transforms.reserve(slots.size());
     for (const std::size_t slot : slots)
     {
         if (scene_registry.visible_at(slot) == 0 ||
             scene_registry.geometry_at(slot) == engine::invalid_geometry_handle)
             continue;
-        const std::uint32_t transform = static_cast<std::uint32_t>(render_transforms.size());
-        render_transforms.push_back(scene_registry.matrix_at(slot));
-        render_instances.push_back({.mesh = scene_registry.geometry_at(slot), .transform = transform});
+        const std::uint32_t transform = static_cast<std::uint32_t>(extract.render_transforms.size());
+        extract.render_transforms.push_back(scene_registry.matrix_at(slot));
+        extract.render_instances.push_back({.mesh = scene_registry.geometry_at(slot), .transform = transform});
     }
-    frame_counters.instance_count = render_instances.size();
-    render_cameras = {engine::camera_row{
+    telemetry.frame_counters.instance_count = extract.render_instances.size();
+    extract.render_cameras = {engine::camera_row{
         .view = interface::get_view_matrix(camera_container.transforms[camera_entity_index]),
         .projection = interface::get_projection_matrix(camera_container.transforms[camera_entity_index],
                                                        camera_container.configs[camera_entity_index]),
@@ -894,68 +894,75 @@ void engine_runtime::extract_render_packet(frame_phase_context& context)
 
     // A1：相机挂了剔除组件且开启时，在 packet 输入侧做实例级视锥剔除。
     // 显隐过滤（scene_registry visible）在上方完成，剔除在其后；recipe/RG 零改动。
-    frame_instance_rows = render_instances;
+    extract.frame_instance_rows = extract.render_instances;
     if (camera_entity_index < culling.present.size() && culling.present[camera_entity_index] != 0 &&
         culling.enabled[camera_entity_index] != 0)
     {
-        const glm::mat4 view_projection = render_cameras.front().projection * render_cameras.front().view;
+        const glm::mat4 view_projection = extract.render_cameras.front().projection * extract.render_cameras.front().view;
         std::uint64_t culled = 0;
-        frame_instance_rows = engine::cull_instances(culling, camera_entity_index, view_projection,
-                                                     render_instances, render_transforms,
-                                                     mesh_bounds_min, mesh_bounds_max, &culled);
-        frame_counters.visible_count = frame_instance_rows.size();
-        frame_counters.culled_count = culled;
+        extract.frame_instance_rows = engine::cull_instances(culling, camera_entity_index, view_projection,
+                                                     extract.render_instances, extract.render_transforms,
+                                                     extract.mesh_bounds_min, extract.mesh_bounds_max, &culled);
+        telemetry.frame_counters.visible_count = extract.frame_instance_rows.size();
+        telemetry.frame_counters.culled_count = culled;
     }
     else
     {
-        frame_counters.visible_count = render_instances.size();
+        telemetry.frame_counters.visible_count = extract.render_instances.size();
     }
 }
 
 void engine_runtime::apply_resource_changes(frame_phase_context& context)
 {
-    if (context.stop_success) return;
+    if (context.stop == frame_stop_reason::user_requested) return;
     apply_completed_loads();
-    if (pending_geometry_retires.empty()) return;
-    const auto changed = renderer->apply_resource_changes({.geometry_retires = pending_geometry_retires});
+    if (loads.pending_geometry_retires.empty()) return;
+    const auto changed = renderer->apply_resource_changes({.geometry_retires = loads.pending_geometry_retires});
     if (!changed)
     {
         Logger::LogError("Failed to retire geometry resources: " + changed.error);
-        context.stop_failure = true;
+        context.stop = frame_stop_reason::failure;
         return;
     }
-    pending_geometry_retires.clear();
+    loads.pending_geometry_retires.clear();
 }
 
 void engine_runtime::submit_render_packet(frame_phase_context& context)
 {
-    if (context.stop_success) return;
+    if (context.stop == frame_stop_reason::user_requested) return;
     // D2：resize 请求在提交前边界执行（poll_events 只计数）
     if (resize_requests > 0)
     {
         renderer->request_resize();
         resize_requests = 0;
     }
-    context.render_this_frame = !frame_paused;
+    // D3：render_this_frame 降为局部变量（是否暂停仅本阶段相关）
+    bool render_this_frame = !frame_paused;
     if (pending_frame_steps > 0)
     {
         --pending_frame_steps;
-        context.render_this_frame = true;
+        render_this_frame = true;
     }
-    if (!context.render_this_frame)
+    if (!render_this_frame)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(8));
         return;
     }
+    const std::uint64_t serial = extract.frame_serial++;
+    // C7558：designated initializer 不允许右侧嵌套成员访问，先提升为局部量。
+    const std::span<const engine::camera_row> cameras = extract.render_cameras;
+    const std::span<const engine::instance_row> instances = extract.frame_instance_rows;
+    const std::span<const glm::mat4> transforms = extract.render_transforms;
+    engine::frame_counters* counters = &telemetry.frame_counters;
     const engine::render_frame_packet packet{
-        .frame_serial = frame_serial++,
-        .camera_rows = render_cameras,
-        .instance_rows = frame_instance_rows,
-        .transform_rows = render_transforms,
-        .counters = &frame_counters,
+        .frame_serial = serial,
+        .camera_rows = cameras,
+        .instance_rows = instances,
+        .transform_rows = transforms,
+        .counters = counters,
     };
     const engine::frame_status status = renderer->render(packet);
-    context.stop_failure = status == engine::frame_status::failed;
+    context.stop = status == engine::frame_status::failed ? frame_stop_reason::failure : context.stop;
     context.rendered = status == engine::frame_status::rendered;
     if (status == engine::frame_status::skipped)
         std::this_thread::sleep_for(std::chrono::milliseconds(8));
@@ -963,7 +970,7 @@ void engine_runtime::submit_render_packet(frame_phase_context& context)
 
 void engine_runtime::publish_telemetry(frame_phase_context& context)
 {
-    if (context.stop_success || context.stop_failure) return;
+    if (context.stop != frame_stop_reason::none) return;
     // D2：拾取请求在遥测出口执行（poll_events 只记坐标；命中变化随本帧遥测发布）
     if (pending_pick_request)
     {
@@ -979,9 +986,9 @@ void engine_runtime::shutdown() noexcept
     {
         control_plane->stop();
     }
-    if (asset_loader)
+    if (loads.asset_loader)
     {
-        asset_loader->shutdown();
+        loads.asset_loader->shutdown();
     }
     control_plane.reset();
     if (renderer)
@@ -1001,12 +1008,12 @@ std::uint32_t engine_runtime::validation_error_count() const noexcept
 
 void engine_runtime::set_initial_geometry(engine::asset_database asset)
 {
-    initial_geometry = std::move(asset);
+    loads.initial_geometry = std::move(asset);
 }
 
 void engine_runtime::set_required_startup_asset(std::filesystem::path path)
 {
-    required_startup_asset = std::move(path);
+    loads.required_startup_asset = std::move(path);
 }
 
 void engine_runtime::set_camera_culling(bool enabled)

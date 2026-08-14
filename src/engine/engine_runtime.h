@@ -64,48 +64,64 @@ private:
     std::unique_ptr<control_plane::control_plane_server> control_plane;
     bool frame_paused = false;
     std::uint32_t pending_frame_steps = 0;
-    float telemetry_accumulator = 0.0F;
-    float smoothed_frame_time = 1.0F / 60.0F;
 
     // --- P2 scene system ---
     scene::scene_registry scene_registry;
-    // 场景实例到 RG persistent geometry handle 的行映射。
-    std::vector<std::optional<engine::geometry_handle>> runtime_geometry_slots;
-    std::optional<engine::asset_database> initial_geometry;
-    std::optional<engine::asset_database> initial_asset;
-    std::optional<std::filesystem::path> required_startup_asset;
-    std::vector<engine::camera_row> render_cameras;
-    std::vector<engine::instance_row> render_instances;
-    std::vector<glm::mat4> render_transforms;
-    std::uint64_t frame_serial = 0;
     sample sample_definition;
-    std::uint64_t last_published_scene_revision = 0;
 
-    // 异步加载：worker 线程只解析 glTF（纯 CPU），结果包在帧边界由主线程 staging + 注册
+    // D3：成员按职责分簇（帧边界运行状态分组；组织性，无行为变化）。
+    // --- 异步加载簇：worker 解析 glTF（纯 CPU），结果包在帧边界由主线程 staging + 注册 ---
     struct pending_load
     {
         std::string client_id;
         nlohmann::json rpc_id;
         bool respond = false;
     };
-    std::unique_ptr<asset_service> asset_loader;
-    std::unordered_map<asset_request_id, pending_load> pending_loads;
-    std::unordered_map<engine::geometry_handle, std::uint32_t> geometry_ref_counts;
-    std::vector<completed_asset_request> completed_asset_rows;
-    std::vector<geometry_retire_row> pending_geometry_retires;
+    struct frame_loads
+    {
+        std::unique_ptr<asset_service> asset_loader;
+        std::unordered_map<asset_request_id, pending_load> pending_loads;
+        std::unordered_map<engine::geometry_handle, std::uint32_t> geometry_ref_counts;
+        std::vector<completed_asset_request> completed_asset_rows;
+        std::vector<geometry_retire_row> pending_geometry_retires;
+        std::optional<engine::asset_database> initial_geometry;
+        std::optional<engine::asset_database> initial_asset;
+        std::optional<std::filesystem::path> required_startup_asset;
+    };
+    frame_loads loads;
 
-    // --- A0 测量设施 ---
-    // metrics_ring 约 885KB，必须堆上持有（禁止栈上实例化）。
-    std::unique_ptr<measure::metrics_ring> metrics_ring;
-    engine::frame_counters frame_counters; // 每帧清零，extract 填实例/可见/剔除，recipe 回填 draw/upload
+    // --- 提取簇：packet 行表缓冲与剔除输入 ---
+    struct frame_extract
+    {
+        // 场景实例到 RG persistent geometry handle 的行映射。
+        std::vector<std::optional<engine::geometry_handle>> runtime_geometry_slots;
+        std::vector<engine::camera_row> render_cameras;
+        std::vector<engine::instance_row> render_instances;
+        std::vector<glm::mat4> render_transforms;
+        std::uint64_t frame_serial = 0;
+        // 按 geometry_handle 索引的 mesh 级 world bounds（merge 时维护，extract 剔除消费）
+        std::vector<glm::vec3> mesh_bounds_min;
+        std::vector<glm::vec3> mesh_bounds_max;
+        // 本帧实际提交给 recipe 的实例行（剔除后指向 culling scratch，否则指向 render_instances）
+        std::span<const engine::instance_row> frame_instance_rows;
+    };
+    frame_extract extract;
+
+    // --- 遥测簇：A0 测量设施与发布状态 ---
+    struct frame_telemetry
+    {
+        // metrics_ring 约 885KB，必须堆上持有（禁止栈上实例化）。
+        std::unique_ptr<measure::metrics_ring> metrics_ring;
+        // 每帧清零，extract 填实例/可见/剔除，recipe 回填 draw/upload
+        engine::frame_counters frame_counters;
+        float telemetry_accumulator = 0.0F;
+        float smoothed_frame_time = 1.0F / 60.0F;
+        std::uint64_t last_published_scene_revision = 0;
+    };
+    frame_telemetry telemetry;
 
     // --- A1 视锥剔除 ---
     engine::culling_manager culling;
-    // 按 geometry_handle 索引的 mesh 级 world bounds（merge 时维护，extract 剔除消费）
-    std::vector<glm::vec3> mesh_bounds_min;
-    std::vector<glm::vec3> mesh_bounds_max;
-    // 本帧实际提交给 recipe 的实例行（剔除后指向 culling scratch，否则指向 render_instances）
-    std::span<const engine::instance_row> frame_instance_rows;
 
     // --- D2 帧边界副作用归并（poll_events 只记请求行，执行在帧边界出口）---
     std::uint32_t resize_requests = 0;
@@ -127,12 +143,18 @@ private:
     [[nodiscard]] std::vector<scene::object_id> merge_asset_database(engine::asset_database asset, bool read_only,
                                                                      engine::load_report* report = nullptr);
 
+    // 帧阶段控制流（D3）：枚举代替布尔——stop 语义互斥（窗口关闭 / 错误），
+    // rendered 独立标记本帧是否实际提交；render_this_frame 降为 submit 局部变量。
+    enum class frame_stop_reason : std::uint8_t
+    {
+        none = 0,
+        user_requested,  // 窗口关闭（poll_events 检测）
+        failure,         // engine/backend 错误
+    };
     struct frame_phase_context
     {
-        bool stop_success = false;
-        bool stop_failure = false;
+        frame_stop_reason stop = frame_stop_reason::none;
         bool rendered = false;
-        bool render_this_frame = true;
     };
     using frame_phase = void (engine_runtime::*)(frame_phase_context&);
     void poll_events(frame_phase_context&);
