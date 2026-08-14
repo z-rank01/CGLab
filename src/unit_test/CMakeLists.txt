@@ -66,6 +66,10 @@ add_test(
         -P ${PROJECT_SOURCE_DIR}/cmake/ArchitectureContract.cmake
 )
 
+add_executable(cglab_measure_tests measure_test.cpp)
+target_link_libraries(cglab_measure_tests PRIVATE measure)
+cglab_register_test(cglab_measure_tests cglab.measure)
+
 add_executable(cglab_asset_gltf_tests asset_gltf_test.cpp)
 target_link_libraries(cglab_asset_gltf_tests PRIVATE cglab_asset_runtime dcl::gltf)
 # Fixtures are generated with tinygltf's writer; dcl_gltf keeps tinygltf on its
