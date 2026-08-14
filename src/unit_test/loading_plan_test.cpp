@@ -41,43 +41,44 @@ namespace
         auto asset = make_asset();
         const auto plan = engine::plan_geometry_uploads(asset, 0, 2, 10, 1ull << 30, 0);
         check(static_cast<bool>(plan), "plan succeeds");
-        check(plan.primitives.size() == 3, "three primitives flattened");
-        check(plan.mesh_primitive_counts.size() == 2, "two mesh boundaries");
-        check(plan.mesh_primitive_counts[0] == 2 && plan.mesh_primitive_counts[1] == 1, "mesh counts correct");
+        check(plan.value.primitive_plan_rows.size() == 3, "three primitives flattened");
+        check(plan.value.mesh_primitive_counts.size() == 2, "two mesh boundaries");
+        check(plan.value.mesh_primitive_counts[0] == 2 && plan.value.mesh_primitive_counts[1] == 1, "mesh counts correct");
 
         // 对齐：顶点偏移为顶点步长倍数，索引偏移为 4 字节倍数
-        for (const auto& pp : plan.primitives)
+        for (const auto& pp : plan.value.primitive_plan_rows)
         {
             check(pp.vertex_byte_offset % sizeof(engine::vertex) == 0, "vertex offset aligned to vertex stride");
             check(pp.index_byte_offset % 4 == 0, "index offset aligned to 4 bytes");
         }
         // 首图元从游标 0 开始；索引切片紧邻顶点切片（无填充）
-        check(plan.primitives[0].vertex_byte_offset == 0, "first primitive starts at cursor");
-        const auto& p0 = plan.primitives[0];
+        check(plan.value.primitive_plan_rows[0].vertex_byte_offset == 0, "first primitive starts at cursor");
+        const auto& p0 = plan.value.primitive_plan_rows[0];
         check(p0.index_byte_offset == p0.vertex_byte_offset + p0.vertex_count * sizeof(engine::vertex),
               "index slice follows vertex slice");
         // 游标 = 末图元末尾
-        const auto& p2 = plan.primitives[2];
-        check(plan.cursor == p2.index_byte_offset + p2.index_count * sizeof(std::uint32_t), "cursor at plan end");
+        const auto& p2 = plan.value.primitive_plan_rows[2];
+        check(plan.value.cursor == p2.index_byte_offset + p2.index_count * sizeof(std::uint32_t), "cursor at plan end");
 
         // draw 语义：first_index / vertex_offset 换算正确（含跨图元的顶点步长对齐填充）
-        check(p0.first_index == 3 * sizeof(engine::vertex) / 4 && p0.vertex_offset == 0, "draw units of first primitive");
+        check(p0.draw.first_index == 3 * sizeof(engine::vertex) / 4 && p0.draw.vertex_offset == 0,
+              "draw units of first primitive");
         const std::uint64_t cursor_after_p0 = 3 * sizeof(engine::vertex) + 3 * sizeof(std::uint32_t);
-        const auto& p1 = plan.primitives[1];
+        const auto& p1 = plan.value.primitive_plan_rows[1];
         check(p1.vertex_byte_offset == (cursor_after_p0 + sizeof(engine::vertex) - 1) / sizeof(engine::vertex) * sizeof(engine::vertex),
               "vertex slice aligned to vertex stride after padding");
-        check(p1.vertex_offset == static_cast<std::int32_t>(p1.vertex_byte_offset / sizeof(engine::vertex)),
+        check(p1.draw.vertex_offset == static_cast<std::int32_t>(p1.vertex_byte_offset / sizeof(engine::vertex)),
               "vertex offset in vertex units");
-        check(plan.primitives[2].first_index == p2.index_byte_offset / 4, "first index in index units");
+        check(plan.value.primitive_plan_rows[2].draw.first_index == p2.index_byte_offset / 4, "first index in index units");
     }
 
     void test_material_mapping()
     {
         auto asset = make_asset();
         const auto plan = engine::plan_geometry_uploads(asset, 0, 2, 10, 1ull << 30, 0);
-        check(plan.primitives[0].material_index == 10, "material_base applied");
-        check(plan.primitives[1].material_index == 11, "material_base plus row material");
-        check(plan.primitives[2].material_index == 10, "invalid material falls back to base");
+        check(plan.value.primitive_plan_rows[0].draw.material_index == 10, "material_base applied");
+        check(plan.value.primitive_plan_rows[1].draw.material_index == 11, "material_base plus row material");
+        check(plan.value.primitive_plan_rows[2].draw.material_index == 10, "invalid material falls back to base");
     }
 
     void test_range_errors()
@@ -103,9 +104,9 @@ namespace
         // 非零游标：首图元顶点偏移对齐到游标之后
         const auto plan = engine::plan_geometry_uploads(asset, 1, 1, 0, 1ull << 30, 7);
         check(static_cast<bool>(plan), "plan with nonzero cursor succeeds");
-        check(plan.primitives.size() == 1, "single mesh range");
-        check(plan.primitives[0].vertex_byte_offset % sizeof(engine::vertex) == 0, "cursor alignment respected");
-        check(plan.mesh_primitive_counts[0] == 1, "single mesh count");
+        check(plan.value.primitive_plan_rows.size() == 1, "single mesh range");
+        check(plan.value.primitive_plan_rows[0].vertex_byte_offset % sizeof(engine::vertex) == 0, "cursor alignment respected");
+        check(plan.value.mesh_primitive_counts[0] == 1, "single mesh count");
     }
 } // namespace
 

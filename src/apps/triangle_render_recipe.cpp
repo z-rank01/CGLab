@@ -153,11 +153,12 @@ namespace apps
                 const auto plan = engine::plan_geometry_uploads(*row.asset, row.first_mesh, row.mesh_count,
                                                                 row.material_base, geometry_capacity, state.geometry_cursor);
                 if (!plan) return {.error = plan.error};
+                const engine::geometry_upload_plan& layout = plan.value;
                 std::vector<render_graph::buffer_upload_row> uploads;
-                uploads.reserve(plan.primitives.size() * 2);
+                uploads.reserve(layout.primitive_plan_rows.size() * 2);
                 // 先建本地列，上传成功后才并入 state（失败不污染状态）
                 std::vector<engine::draw_range> created_draws;
-                created_draws.reserve(plan.primitives.size());
+                created_draws.reserve(layout.primitive_plan_rows.size());
                 std::vector<std::uint32_t> created_begins;
                 created_begins.reserve(row.mesh_count);
                 std::vector<std::uint32_t> created_counts;
@@ -165,28 +166,25 @@ namespace apps
                 std::size_t primitive_index = 0;
                 for (std::uint32_t mesh = 0; mesh < row.mesh_count; ++mesh)
                 {
-                    const std::uint32_t draw_count = plan.mesh_primitive_counts[mesh];
+                    const std::uint32_t draw_count = layout.mesh_primitive_counts[mesh];
                     created_begins.push_back(static_cast<std::uint32_t>(created_draws.size()));
                     created_counts.push_back(draw_count);
                     for (std::uint32_t k = 0; k < draw_count; ++k)
                     {
-                        const auto& pp = plan.primitives[primitive_index++];
+                        const auto& pp = layout.primitive_plan_rows[primitive_index++];
                         uploads.push_back({state.geometry, pp.vertex_byte_offset,
                                            std::as_bytes(std::span(row.asset->vertex_blob)
                                                              .subspan(pp.vertex_element_offset, pp.vertex_count))});
                         uploads.push_back({state.geometry, pp.index_byte_offset,
                                            std::as_bytes(std::span(row.asset->index_blob)
                                                              .subspan(pp.index_element_offset, pp.index_count))});
-                        created_draws.push_back({.first_index = pp.first_index,
-                                                  .index_count = pp.index_count,
-                                                  .vertex_offset = pp.vertex_offset,
-                                                  .material_index = pp.material_index});
+                        created_draws.push_back(pp.draw);
                     }
                 }
                 const auto uploaded = device.apply_resource_changes({.buffer_uploads = uploads});
                 if (!uploaded) return {.error = uploaded.error};
                 state.staged_buffer_upload_count += uploads.size();
-                state.geometry_cursor = plan.cursor;
+                state.geometry_cursor = layout.cursor;
                 const std::size_t first_draw_index = state.geometry_draws.size();
                 state.geometry_draws.insert(state.geometry_draws.end(), created_draws.begin(), created_draws.end());
                 for (std::size_t i = 0; i < created_begins.size(); ++i)
