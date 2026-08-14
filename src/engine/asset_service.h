@@ -14,7 +14,7 @@ namespace engine
     {
         asset_request_id id = 0;
         engine::result<engine::asset_database> result;
-        // A0 加载报告：worker 填 load_us/字节数/图片数，主线程补 merge/upload。
+        // 加载报告：worker 填 load_us/字节数/图片数，主线程补 merge/upload。
         engine::load_report report;
     };
 

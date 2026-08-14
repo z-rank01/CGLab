@@ -1,6 +1,6 @@
 #pragma once
 
-// apps::lights_table —— F3 端到端插件验证（EngineLayerDoDPlan F3）。
+// apps::lights_table —— 光源组件表（positions/colors/intensities 三列 SoA）。
 //
 // 插件侧组件表：sample 系统持有并每帧发布为帧通道，recipe 侧经
 // channels->find_state<apps::lights_table>() 消费——引擎零改动（组件表即插即用）。

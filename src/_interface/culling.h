@@ -1,6 +1,6 @@
 #pragma once
 
-// interface::culling —— 视锥剔除纯函数层（A1）。
+// interface::culling —— 视锥剔除纯函数层。
 // 零引擎类型依赖（仅 glm/std），供 engine 剔除系统与单测消费；
 // 所有函数无副作用，世界空间约定与渲染一致。
 

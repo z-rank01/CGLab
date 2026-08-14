@@ -11,7 +11,7 @@
 // - 输入路由层：把"物理输入"（key_code / mouse_button）映射为"逻辑动作"（camera_action），
 //   相机系统只消费动作状态，不再硬编码键码。
 // - 绑定表是普通数据（vector of pairs），默认绑定由 make_default_bindings() 给出；
-//   后续可无缝替换为 JSON 配置驱动（P1 先落地代码表）。
+//   后续可无缝替换为 JSON 配置驱动（当前为代码表）。
 // - 设计约束：camera_system::process_event 保持原有签名与行为（CTest 依赖），
 //   它现在只是 process_event_routed + 默认绑定表的薄封装。
 

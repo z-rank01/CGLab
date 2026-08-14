@@ -80,7 +80,7 @@ namespace
                 for ([[maybe_unused]] const auto& row : batch.geometry_uploads)
                 {
                     ++static_cast<fake_backend*>(value)->state->upload_calls;
-                    // A2 批量行：每 mesh 一个句柄（句柄数量 = mesh_count）
+                    // 批量行：每 mesh 一个句柄（句柄数量 = mesh_count）
                     for (std::uint32_t mesh = 0; mesh < row.mesh_count; ++mesh)
                     {
                         changed.geometry_handles.push_back(7);
@@ -92,7 +92,7 @@ namespace
             {
                 auto& state = *static_cast<fake_backend*>(value)->state;
                 ++state.render_calls;
-                // F2：帧通道取用（instance 行）
+                // 帧通道取用（instance 行）
                 const std::size_t instance_count = packet.channels ? packet.channels->find_rows<engine::instance_row>().size() : 0;
                 state.last_object_count = instance_count;
                 state.object_counts.push_back(instance_count);

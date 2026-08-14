@@ -10,7 +10,7 @@
 #include "json_rpc.h"
 
 // control_plane::control_plane_server
-// - P0 控制平面：localhost WebSocket(JSON-RPC 2.0) 服务。
+// - 控制平面：localhost WebSocket(JSON-RPC 2.0) 服务。
 // - 线程模型：
 //   * IO 线程（ixwebsocket 内部线程）：协议解析/校验，合法命令入队，即时响应直接发回。
 //   * 引擎主线程：帧边界 drain_commands() 消费命令；publish()/post_response() 直接发送。
@@ -25,7 +25,7 @@ namespace control_plane
     {
         bool enabled = true;
         std::uint16_t port = default_port;
-        bool open_browser = false; // P3 预留：当前无 HTTP 静态服务，暂为空操作
+        bool open_browser = false; // 预留：当前无 HTTP 静态服务，暂为空操作
         std::string server_name = "CGLab";
     };
 

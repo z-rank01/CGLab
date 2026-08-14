@@ -39,7 +39,7 @@ namespace apps
             std::vector<render_graph::indexed_indirect_command> commands;
             push_constants push;
             render_graph::draw_indexed_indirect_row draw;
-            // A0：加载帧的 staging 上传计数（build_frame 回填后清零）
+            // 加载帧的 staging 上传计数（build_frame 回填后清零）
             uint64_t staged_buffer_upload_count = 0;
             uint64_t staged_image_upload_count = 0;
             std::array<render_graph::frame_resource_row, 5> frame_resources;
@@ -144,7 +144,7 @@ namespace apps
             for (const auto& row : batch.geometry_uploads)
             {
                 if (!row.asset) return {.error = "Triangle geometry upload row is empty"};
-                // A2：批量行 → 纯函数布局计划 → 零拷贝上传（span 直接引用共享 blob）
+                // 批量行 → 纯函数布局计划 → 零拷贝上传（span 直接引用共享 blob）
                 const auto plan = engine::plan_geometry_uploads(*row.asset, row.first_mesh, row.mesh_count,
                                                                 row.material_base, geometry_capacity, state.geometry_cursor);
                 if (!plan) return {.error = plan.error};
@@ -193,7 +193,7 @@ namespace apps
             const render_graph::frame_environment& environment, render_graph::frame_plan& plan)
         {
             auto& state = *static_cast<recipe_state*>(value);
-            // F2：帧通道取用（缺失返回空 span——编写者责任）
+            // 帧通道取用（缺失返回空 span——编写者责任）
             const auto camera_rows = packet.channels->find_rows<engine::camera_row>();
             const auto instance_rows = packet.channels->find_rows<engine::instance_row>();
             const auto transform_rows = packet.channels->find_rows<glm::mat4>();
@@ -228,7 +228,7 @@ namespace apps
             if (!updated) return {.error = updated.error};
             if (packet.counters)
             {
-                // draw/upload 计数回填（A0）：本帧命令数 + 加载帧的 staging 行数
+                // draw/upload 计数回填：本帧命令数 + 加载帧的 staging 行数
                 packet.counters->draw_commands = state.commands.size();
                 packet.counters->buffer_upload_count =
                     uploads.size() + std::exchange(state.staged_buffer_upload_count, 0);

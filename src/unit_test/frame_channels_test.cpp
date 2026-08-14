@@ -1,4 +1,4 @@
-// engine::frame_channels 单元测试（F1，EngineLayerDoDPlan）
+// engine::frame_channels 单元测试
 // 覆盖：行表通道发布/查找、状态通道、缺失返回空、帧首清零、多通道并存、
 //       每通道单写者（重复发布不覆盖）、id 类型隔离。
 

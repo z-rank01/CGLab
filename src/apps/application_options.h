@@ -29,7 +29,7 @@ namespace apps
         bool no_ui = false;
         bool ui_open_browser = false;
 
-        // A1：启动即给活动相机挂载视锥剔除组件（CullingSample 恒开，其余默认关）。
+        // 启动即给活动相机挂载视锥剔除组件（CullingSample 恒开，其余默认关）。
         bool culling = false;
     };
 

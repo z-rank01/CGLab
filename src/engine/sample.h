@@ -18,7 +18,7 @@ namespace engine
         scene::scene_registry& scene;
         interface::camera_container& cameras;
         std::size_t active_camera = 0;
-        // F3：帧通道行表（引擎提供秩序机制给系统回调：帧首已 clear，系统在此发布
+        // 帧通道行表（引擎提供秩序机制给系统回调：帧首已 clear，系统在此发布
         // 组件表通道，extract/submit 阶段后续消费；每通道单写者）。
         engine::frame_channels& channels;
         std::function<engine::result<asset_request_id>(std::filesystem::path)> request_asset;

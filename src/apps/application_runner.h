@@ -27,7 +27,7 @@ namespace apps
         bool enforce_smoke_contract = false;
         std::uint64_t expected_pipeline_creations = 4;
         std::uint64_t expected_indirect_groups_per_frame = 1;
-        // A1：启动即给活动相机挂载视锥剔除组件（CullingSample 恒开）。
+        // 启动即给活动相机挂载视锥剔除组件（CullingSample 恒开）。
         bool culling_enabled = false;
     };
 

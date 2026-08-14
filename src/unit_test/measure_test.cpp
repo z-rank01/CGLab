@@ -1,4 +1,4 @@
-// measure::metrics_ring 单元测试（A0）
+// measure::metrics_ring 单元测试
 // 覆盖：push/summarize 正确性、空环、环翻转、分位数边界、阶段/计数器列隔离。
 
 #include <cmath>

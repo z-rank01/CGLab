@@ -41,7 +41,7 @@ add_executable(GltfSponzaSample
     lights_table.h
 )
 
-# CullingSample（A1）：GltfSponzaSample 的剔除演示变体，复用同一 recipe。
+# CullingSample：GltfSponzaSample 的剔除演示变体，复用同一 recipe。
 add_executable(CullingSample
     culling_sample.cpp
     gltf_render_recipe.cpp

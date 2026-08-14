@@ -1,4 +1,4 @@
-// A2 加载路径：geometry 批量上传规划单测
+// 加载路径：geometry 批量上传规划单测
 // 覆盖：offset 对齐、句柄边界（mesh 图元计数）、material_base 映射、游标推进、
 // 源 blob 越界 / 容量耗尽 / mesh 范围越界报错、多 mesh 顺序展平。
 

@@ -1,6 +1,6 @@
 #pragma once
 
-// engine::culling_manager —— 相机可选视锥剔除组件（A1，Component + Manager）。
+// engine::culling_manager —— 相机可选视锥剔除组件（Component + Manager）。
 //
 // 角色分工（本项目不是严格 ECS，"system" 一词只属于系统函数本身）：
 // - 组件列（纯数据，manager 的列即唯一真相）：

@@ -21,7 +21,7 @@ namespace apps
         constexpr uint64_t geometry_capacity = 256ull * 1024ull * 1024ull;
         constexpr uint32_t max_draws = 65536;
         constexpr uint32_t max_materials = 4096;
-        // F3：光源表上传容量（SoA 三列连续布局：positions | colors | intensities）
+        // 光源表上传容量（SoA 三列连续布局：positions | colors | intensities）
         constexpr uint32_t max_lights = 64;
 
         struct frame_uniform { glm::mat4 model{1.0F}; glm::mat4 view{1.0F}; glm::mat4 projection{1.0F}; };
@@ -42,8 +42,8 @@ namespace apps
             uint32_t frame_uniform_slot = 0;
             uint32_t transform_buffer_slot = 0;
             uint32_t material_buffer_slot = 0;
-            uint32_t lights_buffer_slot = 0; // F3：光源表所在 storage buffer 表 slot
-            uint32_t light_count = 0;        // F3：本帧光源数（0 = 无光源，shader 回退硬编码方向光）
+            uint32_t lights_buffer_slot = 0; // 光源表所在 storage buffer 表 slot
+            uint32_t light_count = 0;        // 本帧光源数（0 = 无光源，shader 回退硬编码方向光）
         };
         struct geometry_row { std::vector<engine::draw_range> draws; bool alive = true; };
         struct draw_candidate
@@ -59,7 +59,7 @@ namespace apps
             render_graph::device_buffer_handle transforms;
             render_graph::device_buffer_handle indirect;
             render_graph::device_buffer_handle materials;
-            render_graph::device_buffer_handle lights; // F3：光源表（positions | colors | intensities 三列连续）
+            render_graph::device_buffer_handle lights; // 光源表（positions | colors | intensities 三列连续）
             std::vector<render_graph::device_buffer_handle> frame_uniforms;
             std::array<render_graph::device_pipeline_handle, 4> pipelines;
             uint32_t transform_slot = 0;
@@ -71,7 +71,7 @@ namespace apps
             uint64_t geometry_cursor = 0;
             std::vector<transform_row> transform_rows;
             std::vector<render_graph::indexed_indirect_command> commands;
-            // A0：加载帧的 staging 上传计数（build_frame 回填后清零）
+            // 加载帧的 staging 上传计数（build_frame 回填后清零）
             uint64_t staged_buffer_upload_count = 0;
             uint64_t staged_image_upload_count = 0;
             std::array<render_graph::draw_indexed_indirect_row, 4> draws;
@@ -127,7 +127,7 @@ namespace apps
                   .memory = render_graph::memory_domain::upload,
                   .mapping = render_graph::mapping_policy::persistent,
                   .lifetime = render_graph::resource_lifetime_class::persistent}},
-                // F3：光源表 buffer（positions | colors | intensities 三列连续，std430 布局）
+                // 光源表 buffer（positions | colors | intensities 三列连续，std430 布局）
                 {{.size = sizeof(glm::vec4) * max_lights * 2 + sizeof(float) * max_lights,
                   .usage = render_graph::buffer_usage::STORAGE_BUFFER,
                   .memory = render_graph::memory_domain::upload,
@@ -303,7 +303,7 @@ namespace apps
             for (const auto& row : batch.geometry_uploads)
             {
                 if (!row.asset) return {.error = "glTF geometry upload row is empty"};
-                // A2：批量行 → 纯函数布局计划 → 零拷贝上传（span 直接引用共享 blob）
+                // 批量行 → 纯函数布局计划 → 零拷贝上传（span 直接引用共享 blob）
                 const auto plan = engine::plan_geometry_uploads(*row.asset, row.first_mesh, row.mesh_count,
                                                                 row.material_base, geometry_capacity, state.geometry_cursor);
                 if (!plan) return {.error = plan.error};
@@ -352,7 +352,7 @@ namespace apps
             const render_graph::frame_environment& environment, render_graph::frame_plan& plan)
         {
             auto& state = *static_cast<recipe_state*>(value);
-            // F2：帧通道取用（缺失返回空 span——编写者责任）
+            // 帧通道取用（缺失返回空 span——编写者责任）
             const auto camera_rows = packet.channels->find_rows<engine::camera_row>();
             const auto instance_rows = packet.channels->find_rows<engine::instance_row>();
             const auto transform_rows = packet.channels->find_rows<glm::mat4>();
@@ -412,7 +412,7 @@ namespace apps
             frame_uniform uniform{.view = camera_rows.front().view,
                                   .projection = camera_rows.front().projection};
             uniform.projection[1][1] *= -1.0F;
-            // F3：帧通道消费光源表（缺失 → 无光源，shader 回退硬编码方向光——编写者责任）。
+            // 帧通道消费光源表（缺失 → 无光源，shader 回退硬编码方向光——编写者责任）。
             const apps::lights_table* lights = packet.channels->find_state<apps::lights_table>();
             const std::uint32_t light_count = (lights != nullptr && lights->count() <= max_lights)
                                                   ? static_cast<std::uint32_t>(lights->count())
@@ -452,7 +452,7 @@ namespace apps
             if (!updated) return {.error = updated.error};
             if (packet.counters)
             {
-                // draw/upload 计数回填（A0）：本帧命令数 + 加载帧的 staging 行数
+                // draw/upload 计数回填：本帧命令数 + 加载帧的 staging 行数
                 packet.counters->draw_commands = state.commands.size();
                 packet.counters->buffer_upload_count =
                     upload_count + std::exchange(state.staged_buffer_upload_count, 0);

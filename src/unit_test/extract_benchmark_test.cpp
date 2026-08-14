@@ -1,9 +1,9 @@
-// Extract-scale micro benchmark (D0 baseline, EngineLayerDoDPlan D0): synthesizes
-// N scene objects and measures the extract chain
-//   scene_registry.objects() -> scene::model_matrix -> instance/transform rows
-// which mirrors engine_runtime::extract_render_packet's per-object path.
+// Extract-scale micro benchmark: synthesizes N scene objects and measures the
+// column-based extract chain
+//   refresh_matrices -> active_slots -> hot-column reads -> instance/transform rows
+// which mirrors engine_runtime::extract_render_packet's per-frame path.
 // Reports one data line per run — deliberately no pass/fail threshold, not a CI
-// gate (计划 D0："仅作前后对比数据，不进 CI 门槛").
+// gate (仅作重构前后对比数据，不进 CI 门槛).
 
 #include <algorithm>
 #include <chrono>
@@ -42,7 +42,7 @@ namespace
         std::uint64_t visible = 0;
     };
 
-    // Mirrors the column-based extract path (D2): refresh dirty matrices, then walk
+    // Mirrors the column-based extract path: refresh dirty matrices, then walk
     // active_slots reading hot columns (no scene_object pointer chasing).
     extract_result run_extract(scene::scene_registry& registry)
     {

@@ -79,7 +79,7 @@ namespace control_plane
         {
             if (message->binary)
             {
-                // P0 仅接受文本帧（JSON）
+                // 仅接受文本帧（JSON）
                 web_socket.sendText(make_error(nullptr, error_invalid_request, "Binary frames are not supported").dump());
                 break;
             }

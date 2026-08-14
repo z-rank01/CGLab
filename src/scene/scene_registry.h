@@ -13,27 +13,28 @@
 #include "engine/geometry.h"
 
 // scene::scene_registry
-// - P2 场景系统核心：场景对象注册表（DoD 风格槽位存储，纯数据，无 Vulkan 依赖，可单测）。
+// - 场景系统核心：场景对象注册表（DoD 风格槽位存储，纯数据，无 Vulkan 依赖，可单测）。
 // - 职责：对象生命周期（注册/卸载）、变换、显隐、选中、射线拾取（AABB）。
 // - 不负责 GPU 资源：draw_range 由渲染侧（Vulkan backend 的 geometry arena）分配后回填，
 //   注册表只保存"画哪些区间"的描述。
 // - 启动资产登记为 read_only 条目（draws 为空，走 legacy buffer），可列出/选中，不可卸载。
 // - revision：任何场景变更单调递增，供控制平面做场景快照的增量推送判定。
 //
-// D1（2026-08-14）：索引与存储卫生（EngineLayerDoDPlan D1）
-// - id→slot 直接寻址表（slot_by_id）：find/unload/set_* 从 O(n) 线性扫描降为 O(1)；
+// 存储与索引
+// - id→slot 直接寻址表（slot_by_id）：find/unload/set_* 为 O(1)；
 //   id 单调递增不复用（句柄稳定），slot 复用，id 空间 = 累计注册数（文档约束：长时间
 //   加载/卸载循环会单调增长，属设计取舍）。
-// - active_slots 紧凑存活索引（注册/卸载时维护，保注册序）：objects()/pick 不再全槽扫描。
-// - scene_object 瘦身：draws 由 std::vector<draw_range> 改为扁平 draw_ranges 列 +
-//   draw_begin/draw_count 切片（消灭每对象一次堆分配）。
+// - active_slots 紧凑存活索引（注册/卸载时维护，保注册序）：objects()/pick 不做全槽扫描。
+// - scene_object 为冷路径记录；draws 存扁平 draw_ranges 列 + draw_begin/draw_count 切片
+//   （每对象零堆分配）。
 // - 热/冷路径哲学与 camera 的 hot/cold 分块一致：热（extract/culling）逐列，冷（pick/遥测）逐记录。
 //
-// D2（2026-08-14）：热路径列化（EngineLayerDoDPlan D2）
+// 热路径列化
 // - 热字段列（slot 对齐）：visible / matrices（缓存）/ dirty / geometries；与记录字段同步
 //   （列是热路径真相，记录字段是冷路径镜像）。
-// - extract 沿 active_slots 直读列：消灭指针追逐 + 逐对象 model_matrix（静态场景零矩阵数学）。
-// - transform_bounds 改为闭式解（abs(M)·half_extent），culling 第一遍同享收益。
+// - extract 沿 active_slots 直读列：无指针追逐、无逐对象 model_matrix（静态场景零矩阵数学，
+//   脏行由 refresh_matrices 增量重算）。
+// - transform_bounds 为闭式解（abs(M)·half_extent），culling 第一遍同享收益。
 
 namespace scene
 {
@@ -63,7 +64,7 @@ namespace scene
     };
 
     // 对象记录（冷路径视图：遥测 / 拾取 / 编辑命令）。热路径（extract/culling）请用
-    // 列式访问（D2 起），不要在热路径逐对象走本结构。
+    // 列式访问，不要在热路径逐对象走本结构。
     struct scene_object
     {
         object_id id = invalid_object_id;
@@ -301,7 +302,7 @@ namespace scene
             return result;
         }
 
-        // --- D2 热路径列视图（engine extract 专用，slot 对齐）---
+        // --- 热路径列视图（engine extract 专用，slot 对齐）---
         // extract 沿 active_slots 直读列，不触碰 scene_object 记录（消灭指针追逐
         // 与逐对象矩阵重算）；列与记录字段在注册/卸载/设置时同步（列是热路径真相，
         // 记录字段是冷路径镜像：pick / 遥测 / 编辑命令）。
@@ -424,7 +425,7 @@ namespace scene
         std::vector<std::size_t> slot_by_id;    // id → slot（invalid_slot = 未占用）
         std::vector<std::size_t> active_slots;  // 紧凑存活槽索引（注册序）
         std::vector<draw_range> draw_ranges;    // 扁平 draws 列（scene_object.draw_begin/count 切片）
-        // D2 热路径列（slot 对齐，与记录字段同步）：可见性 / 矩阵缓存 / 脏标记 / geometry 句柄
+        // 热路径列（slot 对齐，与记录字段同步）：可见性 / 矩阵缓存 / 脏标记 / geometry 句柄
         std::vector<std::uint8_t> visibility;
         std::vector<glm::mat4> matrices;
         std::vector<std::uint8_t> dirty;

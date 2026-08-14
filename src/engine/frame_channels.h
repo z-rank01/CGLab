@@ -1,6 +1,6 @@
 #pragma once
 
-// engine::frame_channels —— 类型键控帧通道（EngineLayerDoDPlan F 系列）。
+// engine::frame_channels —— 类型键控帧通道。
 //
 // 职责边界：
 // - 引擎保证秩序：帧首 clear()、发布窗口 = 阶段表顺序（engine 侧发布）、每通道单写者

@@ -4,7 +4,7 @@
 
 namespace
 {
-    // A2：启动几何改为单 mesh 的 dcl 行模型（共享 blob），与 glTF 加载路径同一契约。
+    // 启动几何改为单 mesh 的 dcl 行模型（共享 blob），与 glTF 加载路径同一契约。
     engine::asset_database make_triangle()
     {
         engine::asset_database asset{.name = "Triangle"};

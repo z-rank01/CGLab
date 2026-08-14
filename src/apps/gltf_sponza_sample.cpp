@@ -51,9 +51,8 @@ int main(int argc, char** argv)
                     },
             };
             const auto frames = options.smoke_test ? std::optional<std::uint64_t>(options.frame_limit.value_or(3)) : options.frame_limit;
-            // F3：插件侧发布光源表（每帧两盏灯：暖色主光 + 冷色补光）。
-            // 引擎零改动——sample 经 services.channels 发布组件表通道，
-            // gltf recipe 在 build_frame 经 find_state 消费。
+            // 插件侧发布光源表（每帧两盏灯：暖色主光 + 冷色补光）：sample 经
+            // services.channels 发布组件表通道，gltf recipe 在 build_frame 经 find_state 消费。
             engine::sample sample{
                 .name = "GltfSponzaSample",
                 .required_startup_asset = asset_path.string(),

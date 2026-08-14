@@ -46,7 +46,7 @@ namespace engine
         std::uint32_t transform = 0;
     };
 
-    // 帧计数器（A0）：engine 填 instance/visible/culled，recipe 填 draw/upload 行数。
+    // 帧计数器：engine 填 instance/visible/culled，recipe 填 draw/upload 行数。
     // 主线程单写者：engine 在 extract 阶段清零并填自己的字段，recipe 在 build_frame 只写自己的字段。
     // 命名约定：标量计数用 *_count（*_rows 只用于真正的行表/span）。
     struct frame_counters
@@ -59,7 +59,7 @@ namespace engine
         std::uint64_t image_upload_count = 0;
     };
 
-    // 加载分段报告（A0）：worker 填 load_us（dcl::load_gltf 全程，单次黑盒调用），
+    // 加载分段报告：worker 填 load_us（dcl::load_gltf 全程，单次黑盒调用），
     // 主线程在 merge 边界补 merge_us/upload_us。parse/convert/decode 三段细分依赖
     // DCL 侧可选计时装点，未装点时保持 0。
     struct load_report
@@ -76,10 +76,9 @@ namespace engine
         std::uint64_t decode_us = 0;
     };
 
-    // F2（2026-08-14）：帧通道行表（EngineLayerDoDPlan F 系列）。packet 不再承载固定
-    // 字段集合；extract 按阶段表顺序发布类型键控通道（camera / instance / transform），
-    // recipe 经 channels->find_rows<T>() 按类型取用；缺失通道返回空 span（编写者责任）。
-    // 原 material_handles / mesh_handles 为死字段（无消费者），随瘦身移除。
+    // 帧通道行表：packet 不承载固定字段集合；extract 按阶段表顺序发布类型键控通道
+    // （camera / instance / transform），recipe 经 channels->find_rows<T>() 按类型取用；
+    // 缺失通道返回空 span（编写者责任）。
     struct render_frame_packet
     {
         std::uint64_t frame_serial = 0;
@@ -105,7 +104,7 @@ namespace engine
         [[nodiscard]] explicit operator bool() const noexcept { return error.empty(); }
     };
 
-    // A2 批量行：直接引用共享 blob 行模型（dcl::asset_database），零拷贝上传。
+    // 批量行：直接引用共享 blob 行模型（dcl::asset_database），零拷贝上传。
     // 覆盖 [first_mesh, first_mesh + mesh_count) 的 mesh 行段；apply 返回
     // geometry_handles，按 mesh 顺序每 mesh 一个句柄（整资产单事务）。
     struct geometry_upload_row

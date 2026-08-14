@@ -1,6 +1,6 @@
 #pragma once
 
-// engine::plan_geometry_uploads —— A2 加载路径：geometry 批量上传布局规划（纯函数）。
+// engine::plan_geometry_uploads —— 加载路径的 geometry 批量上传布局规划（纯函数）。
 //
 // 把"整资产 mesh 行段 → arena 内字节布局"从 recipe 复制粘贴中提取为可单测的纯函数：
 // - 输入：共享 blob 行模型（dcl::asset_database）+ mesh 范围 + material_base + arena 容量/游标；

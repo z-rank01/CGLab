@@ -7,7 +7,7 @@
 #include <nlohmann/json.hpp>
 
 // control_plane::json_rpc
-// - P0 控制平面协议层：JSON-RPC 2.0 编解码 + 方法分派。
+// - 控制平面协议层：JSON-RPC 2.0 编解码 + 方法分派。
 // - 全部为纯函数，不触碰 socket / 引擎状态，便于 CTest 单测。
 // - 协议版本握手 + 方法级参数校验在这里完成；非法请求只产生 error response，
 //   不会进入引擎命令队列。
@@ -64,7 +64,7 @@ namespace control_plane
         camera_set_mode,      // camera.set_mode {mode: "fly"|"orbit"}
         camera_set_params,    // camera.set_params {fov?, movement_speed?, ...}
         camera_get_state,     // camera.get_state
-        camera_set_culling,   // camera.set_culling {enabled: bool}（A1：视锥剔除开关，不存在组件时自动挂载）
+        camera_set_culling,   // camera.set_culling {enabled: bool}（视锥剔除开关，不存在组件时自动挂载）
         camera_bookmark_save, // camera.bookmark.save {slot: 0..7}
         camera_bookmark_goto, // camera.bookmark.goto {slot: 0..7}
         scene_load_asset,     // scene.load_asset {path: string}（异步加载，完成时回响应）

@@ -138,7 +138,7 @@ void engine_runtime::initialize()
     last_frame_time = std::chrono::high_resolution_clock::now();
 }
 
-// --- P2 异步加载管线 ---
+// --- 异步加载管线 ---
 
 void engine_runtime::enqueue_load(std::string path, std::string client_id, nlohmann::json rpc_id)
 {
@@ -233,7 +233,7 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
     std::vector<engine::geometry_handle> mesh_handles(asset.meshes.size(), engine::invalid_geometry_handle);
     if (!asset.meshes.empty())
     {
-        // A2：整资产单事务——单条批量行覆盖全部 mesh，零拷贝（recipe 直接引用共享 blob span）。
+        // 整资产单事务——单条批量行覆盖全部 mesh，零拷贝（recipe 直接引用共享 blob span）。
         // 单事务原子性：全成或全败，无逐 mesh 回滚。
         const geometry_upload_row geometry_row{&asset, 0, static_cast<std::uint32_t>(asset.meshes.size()), material_base};
         const auto geometry_upload_begin = std::chrono::steady_clock::now();
@@ -248,7 +248,7 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
         {
             const auto handle = geometry_changes.value.geometry_handles[mesh_index];
             mesh_handles[mesh_index] = handle;
-            // A1：维护按 geometry_handle 索引的 mesh bounds 表（extract 剔除消费）
+            // 维护按 geometry_handle 索引的 mesh bounds 表（extract 剔除消费）
             if (handle != engine::invalid_geometry_handle)
             {
                 if (extract.mesh_bounds_min.size() <= handle)
@@ -320,7 +320,7 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
     return ids;
 }
 
-// --- P2 场景命令 ---
+// --- 场景命令 ---
 
 void engine_runtime::handle_scene_command(const control_plane::engine_command& command)
 {
@@ -690,7 +690,7 @@ void engine_runtime::publish_frame_telemetry()
 
     const engine::render_statistics stats = renderer->statistics();
 
-    // A0 扩展：阶段耗时均值、帧时分位数、帧计数
+    // 扩展：阶段耗时均值、帧时分位数、帧计数
     static constexpr std::array phase_names{
         "poll_events", "consume_control_commands", "merge_asset_results", "update_scene_transforms",
         "update_cameras", "run_sample_systems", "extract_render_packet", "apply_resource_changes",
@@ -773,7 +773,7 @@ bool engine_runtime::tick(std::optional<std::uint64_t> frame_limit)
     while (!window->should_close())
     {
         frame_phase_context context;
-        // F2 修正：帧首清零（发布窗口 = 整帧；sample 系统在 run_sample_systems 发布，
+        // 帧首清零（发布窗口 = 整帧；sample 系统在 run_sample_systems 发布，
         // 若在 extract 里 clear 会冲掉其通道）。extract 只发布，不 clear。
         extract.channels.clear();
         const auto frame_begin = std::chrono::steady_clock::now();
@@ -817,7 +817,7 @@ void engine_runtime::poll_events(frame_phase_context& context)
     window->poll_events(input_events);
     for (const interface::input_event& event : input_events)
     {
-        // D2：副作用归并——poll 只记请求行，执行在帧边界出口
+        // 副作用归并——poll 只记请求行，执行在帧边界出口
         // （resize 在 submit 前边界，拾取在 publish_telemetry 出口）。
         if (event.type == interface::event_type::resize) ++resize_requests;
         if (event.type == interface::event_type::mouse_button_down &&
@@ -840,7 +840,7 @@ void engine_runtime::merge_asset_results(frame_phase_context& context)
 
 void engine_runtime::update_scene_transforms(frame_phase_context&)
 {
-    // D2：脏行批量重算矩阵缓存（静态场景零矩阵数学）。transform/注册置脏，
+    // 脏行批量重算矩阵缓存（静态场景零矩阵数学）。transform/注册置脏，
     // extract 直读缓存列，不再逐对象 model_matrix。
     scene_registry.refresh_matrices();
 }
@@ -875,7 +875,7 @@ void engine_runtime::extract_render_packet(frame_phase_context& context)
     telemetry.frame_counters = {};
     extract.render_instances.clear();
     extract.render_transforms.clear();
-    // D2：沿紧凑 slot 索引直读热列（visible/matrices/geometries），
+    // 沿紧凑 slot 索引直读热列（visible/matrices/geometries），
     // 不触碰 scene_object 记录；矩阵在 update_scene_transforms 已刷新。
     const std::vector<std::size_t>& slots = scene_registry.slot_indices();
     extract.render_instances.reserve(slots.size());
@@ -896,7 +896,7 @@ void engine_runtime::extract_render_packet(frame_phase_context& context)
                                                        camera_container.configs[camera_entity_index]),
     }};
 
-    // A1：相机挂了剔除组件且开启时，在 packet 输入侧做实例级视锥剔除。
+    // 相机挂了剔除组件且开启时，在 packet 输入侧做实例级视锥剔除。
     // 显隐过滤（scene_registry visible）在上方完成，剔除在其后；recipe/RG 零改动。
     extract.frame_instance_rows = extract.render_instances;
     if (camera_entity_index < culling.present.size() && culling.present[camera_entity_index] != 0 &&
@@ -915,7 +915,7 @@ void engine_runtime::extract_render_packet(frame_phase_context& context)
         telemetry.frame_counters.visible_count = extract.render_instances.size();
     }
 
-    // F2：发布帧通道（camera / instance / transform；instance 为剔除后的行）。
+    // 发布帧通道（camera / instance / transform；instance 为剔除后的行）。
     // 帧首已 clear（tick 循环），此处只发布——发布窗口 = 阶段表顺序，每通道单写者。
     extract.channels.publish_rows<engine::camera_row>(extract.render_cameras);
     extract.channels.publish_rows<engine::instance_row>(extract.frame_instance_rows);
@@ -940,13 +940,13 @@ void engine_runtime::apply_resource_changes(frame_phase_context& context)
 void engine_runtime::submit_render_packet(frame_phase_context& context)
 {
     if (context.stop == frame_stop_reason::user_requested) return;
-    // D2：resize 请求在提交前边界执行（poll_events 只计数）
+    // resize 请求在提交前边界执行（poll_events 只计数）
     if (resize_requests > 0)
     {
         renderer->request_resize();
         resize_requests = 0;
     }
-    // D3：render_this_frame 降为局部变量（是否暂停仅本阶段相关）
+    // render_this_frame 降为局部变量（是否暂停仅本阶段相关）
     bool render_this_frame = !frame_paused;
     if (pending_frame_steps > 0)
     {
@@ -973,7 +973,7 @@ void engine_runtime::submit_render_packet(frame_phase_context& context)
 void engine_runtime::publish_telemetry(frame_phase_context& context)
 {
     if (context.stop != frame_stop_reason::none) return;
-    // D2：拾取请求在遥测出口执行（poll_events 只记坐标；命中变化随本帧遥测发布）
+    // 拾取请求在遥测出口执行（poll_events 只记坐标；命中变化随本帧遥测发布）
     if (pending_pick_request)
     {
         try_pick_object(pending_pick_request->x, pending_pick_request->y);

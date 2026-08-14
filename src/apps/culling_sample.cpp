@@ -4,7 +4,7 @@
 #include "apps/application_runner.h"
 #include "apps/gltf_render_recipe.h"
 
-// CullingSample（A1）：GltfSponzaSample 的剔除演示变体。
+// CullingSample：GltfSponzaSample 的剔除演示变体。
 // - 启动相机恒带视锥剔除组件（CullingSample 的定位就是演示剔除能力）；
 // - 复用 gltf recipe + sponza 资产，渲染侧零改动；
 // - dev console 可经 camera.set_culling 运行时开关，观察

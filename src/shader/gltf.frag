@@ -26,7 +26,7 @@ layout(set = 0, binding = 4, std430) readonly buffer MaterialTable {
     MaterialRow rows[];
 } material_tables[];
 
-// F3：光源表（复用 binding 4 storage buffer 表，按 lights_buffer_slot 索引；
+// 光源表（复用 binding 4 storage buffer 表，按 lights_buffer_slot 索引；
 // std430 三列连续；light_positions/light_colors 为 vec4 行）
 layout(set = 0, binding = 4, std430) readonly buffer LightTable {
     vec4 light_positions[];
@@ -78,7 +78,7 @@ void main()
     float light_intensity = 3.0;
     if (object_push.light_count > 0)
     {
-        // F3：光源表第一盏灯（方向 = 灯 → 片元；强度来自通道）
+        // 光源表第一盏灯（方向 = 灯 → 片元；强度来自通道）
         uint light_slot = nonuniformEXT(object_push.lights_buffer_slot);
         light_direction = normalize(light_tables[light_slot].light_positions[0].xyz - world_position);
         light_intensity = light_tables[light_slot].light_intensities[0];

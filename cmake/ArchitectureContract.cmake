@@ -111,7 +111,7 @@ foreach(_source IN LISTS _source_files)
     endif()
 endforeach()
 
-# --- DoD style contract (D0, 2026-08-14) ---
+# --- DoD style contract ---
 # The engine/scene layers must follow the DoD style the render-graph core
 # already enforces: no std::vector<bool> (bit-packed proxy container, an
 # anti-pattern for SoA column models) and no nested std::vector<std::vector

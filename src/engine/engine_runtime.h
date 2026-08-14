@@ -40,7 +40,7 @@ public:
     void set_initial_geometry(engine::asset_database asset);
     void set_required_startup_asset(std::filesystem::path path);
     void configure_sample(sample definition);
-    // A1：给活动相机挂载/开关视锥剔除组件（能力可运行时增删，直通相机不受影响）。
+    // 给活动相机挂载/开关视锥剔除组件（能力可运行时增删，直通相机不受影响）。
     void set_camera_culling(bool enabled);
 
 private:
@@ -65,11 +65,11 @@ private:
     bool frame_paused = false;
     std::uint32_t pending_frame_steps = 0;
 
-    // --- P2 scene system ---
+    // --- scene system ---
     scene::scene_registry scene_registry;
     sample sample_definition;
 
-    // D3：成员按职责分簇（帧边界运行状态分组；组织性，无行为变化）。
+    // 成员按职责分簇（帧边界运行状态分组；组织性，无行为变化）。
     // --- 异步加载簇：worker 解析 glTF（纯 CPU），结果包在帧边界由主线程 staging + 注册 ---
     struct pending_load
     {
@@ -104,12 +104,12 @@ private:
         std::vector<glm::vec3> mesh_bounds_max;
         // 本帧实际提交给 recipe 的实例行（剔除后指向 culling scratch，否则指向 render_instances）
         std::span<const engine::instance_row> frame_instance_rows;
-        // F2：帧通道行表（extract 发布，submit 经 packet 传递，生存期 = 单帧）
+        // 帧通道行表（extract 发布，submit 经 packet 传递，生存期 = 单帧）
         engine::frame_channels channels;
     };
     frame_extract extract;
 
-    // --- 遥测簇：A0 测量设施与发布状态 ---
+    // --- 遥测簇：测量设施与发布状态 ---
     struct frame_telemetry
     {
         // metrics_ring 约 885KB，必须堆上持有（禁止栈上实例化）。
@@ -122,10 +122,10 @@ private:
     };
     frame_telemetry telemetry;
 
-    // --- A1 视锥剔除 ---
+    // --- 视锥剔除 ---
     engine::culling_manager culling;
 
-    // --- D2 帧边界副作用归并（poll_events 只记请求行，执行在帧边界出口）---
+    // --- 帧边界副作用归并（poll_events 只记请求行，执行在帧边界出口）---
     std::uint32_t resize_requests = 0;
     struct pending_pick { float x = 0.0F; float y = 0.0F; };
     std::optional<pending_pick> pending_pick_request;
@@ -145,7 +145,7 @@ private:
     [[nodiscard]] std::vector<scene::object_id> merge_asset_database(engine::asset_database asset, bool read_only,
                                                                      engine::load_report* report = nullptr);
 
-    // 帧阶段控制流（D3）：枚举代替布尔——stop 语义互斥（窗口关闭 / 错误），
+    // 帧阶段控制流：枚举代替布尔——stop 语义互斥（窗口关闭 / 错误），
     // rendered 独立标记本帧是否实际提交；render_this_frame 降为 submit 局部变量。
     enum class frame_stop_reason : std::uint8_t
     {
