@@ -7,6 +7,7 @@
 
 #include <glm/glm.hpp>
 
+#include "engine/frame_channels.h"
 #include "engine/geometry.h"
 
 namespace interface
@@ -75,14 +76,14 @@ namespace engine
         std::uint64_t decode_us = 0;
     };
 
+    // F2（2026-08-14）：帧通道行表（EngineLayerDoDPlan F 系列）。packet 不再承载固定
+    // 字段集合；extract 按阶段表顺序发布类型键控通道（camera / instance / transform），
+    // recipe 经 channels->find_rows<T>() 按类型取用；缺失通道返回空 span（编写者责任）。
+    // 原 material_handles / mesh_handles 为死字段（无消费者），随瘦身移除。
     struct render_frame_packet
     {
         std::uint64_t frame_serial = 0;
-        std::span<const camera_row> camera_rows;
-        std::span<const instance_row> instance_rows;
-        std::span<const glm::mat4> transform_rows;
-        std::span<const std::uint32_t> material_handles;
-        std::span<const geometry_handle> mesh_handles;
+        const frame_channels* channels = nullptr;   // 帧通道（生存期 = 单帧，extract 发布）
         // 帧计数回填（可空）：recipe 只写自己的字段（draw/upload 行数）。
         frame_counters* counters = nullptr;
     };

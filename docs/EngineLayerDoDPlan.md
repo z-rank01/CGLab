@@ -139,6 +139,7 @@ struct frame_channels {
 | D2 | extract 列式化（✅ 2026-08-14：热列 visible/matrices/dirty/geometries + refresh_matrices 增量重算、update_scene_transforms 做实、poll_events resize/拾取副作用归并到帧边界、transform_bounds 闭式解；41/41 绿 + Triangle/GltfSponza GPU smoke 6 帧通过；基准 265/271µs，**-97.8%**。注：pick 反馈延后到 telemetry 出口，命中高亮晚一帧——还债清单钦点方向） | `ef595a96` |
 | D3 | context 收敛 + 成员分簇（✅ 2026-08-14：frame_phase_context 4 bool → frame_stop_reason 枚举 + rendered（stop 语义互斥）；render_this_frame 降为 submit 局部变量；成员按职责分簇 frame_loads/frame_extract/frame_telemetry（组织性，无行为变化）；41/41 绿） | `c66e1d3a` |
 | F1 | frame_channels 核心（✅ 2026-08-14：`engine/frame_channels.h` 类型键控通道（静态原子 id + publish_rows/publish_state/find_rows/find_state + 帧首 clear + 每通道单写者）；`cglab.frame_channels` 单测 7 项；`Architecture.md` 术语表并入命名约定 + 新增「帧通道」节 + 还债清单勾销 D1/D2 三条；42/42 绿） | — |
+| F2 | packet 瘦身迁移（✅ 2026-08-14：`render_frame_packet` 瘦身为 {frame_serial, channels, counters}；extract 发布 camera/instance/transform 三内置通道（原 material_handles/mesh_handles 为死字段一并移除）；两个 recipe + mock driver 改 `find_rows<T>()` 消费；`render_driver_api` 签名不变；42/42 绿 + Triangle/GltfSponza GPU smoke 6 帧通过；grep 验收直字段零残留） | — |
 | D1 | scene_registry 拆列 + id→slot | — |
 | D2 | extract 列式 + phase 做实 + 归并 | — |
 | D3 | context 收敛 | — |

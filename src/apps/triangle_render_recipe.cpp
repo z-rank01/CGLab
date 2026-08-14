@@ -193,24 +193,28 @@ namespace apps
             const render_graph::frame_environment& environment, render_graph::frame_plan& plan)
         {
             auto& state = *static_cast<recipe_state*>(value);
-            if (packet.camera_rows.empty()) return {.error = "Triangle frame has no camera"};
+            // F2：帧通道取用（缺失返回空 span——编写者责任）
+            const auto camera_rows = packet.channels->find_rows<engine::camera_row>();
+            const auto instance_rows = packet.channels->find_rows<engine::instance_row>();
+            const auto transform_rows = packet.channels->find_rows<glm::mat4>();
+            if (camera_rows.empty()) return {.error = "Triangle frame has no camera"};
             state.transform_rows.clear();
             state.commands.clear();
-            for (const auto& instance : packet.instance_rows)
+            for (const auto& instance : instance_rows)
             {
-                if (instance.mesh >= state.geometries.size() || instance.transform >= packet.transform_rows.size()) continue;
+                if (instance.mesh >= state.geometries.size() || instance.transform >= transform_rows.size()) continue;
                 const auto& geometry = state.geometries[instance.mesh];
                 if (!geometry.alive) continue;
                 for (const auto& range : geometry.draws)
                 {
                     const uint32_t draw_index = static_cast<uint32_t>(state.commands.size());
-                    state.transform_rows.push_back({.model = packet.transform_rows[instance.transform]});
+                    state.transform_rows.push_back({.model = transform_rows[instance.transform]});
                     state.commands.push_back({range.index_count, 1, range.first_index,
                                               range.vertex_offset, draw_index});
                 }
             }
-            frame_uniform uniform{.view = packet.camera_rows.front().view,
-                                  .projection = packet.camera_rows.front().projection};
+            frame_uniform uniform{.view = camera_rows.front().view,
+                                  .projection = camera_rows.front().projection};
             uniform.projection[1][1] *= -1.0F;
             std::array<render_graph::buffer_upload_row, 3> uploads{
                 render_graph::buffer_upload_row{state.frame_uniforms[environment.frame_index], 0,

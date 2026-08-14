@@ -910,6 +910,13 @@ void engine_runtime::extract_render_packet(frame_phase_context& context)
     {
         telemetry.frame_counters.visible_count = extract.render_instances.size();
     }
+
+    // F2：发布帧通道（camera / instance / transform；instance 为剔除后的行）。
+    // 帧首 clear：发布窗口 = 阶段表顺序（extract 位于 submit 之前），每通道单写者。
+    extract.channels.clear();
+    extract.channels.publish_rows<engine::camera_row>(extract.render_cameras);
+    extract.channels.publish_rows<engine::instance_row>(extract.frame_instance_rows);
+    extract.channels.publish_rows<glm::mat4>(extract.render_transforms);
 }
 
 void engine_runtime::apply_resource_changes(frame_phase_context& context)
@@ -948,18 +955,10 @@ void engine_runtime::submit_render_packet(frame_phase_context& context)
         std::this_thread::sleep_for(std::chrono::milliseconds(8));
         return;
     }
-    const std::uint64_t serial = extract.frame_serial++;
-    // C7558：designated initializer 不允许右侧嵌套成员访问，先提升为局部量。
-    const std::span<const engine::camera_row> cameras = extract.render_cameras;
-    const std::span<const engine::instance_row> instances = extract.frame_instance_rows;
-    const std::span<const glm::mat4> transforms = extract.render_transforms;
-    engine::frame_counters* counters = &telemetry.frame_counters;
     const engine::render_frame_packet packet{
-        .frame_serial = serial,
-        .camera_rows = cameras,
-        .instance_rows = instances,
-        .transform_rows = transforms,
-        .counters = counters,
+        .frame_serial = extract.frame_serial++,
+        .channels = &extract.channels,
+        .counters = &telemetry.frame_counters,
     };
     const engine::frame_status status = renderer->render(packet);
     context.stop = status == engine::frame_status::failed ? frame_stop_reason::failure : context.stop;

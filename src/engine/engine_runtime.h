@@ -104,6 +104,8 @@ private:
         std::vector<glm::vec3> mesh_bounds_max;
         // 本帧实际提交给 recipe 的实例行（剔除后指向 culling scratch，否则指向 render_instances）
         std::span<const engine::instance_row> frame_instance_rows;
+        // F2：帧通道行表（extract 发布，submit 经 packet 传递，生存期 = 单帧）
+        engine::frame_channels channels;
     };
     frame_extract extract;
 

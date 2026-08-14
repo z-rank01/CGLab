@@ -334,16 +334,20 @@ namespace apps
             const render_graph::frame_environment& environment, render_graph::frame_plan& plan)
         {
             auto& state = *static_cast<recipe_state*>(value);
-            if (packet.camera_rows.empty()) return {.error = "glTF frame has no camera"};
+            // F2：帧通道取用（缺失返回空 span——编写者责任）
+            const auto camera_rows = packet.channels->find_rows<engine::camera_row>();
+            const auto instance_rows = packet.channels->find_rows<engine::instance_row>();
+            const auto transform_rows = packet.channels->find_rows<glm::mat4>();
+            if (camera_rows.empty()) return {.error = "glTF frame has no camera"};
             std::array<std::vector<draw_candidate>, 4> groups;
-            const glm::vec3 camera_position = glm::vec3(glm::inverse(packet.camera_rows.front().view)[3]);
+            const glm::vec3 camera_position = glm::vec3(glm::inverse(camera_rows.front().view)[3]);
             uint32_t candidate_count = 0;
-            for (const auto& instance : packet.instance_rows)
+            for (const auto& instance : instance_rows)
             {
-                if (instance.mesh >= state.geometries.size() || instance.transform >= packet.transform_rows.size()) continue;
+                if (instance.mesh >= state.geometries.size() || instance.transform >= transform_rows.size()) continue;
                 const auto& geometry = state.geometries[instance.mesh];
                 if (!geometry.alive) continue;
-                const auto& model = packet.transform_rows[instance.transform];
+                const auto& model = transform_rows[instance.transform];
                 for (const auto& range : geometry.draws)
                 {
                     if (++candidate_count > max_draws) return {.error = "GPU draw table capacity exhausted"};
@@ -387,8 +391,8 @@ namespace apps
                 }
                 command_offset = state.commands.size() * sizeof(render_graph::indexed_indirect_command);
             }
-            frame_uniform uniform{.view = packet.camera_rows.front().view,
-                                  .projection = packet.camera_rows.front().projection};
+            frame_uniform uniform{.view = camera_rows.front().view,
+                                  .projection = camera_rows.front().projection};
             uniform.projection[1][1] *= -1.0F;
             std::array<render_graph::buffer_upload_row, 3> uploads{
                 render_graph::buffer_upload_row{state.frame_uniforms[environment.frame_index], 0,

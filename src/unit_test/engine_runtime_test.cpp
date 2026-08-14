@@ -92,8 +92,10 @@ namespace
             {
                 auto& state = *static_cast<fake_backend*>(value)->state;
                 ++state.render_calls;
-                state.last_object_count = packet.instance_rows.size();
-                state.object_counts.push_back(packet.instance_rows.size());
+                // F2：帧通道取用（instance 行）
+                const std::size_t instance_count = packet.channels ? packet.channels->find_rows<engine::instance_row>().size() : 0;
+                state.last_object_count = instance_count;
+                state.object_counts.push_back(instance_count);
                 return state.status;
             },
             .request_resize = [](void*) noexcept {},
