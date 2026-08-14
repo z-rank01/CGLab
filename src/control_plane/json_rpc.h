@@ -64,6 +64,7 @@ namespace control_plane
         camera_set_mode,      // camera.set_mode {mode: "fly"|"orbit"}
         camera_set_params,    // camera.set_params {fov?, movement_speed?, ...}
         camera_get_state,     // camera.get_state
+        camera_set_culling,   // camera.set_culling {enabled: bool}（A1：视锥剔除开关，不存在组件时自动挂载）
         camera_bookmark_save, // camera.bookmark.save {slot: 0..7}
         camera_bookmark_goto, // camera.bookmark.goto {slot: 0..7}
         scene_load_asset,     // scene.load_asset {path: string}（异步加载，完成时回响应）

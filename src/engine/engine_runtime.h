@@ -14,6 +14,7 @@
 #include "control_plane/control_plane_server.h"
 #include "engine/render_backend.h"
 #include "engine/asset_service.h"
+#include "engine/culling_system.h"
 #include "engine/runtime_config.h"
 #include "engine/sample.h"
 #include "measure/frame_metrics.h"
@@ -39,6 +40,8 @@ public:
     void set_initial_geometry(engine::geometry_asset asset);
     void set_required_startup_asset(std::filesystem::path path);
     void configure_sample(sample definition);
+    // A1：给活动相机挂载/开关视锥剔除组件（能力可运行时增删，直通相机不受影响）。
+    void set_camera_culling(bool enabled);
 
 private:
     // core member
@@ -95,6 +98,14 @@ private:
     // metrics_ring 约 885KB，必须堆上持有（禁止栈上实例化）。
     std::unique_ptr<measure::metrics_ring> metrics_ring;
     engine::frame_counters frame_counters; // 每帧清零，extract 填实例/可见/剔除，recipe 回填 draw/upload
+
+    // --- A1 视锥剔除 ---
+    engine::culling_manager culling;
+    // 按 geometry_handle 索引的 mesh 级 world bounds（merge 时维护，extract 剔除消费）
+    std::vector<glm::vec3> mesh_bounds_min;
+    std::vector<glm::vec3> mesh_bounds_max;
+    // 本帧实际提交给 recipe 的实例行（剔除后指向 culling scratch，否则指向 render_instances）
+    std::span<const engine::instance_row> frame_instance_rows;
 
     void handle_control_plane_commands();
     void handle_scene_command(const control_plane::engine_command& command);

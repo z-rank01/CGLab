@@ -272,6 +272,18 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
             return {};
         }
         mesh_handles[mesh_index] = geometry_changes.value.geometry_handles.front();
+        // A1：维护按 geometry_handle 索引的 mesh bounds 表（extract 剔除消费）
+        const auto handle = mesh_handles[mesh_index];
+        if (handle != engine::invalid_geometry_handle)
+        {
+            if (mesh_bounds_min.size() <= handle)
+            {
+                mesh_bounds_min.resize(handle + 1, glm::vec3(0.0F));
+                mesh_bounds_max.resize(handle + 1, glm::vec3(0.0F));
+            }
+            mesh_bounds_min[handle] = mesh.bounds_min;
+            mesh_bounds_max[handle] = mesh.bounds_max;
+        }
     }
 
     std::vector<glm::mat4> world(asset.nodes.size(), glm::mat4(1.0F));
@@ -535,6 +547,14 @@ void engine_runtime::handle_control_plane_commands()
             control_plane->post_response(command.client_id, control_plane::make_result(command.id, current_camera_state()));
             break;
         }
+        case command_kind::camera_set_culling:
+        {
+            const bool enabled = command.params["enabled"].get<bool>();
+            set_camera_culling(enabled);
+            control_plane->post_response(command.client_id,
+                                         control_plane::make_result(command.id, {{"culling", enabled}}));
+            break;
+        }
         case command_kind::camera_bookmark_save:
         {
             const std::uint32_t slot = command.params["slot"].get<std::uint32_t>();
@@ -587,6 +607,8 @@ nlohmann::json engine_runtime::current_camera_state() const
         {"far_plane", camera_config.far_plane},
         {"bookmarks_valid", bookmarks.valid},
         {"blending", camera_container.blends[camera_entity_index].active},
+        {"culling", camera_entity_index < culling.present.size() && culling.present[camera_entity_index] != 0 &&
+                        culling.enabled[camera_entity_index] != 0},
     };
 }
 
@@ -877,12 +899,30 @@ void engine_runtime::extract_render_packet(frame_phase_context& context)
         render_instances.push_back({.mesh = object->render_geometry, .transform = transform});
     }
     frame_counters.instance_rows = render_instances.size();
-    frame_counters.visible_rows = render_instances.size();
     render_cameras = {engine::camera_row{
         .view = interface::get_view_matrix(camera_container.transforms[camera_entity_index]),
         .projection = interface::get_projection_matrix(camera_container.transforms[camera_entity_index],
                                                        camera_container.configs[camera_entity_index]),
     }};
+
+    // A1：相机挂了剔除组件且开启时，在 packet 输入侧做实例级视锥剔除。
+    // 显隐过滤（scene_registry visible）在上方完成，剔除在其后；recipe/RG 零改动。
+    frame_instance_rows = render_instances;
+    if (camera_entity_index < culling.present.size() && culling.present[camera_entity_index] != 0 &&
+        culling.enabled[camera_entity_index] != 0)
+    {
+        const glm::mat4 view_projection = render_cameras.front().projection * render_cameras.front().view;
+        std::uint64_t culled = 0;
+        frame_instance_rows = engine::cull_instances(culling, camera_entity_index, view_projection,
+                                                     render_instances, render_transforms,
+                                                     mesh_bounds_min, mesh_bounds_max, &culled);
+        frame_counters.visible_rows = frame_instance_rows.size();
+        frame_counters.culled_rows = culled;
+    }
+    else
+    {
+        frame_counters.visible_rows = render_instances.size();
+    }
 }
 
 void engine_runtime::apply_resource_changes(frame_phase_context& context)
@@ -917,7 +957,7 @@ void engine_runtime::submit_render_packet(frame_phase_context& context)
     const engine::render_frame_packet packet{
         .frame_serial = frame_serial++,
         .camera_rows = render_cameras,
-        .instance_rows = render_instances,
+        .instance_rows = frame_instance_rows,
         .transform_rows = render_transforms,
         .counters = &frame_counters,
     };
@@ -967,6 +1007,18 @@ void engine_runtime::set_initial_geometry(engine::geometry_asset asset)
 void engine_runtime::set_required_startup_asset(std::filesystem::path path)
 {
     required_startup_asset = std::move(path);
+}
+
+void engine_runtime::set_camera_culling(bool enabled)
+{
+    if (enabled)
+    {
+        engine::attach_culling(culling, camera_entity_index, true);
+    }
+    else
+    {
+        engine::set_culling_enabled(culling, camera_entity_index, false);
+    }
 }
 
 void engine_runtime::configure_sample(sample definition)

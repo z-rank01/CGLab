@@ -194,8 +194,10 @@ namespace control_plane
                                          {{"protocol_version", protocol_version},
                                           {"server", server},
                                           {"capabilities",
-                                           {"telemetry.frame", "telemetry.scene", "debug.echo", "frame.pause", "frame.resume", "frame.step",
+                                           {"telemetry.frame", "telemetry.scene", "telemetry.load", "debug.echo",
+                                            "frame.pause", "frame.resume", "frame.step",
                                             "camera.set_mode", "camera.set_params", "camera.get_state",
+                                            "camera.set_culling",
                                             "camera.bookmark.save", "camera.bookmark.goto",
                                             "scene.load_asset", "scene.unload", "scene.set_visibility",
                                             "scene.set_transform", "scene.select", "scene.list"}}}));
@@ -305,6 +307,18 @@ namespace control_plane
         if (method == "camera.get_state")
         {
             return queued(base_command(client_id, request, command_kind::camera_get_state));
+        }
+
+        if (method == "camera.set_culling")
+        {
+            const auto enabled_it = request.params.find("enabled");
+            if (enabled_it == request.params.end() || !enabled_it->is_boolean())
+            {
+                return invalid_params(request.id, "camera.set_culling requires boolean \"enabled\"");
+            }
+            engine_command command = base_command(client_id, request, command_kind::camera_set_culling);
+            command.params         = {{"enabled", enabled_it->get<bool>()}};
+            return queued(std::move(command));
         }
 
         if (method == "camera.bookmark.save" || method == "camera.bookmark.goto")

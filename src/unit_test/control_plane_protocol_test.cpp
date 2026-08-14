@@ -179,6 +179,24 @@ namespace
         check(control_plane::dispatch_request("c", state.request).command.kind == command_kind::camera_get_state,
               "get_state kind");
 
+        // set_culling：布尔入队；缺失/非布尔拒绝
+        const auto culling = control_plane::parse_request(
+            R"({"id":29,"method":"camera.set_culling","params":{"enabled":true}})");
+        const auto culling_cmd = control_plane::dispatch_request("c", culling.request);
+        check(culling_cmd.command.kind == command_kind::camera_set_culling, "set_culling kind");
+        check(culling_cmd.command.params["enabled"] == true, "set_culling value");
+
+        const auto culling_missing = control_plane::parse_request(R"({"id":30,"method":"camera.set_culling","params":{}})");
+        check(control_plane::dispatch_request("c", culling_missing.request).response["error"]["code"] ==
+                  control_plane::error_invalid_params,
+              "set_culling missing enabled rejected");
+
+        const auto culling_bad = control_plane::parse_request(
+            R"({"id":31,"method":"camera.set_culling","params":{"enabled":"yes"}})");
+        check(control_plane::dispatch_request("c", culling_bad.request).response["error"]["code"] ==
+                  control_plane::error_invalid_params,
+              "set_culling non-boolean rejected");
+
         // bookmark
         const auto save = control_plane::parse_request(R"({"id":26,"method":"camera.bookmark.save","params":{"slot":3}})");
         const auto save_cmd = control_plane::dispatch_request("c", save.request);
@@ -302,6 +320,8 @@ namespace
         check(has_cap("scene.load_asset"), "capabilities include scene.load_asset");
         check(has_cap("scene.list"), "capabilities include scene.list");
         check(has_cap("telemetry.scene"), "capabilities include telemetry.scene");
+        check(has_cap("telemetry.load"), "capabilities include telemetry.load");
+        check(has_cap("camera.set_culling"), "capabilities include camera.set_culling");
     }
 } // namespace
 
