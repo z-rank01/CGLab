@@ -51,6 +51,8 @@ int main(int argc, char** argv)
                                                   .require_validation_clean = options.validation,
                                                   .enforce_smoke_contract = options.smoke_test,
                                                   .expected_pipeline_creations = 1,
+                                                  .expected_indirect_groups_per_frame = 1,
+                                                  .expected_draw_passes_per_frame = 1,
                                                   .culling_enabled = options.culling,
                                               }};
     });

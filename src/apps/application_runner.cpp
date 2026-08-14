@@ -45,7 +45,7 @@ namespace apps
             {
                 const engine::render_statistics statistics = runtime.statistics();
                 if (!request.frame_limit || statistics.upload_pass_executions != 1 ||
-                    statistics.draw_pass_executions != *request.frame_limit ||
+                    statistics.draw_pass_executions != *request.frame_limit * request.expected_draw_passes_per_frame ||
                     statistics.presented_frames != *request.frame_limit ||
                     statistics.steady_frame_descriptor_updates != 0 ||
                     statistics.pipeline_creations != request.expected_pipeline_creations ||
