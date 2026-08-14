@@ -127,4 +127,6 @@ probe 表等新组件表由 sample 侧发布、recipe 侧消费，engine 零改�
 
 > 性能相关实施计划（测量 / 视锥剔除 / 加载路径，含 B/C 路线记录）见 [PerformancePlan.md](PerformancePlan.md)。
 
+> 渲染层实施计划（阴影 pass / RG 子仓能力扩展 R0–R3）见 [RenderLayerPlan.md](RenderLayerPlan.md)。
+
 更多执行细节见 [RenderGraphAndRHI.md](RenderGraphAndRHI.md)，runtime 组合方式见 [ApplicationRuntime.md](ApplicationRuntime.md)。
