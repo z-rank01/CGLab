@@ -110,3 +110,29 @@ foreach(_source IN LISTS _source_files)
         message(FATAL_ERROR "Native Vulkan side effect escaped an allowed implementation directory: ${_relative}")
     endif()
 endforeach()
+
+# --- DoD style contract (D0, 2026-08-14) ---
+# The engine/scene layers must follow the DoD style the render-graph core
+# already enforces: no std::vector<bool> (bit-packed proxy container, an
+# anti-pattern for SoA column models) and no nested std::vector<std::vector
+# (pointer chasing). Violations fail the build instead of living in comments.
+file(GLOB_RECURSE _dod_sources
+    LIST_DIRECTORIES false
+    "${CGLAB_SOURCE_DIR}/src/engine/*.h"
+    "${CGLAB_SOURCE_DIR}/src/engine/*.cpp"
+    "${CGLAB_SOURCE_DIR}/src/scene/*.h"
+    "${CGLAB_SOURCE_DIR}/src/scene/*.cpp"
+)
+foreach(_source IN LISTS _dod_sources)
+    file(RELATIVE_PATH _relative "${CGLAB_SOURCE_DIR}" "${_source}")
+    string(REPLACE "\\" "/" _relative "${_relative}")
+    file(READ "${_source}" _contents)
+    if(_contents MATCHES "std::vector[ \t]*<[ \t]*bool")
+        message(FATAL_ERROR
+            "DoD contract violated: std::vector<bool> in ${_relative} (use a uint8_t column)")
+    endif()
+    if(_contents MATCHES "std::vector[ \t]*<[ \t]*std::vector")
+        message(FATAL_ERROR
+            "DoD contract violated: nested std::vector<std::vector in ${_relative}")
+    endif()
+endforeach()

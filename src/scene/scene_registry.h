@@ -341,7 +341,7 @@ namespace scene
         void bump() { ++revision_; }
 
         std::vector<scene_object> slots;
-        std::vector<bool> alive;
+        std::vector<std::uint8_t> alive;
         std::vector<std::size_t> free_slots;
         object_id next_id     = 0;
         object_id selected_id = invalid_object_id;

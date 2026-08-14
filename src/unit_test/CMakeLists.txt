@@ -41,6 +41,10 @@ add_executable(cglab_scene_registry_tests scene_registry_test.cpp)
 target_link_libraries(cglab_scene_registry_tests PRIVATE glm::glm dcl::core)
 cglab_register_test(cglab_scene_registry_tests cglab.scene_registry)
 
+add_executable(cglab_extract_benchmark_tests extract_benchmark_test.cpp)
+target_link_libraries(cglab_extract_benchmark_tests PRIVATE glm::glm dcl::core)
+cglab_register_test(cglab_extract_benchmark_tests cglab.extract_benchmark)
+
 add_executable(cglab_control_plane_protocol_tests
     ${PROJECT_SOURCE_DIR}/src/control_plane/json_rpc.cpp
     control_plane_protocol_test.cpp
