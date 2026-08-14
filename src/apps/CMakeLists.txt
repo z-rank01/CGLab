@@ -49,7 +49,16 @@ add_executable(CullingSample
     lights_table.h
 )
 
-foreach(cglab_app IN ITEMS TriangleSample GltfSponzaSample CullingSample)
+# ShadowSample：小物件阴影展示（接影地面 + 斜射太阳光），复用同一 recipe。
+add_executable(ShadowSample
+    shadow_sample.cpp
+    gltf_render_recipe.cpp
+    gltf_render_recipe.h
+    lights_table.h
+    sun_light.h
+)
+
+foreach(cglab_app IN ITEMS TriangleSample GltfSponzaSample CullingSample ShadowSample)
     target_include_directories(${cglab_app}
         PRIVATE ${PROJECT_SOURCE_DIR}/src
     )
@@ -71,8 +80,9 @@ endforeach()
 target_link_libraries(TriangleSample PRIVATE cglab_sdl_vulkan_surface)
 target_link_libraries(GltfSponzaSample PRIVATE cglab_sdl_vulkan_surface)
 target_link_libraries(CullingSample PRIVATE cglab_sdl_vulkan_surface)
+target_link_libraries(ShadowSample PRIVATE cglab_sdl_vulkan_surface)
 
 # Preserve the paths used by existing scripts and documentation.
-set_target_properties(TriangleSample GltfSponzaSample CullingSample PROPERTIES
+set_target_properties(TriangleSample GltfSponzaSample CullingSample ShadowSample PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )

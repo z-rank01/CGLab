@@ -136,6 +136,18 @@ attachment format 进 pipeline key；per-pass push constant 切片与独立 indi
   （`--validation --no-ui --frames 6`）通过；交互模式 `--asset` 外部场景人工目检
   （阴影方向/软硬边/无漏光穿帮）。
 
+### R1e — ShadowSample：小物件阴影展示（追加，2026-08-15）
+- 动机：GltfSponzaSample 的太阳近乎垂直入射（63° 俯角）+ 环境光仅 0.03，
+  小物件（helmet 等）朝相机的面基本背光，且影子垂直落在物件正下方被自身遮挡
+  ——观感"整体在阴影里"。需要一个桌面级展示 sample。
+- 新增 `src/apps/shadow_sample.cpp`（复用 gltf recipe，引擎零改动）：
+  - 内置 6×6 接影地面（`startup_geometry`，白色默认材质）+ `--asset` 装载物件
+    （`required_startup_asset`，两者可共存，`engine_runtime.cpp:114-133` 顺序 merge）；
+  - 斜射太阳光（右上前方入射，受光面朝默认相机，影子向左后铺在平面上）；
+    光正交视锥收紧到 ±4（Sponza 版 ±40，小物件下阴影图有效分辨率提升 ~100 倍）；
+  - 一盏冷色补光（无阴影）lift 背光面。
+- 验收：smoke 6 帧（--validation）通过，阴影契约（5/2/2）保持成立。
+
 ## R2 — compare sampler + 硬件 PCF（后置独立段，本轮不做）
 
 RG 子仓 `sampler_desc` 加 compare 字段（min/mag/compare op；`vk_runtime.h` 的
@@ -178,5 +190,6 @@ R1 后评估阴影 pass 的 CPU 成本再立项。
 | R1b | recipe shadow pass（✅ 2026-08-15：persistent 2048² shadow image（DEPTH\|SAMPLED）+ nearest/clamp sampler + per-frame light UBO 进 bindless；depth-only pipeline（复用 vertex layout 仅 location 0，front cull，shadow_push 8 字节）；`build_frame` 双 pass（ShadowPass area 2048² + 主 pass SAMPLED depth-aspect 读）+ push constant 扩 8 uint；shadow 只画不透明单面组） | 待提交 |
 | R1c | gltf_shadow.vert + frag 阴影采样（✅ 2026-08-15：glslc 编译通过；frag 平行光主光 + 3×3 手动 PCF + slope-scaled bias；点光保留无阴影） | 待提交 |
 | R1d | smoke 契约 + 全量验证（✅ 2026-08-15：契约默认值 4→5 / 1→2 且 `expected_draw_passes_per_frame=2`（triangle 覆盖 1/1/1）；43/43 ctest 绿 + Triangle/GltfSponza GPU smoke 6 帧（--validation）通过零警告） | 待提交 |
+| R1e | ShadowSample 小物件阴影展示（✅ 2026-08-15：接影地面 + 斜射太阳光 + 紧凑正交视锥 + 冷色补光；smoke 6 帧通过） | 待提交 |
 | R2 | compare sampler + 硬件 PCF | 后置 |
 | R3 | 阴影视锥剔除 + per-pass 遥测 | 可选后置 |
