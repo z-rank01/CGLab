@@ -814,11 +814,13 @@ void engine_runtime::poll_events(frame_phase_context& context)
     window->poll_events(input_events);
     for (const interface::input_event& event : input_events)
     {
-        if (event.type == interface::event_type::resize) renderer->request_resize();
+        // D2：副作用归并——poll 只记请求行，执行在帧边界出口
+        // （resize 在 submit 前边界，拾取在 publish_telemetry 出口）。
+        if (event.type == interface::event_type::resize) ++resize_requests;
         if (event.type == interface::event_type::mouse_button_down &&
             event.mouse_button.button == interface::mouse_button::left &&
             camera_container.transforms[camera_entity_index].mode == interface::camera_mode::fly)
-            try_pick_object(event.mouse_button.x, event.mouse_button.y);
+            pending_pick_request = pending_pick{.x = event.mouse_button.x, .y = event.mouse_button.y};
     }
     context.stop_success = window->should_close();
 }
@@ -835,7 +837,9 @@ void engine_runtime::merge_asset_results(frame_phase_context& context)
 
 void engine_runtime::update_scene_transforms(frame_phase_context&)
 {
-    // Matrix rows are authoritative; hierarchical glTF transforms were resolved at the frame-boundary merge.
+    // D2：脏行批量重算矩阵缓存（静态场景零矩阵数学）。transform/注册置脏，
+    // extract 直读缓存列，不再逐对象 model_matrix。
+    scene_registry.refresh_matrices();
 }
 
 void engine_runtime::update_cameras(frame_phase_context& context)
@@ -867,12 +871,19 @@ void engine_runtime::extract_render_packet(frame_phase_context& context)
     frame_counters = {};
     render_instances.clear();
     render_transforms.clear();
-    for (const scene::scene_object* object : scene_registry.objects())
+    // D2：沿紧凑 slot 索引直读热列（visible/matrices/geometries），
+    // 不触碰 scene_object 记录；矩阵在 update_scene_transforms 已刷新。
+    const std::vector<std::size_t>& slots = scene_registry.slot_indices();
+    render_instances.reserve(slots.size());
+    render_transforms.reserve(slots.size());
+    for (const std::size_t slot : slots)
     {
-        if (!object->visible || object->render_geometry == engine::invalid_geometry_handle) continue;
+        if (scene_registry.visible_at(slot) == 0 ||
+            scene_registry.geometry_at(slot) == engine::invalid_geometry_handle)
+            continue;
         const std::uint32_t transform = static_cast<std::uint32_t>(render_transforms.size());
-        render_transforms.push_back(scene::model_matrix(*object));
-        render_instances.push_back({.mesh = object->render_geometry, .transform = transform});
+        render_transforms.push_back(scene_registry.matrix_at(slot));
+        render_instances.push_back({.mesh = scene_registry.geometry_at(slot), .transform = transform});
     }
     frame_counters.instance_count = render_instances.size();
     render_cameras = {engine::camera_row{
@@ -919,6 +930,12 @@ void engine_runtime::apply_resource_changes(frame_phase_context& context)
 void engine_runtime::submit_render_packet(frame_phase_context& context)
 {
     if (context.stop_success) return;
+    // D2：resize 请求在提交前边界执行（poll_events 只计数）
+    if (resize_requests > 0)
+    {
+        renderer->request_resize();
+        resize_requests = 0;
+    }
     context.render_this_frame = !frame_paused;
     if (pending_frame_steps > 0)
     {
@@ -946,7 +963,14 @@ void engine_runtime::submit_render_packet(frame_phase_context& context)
 
 void engine_runtime::publish_telemetry(frame_phase_context& context)
 {
-    if (!context.stop_success && !context.stop_failure) publish_frame_telemetry();
+    if (context.stop_success || context.stop_failure) return;
+    // D2：拾取请求在遥测出口执行（poll_events 只记坐标；命中变化随本帧遥测发布）
+    if (pending_pick_request)
+    {
+        try_pick_object(pending_pick_request->x, pending_pick_request->y);
+        pending_pick_request.reset();
+    }
+    publish_frame_telemetry();
 }
 
 void engine_runtime::shutdown() noexcept

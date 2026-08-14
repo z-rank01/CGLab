@@ -126,7 +126,8 @@ struct frame_channels {
 |------|-----------|-------------|---------|
 | D0 基线 | 11975 | 12711 | — |
 | D1 拆列后 | 11749 | 13397 | ≈持平（extract 仍走对象路径，提速在 D2） |
-| D2 列式重写后 | — | — | — |
+| D2 列式重写后 | 265 | 271 | **-97.8%**（列直读 + 静态场景零矩阵重算） |
+| D3 context 收敛 | — | — | 无行为变化 |
 
 ## 阶段与提交记录
 
@@ -134,7 +135,8 @@ struct frame_channels {
 |------|------|------|
 | 规划 | 本笔记 | — |
 | D0 | 契约 + 基线（✅ 2026-08-14：`ArchitectureContract.cmake` 增 DoD 检查，`scene_registry` `vector<bool>`→`uint8_t`，新增 `cglab.extract_benchmark`；41/41 绿，基线 11975/12711µs） | `7e8e4844` |
-| D1 | scene_registry 索引化（✅ 2026-08-14：id→slot 直接寻址 O(1) 查找、active_slots 紧凑索引、draws 扁平列 + draw_begin/count 切片、scene_object 保留为冷路径记录；公共 API 不变；41/41 绿；基准 ≈持平） | — |
+| D1 | scene_registry 索引化（✅ 2026-08-14：id→slot 直接寻址 O(1) 查找、active_slots 紧凑索引、draws 扁平列 + draw_begin/count 切片、scene_object 保留为冷路径记录；公共 API 不变；41/41 绿；基准 ≈持平） | `ad20b09d` |
+| D2 | extract 列式化（✅ 2026-08-14：热列 visible/matrices/dirty/geometries + refresh_matrices 增量重算、update_scene_transforms 做实、poll_events resize/拾取副作用归并到帧边界、transform_bounds 闭式解；41/41 绿 + Triangle/GltfSponza GPU smoke 6 帧通过；基准 265/271µs，**-97.8%**。注：pick 反馈延后到 telemetry 出口，命中高亮晚一帧——还债清单钦点方向） | — |
 | D1 | scene_registry 拆列 + id→slot | — |
 | D2 | extract 列式 + phase 做实 + 归并 | — |
 | D3 | context 收敛 | — |

@@ -27,9 +27,10 @@ namespace
         scene::scene_registry registry;
         for (std::size_t i = 0; i < object_count; ++i)
         {
+            // 有效 geometry 句柄：列式 extract 会过滤 invalid，保持与对象路径同口径（4096 可见）
             registry.register_object("obj" + std::to_string(i),
                                      scene::aabb{glm::vec3(-0.5F), glm::vec3(0.5F)},
-                                     {}, false, engine::invalid_geometry_handle);
+                                     {}, false, static_cast<engine::geometry_handle>(i + 1));
         }
         return registry;
     }
@@ -41,17 +42,23 @@ namespace
         std::uint64_t visible = 0;
     };
 
-    // Mirrors the per-object extract path (D0 baseline; rewritten to columns in D2).
-    extract_result run_extract(const scene::scene_registry& registry)
+    // Mirrors the column-based extract path (D2): refresh dirty matrices, then walk
+    // active_slots reading hot columns (no scene_object pointer chasing).
+    extract_result run_extract(scene::scene_registry& registry)
     {
+        registry.refresh_matrices();
         extract_result out;
-        out.instances.reserve(object_count);
-        out.transforms.reserve(object_count);
-        for (const scene::scene_object* object : registry.objects())
+        const auto& slots = registry.slot_indices();
+        out.instances.reserve(slots.size());
+        out.transforms.reserve(slots.size());
+        for (const std::size_t slot : slots)
         {
-            out.transforms.push_back(scene::model_matrix(*object));
+            if (registry.visible_at(slot) == 0 ||
+                registry.geometry_at(slot) == engine::invalid_geometry_handle)
+                continue;
+            out.transforms.push_back(registry.matrix_at(slot));
             out.instances.push_back(
-                {.mesh = object->render_geometry,
+                {.mesh = registry.geometry_at(slot),
                  .transform = static_cast<std::uint32_t>(out.transforms.size() - 1)});
         }
         out.visible = out.instances.size();

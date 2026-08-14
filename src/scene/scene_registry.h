@@ -26,10 +26,14 @@
 //   加载/卸载循环会单调增长，属设计取舍）。
 // - active_slots 紧凑存活索引（注册/卸载时维护，保注册序）：objects()/pick 不再全槽扫描。
 // - scene_object 瘦身：draws 由 std::vector<draw_range> 改为扁平 draw_ranges 列 +
-//   draw_begin/draw_count 切片（消灭每对象一次堆分配）。scene_object 保留为公共记录类型
-//   （name/transform/matrix 等冷路径字段，pick/遥测/编辑命令消费）；热路径列式化在 D2
-//   （extract 直读列，不再经 objects() 指针追逐）。
+//   draw_begin/draw_count 切片（消灭每对象一次堆分配）。
 // - 热/冷路径哲学与 camera 的 hot/cold 分块一致：热（extract/culling）逐列，冷（pick/遥测）逐记录。
+//
+// D2（2026-08-14）：热路径列化（EngineLayerDoDPlan D2）
+// - 热字段列（slot 对齐）：visible / matrices（缓存）/ dirty / geometries；与记录字段同步
+//   （列是热路径真相，记录字段是冷路径镜像）。
+// - extract 沿 active_slots 直读列：消灭指针追逐 + 逐对象 model_matrix（静态场景零矩阵数学）。
+// - transform_bounds 改为闭式解（abs(M)·half_extent），culling 第一遍同享收益。
 
 namespace scene
 {
@@ -103,22 +107,19 @@ namespace scene
         return object.use_matrix ? object.matrix : model_matrix(object.transform);
     }
 
-    // 用 8 角点变换求世界空间 AABB
+    // 用变换矩阵求世界空间 AABB：闭式解（世界半径 = |M| · local_half_extent，
+    // 等价于 8 角点变换，但无逐角点分支，可向量化）
     [[nodiscard]] inline aabb transform_bounds(const aabb& local, const glm::mat4& model)
     {
-        aabb result{glm::vec3(std::numeric_limits<float>::max()), glm::vec3(std::numeric_limits<float>::lowest())};
-        for (int corner = 0; corner < 8; ++corner)
-        {
-            const glm::vec3 local_corner{
-                (corner & 1) != 0 ? local.max.x : local.min.x,
-                (corner & 2) != 0 ? local.max.y : local.min.y,
-                (corner & 4) != 0 ? local.max.z : local.min.z,
-            };
-            const glm::vec3 world_corner = glm::vec3(model * glm::vec4(local_corner, 1.0F));
-            result.min                   = glm::min(result.min, world_corner);
-            result.max                   = glm::max(result.max, world_corner);
-        }
-        return result;
+        const glm::vec3 center = glm::vec3(model * glm::vec4((local.min + local.max) * 0.5F, 1.0F));
+        const glm::vec3 half   = (local.max - local.min) * 0.5F;
+        const glm::mat3 linear(model);
+        const glm::vec3 radius{
+            glm::dot(glm::abs(linear[0]), half),
+            glm::dot(glm::abs(linear[1]), half),
+            glm::dot(glm::abs(linear[2]), half),
+        };
+        return aabb{center - radius, center + radius};
     }
 
     class scene_registry
@@ -146,12 +147,19 @@ namespace scene
                 free_slots.pop_back();
                 slots[slot] = std::move(object);
                 alive[slot] = 1;
+                visibility[slot] = 1;
+                dirty[slot] = 1;   // 矩阵由 refresh_matrices 批量重算
+                geometries[slot] = geometry;
             }
             else
             {
                 slot = slots.size();
                 slots.push_back(std::move(object));
                 alive.push_back(1);
+                visibility.push_back(1);
+                dirty.push_back(1);
+                matrices.push_back(glm::mat4(1.0F));
+                geometries.push_back(geometry);
             }
             if (slot_by_id.size() <= object.id)
             {
@@ -170,6 +178,9 @@ namespace scene
             scene_object* object = find_mutable(id);
             object->matrix = matrix;
             object->use_matrix = true;
+            const std::size_t slot = slot_by_id[id];
+            matrices[slot] = matrix; // 显式矩阵即最终结果，无需重算
+            dirty[slot] = 0;
             return id;
         }
 
@@ -192,6 +203,9 @@ namespace scene
             alive[slot] = 0;
             slot_by_id[id] = invalid_slot;
             free_slots.push_back(slot);
+            visibility[slot] = 0;
+            dirty[slot] = 0;
+            geometries[slot] = engine::invalid_geometry_handle;
             // 保注册序：active_slots 线性移除（unload 低频，可接受）。
             const auto it = std::find(active_slots.begin(), active_slots.end(), slot);
             if (it != active_slots.end())
@@ -214,6 +228,8 @@ namespace scene
                 return false;
             }
             object->visible = visible;
+            const std::size_t slot = slot_by_id[id];
+            visibility[slot] = visible ? 1 : 0;
             bump();
             return true;
         }
@@ -227,6 +243,7 @@ namespace scene
             }
             object->transform = transform;
             object->use_matrix = false;
+            dirty[slot_by_id[id]] = 1; // 矩阵缓存待 refresh_matrices 重算
             bump();
             return true;
         }
@@ -282,6 +299,31 @@ namespace scene
                 result.push_back(&slots[slot]);
             }
             return result;
+        }
+
+        // --- D2 热路径列视图（engine extract 专用，slot 对齐）---
+        // extract 沿 active_slots 直读列，不触碰 scene_object 记录（消灭指针追逐
+        // 与逐对象矩阵重算）；列与记录字段在注册/卸载/设置时同步（列是热路径真相，
+        // 记录字段是冷路径镜像：pick / 遥测 / 编辑命令）。
+        [[nodiscard]] const std::vector<std::size_t>& slot_indices() const noexcept { return active_slots; }
+        [[nodiscard]] std::uint8_t visible_at(std::size_t slot) const noexcept { return visibility[slot]; }
+        [[nodiscard]] const glm::mat4& matrix_at(std::size_t slot) const noexcept { return matrices[slot]; }
+        [[nodiscard]] engine::geometry_handle geometry_at(std::size_t slot) const noexcept { return geometries[slot]; }
+
+        // 增量刷新矩阵缓存（update_scene_transforms phase 调用）：仅重算脏行，
+        // 静态场景零矩阵数学。
+        void refresh_matrices() noexcept
+        {
+            for (const std::size_t slot : active_slots)
+            {
+                if (dirty[slot] == 0)
+                {
+                    continue;
+                }
+                const scene_object& object = slots[slot];
+                matrices[slot] = object.use_matrix ? object.matrix : model_matrix(object.transform);
+                dirty[slot] = 0;
+            }
         }
 
         // 射线拾取：世界空间射线 → 各对象局部空间做 AABB slab 测试，取最近命中。
@@ -382,6 +424,11 @@ namespace scene
         std::vector<std::size_t> slot_by_id;    // id → slot（invalid_slot = 未占用）
         std::vector<std::size_t> active_slots;  // 紧凑存活槽索引（注册序）
         std::vector<draw_range> draw_ranges;    // 扁平 draws 列（scene_object.draw_begin/count 切片）
+        // D2 热路径列（slot 对齐，与记录字段同步）：可见性 / 矩阵缓存 / 脏标记 / geometry 句柄
+        std::vector<std::uint8_t> visibility;
+        std::vector<glm::mat4> matrices;
+        std::vector<std::uint8_t> dirty;
+        std::vector<engine::geometry_handle> geometries;
         object_id next_id     = 0;
         object_id selected_id = invalid_object_id;
         std::uint64_t revision_ = 0;

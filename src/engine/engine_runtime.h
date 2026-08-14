@@ -107,6 +107,11 @@ private:
     // 本帧实际提交给 recipe 的实例行（剔除后指向 culling scratch，否则指向 render_instances）
     std::span<const engine::instance_row> frame_instance_rows;
 
+    // --- D2 帧边界副作用归并（poll_events 只记请求行，执行在帧边界出口）---
+    std::uint32_t resize_requests = 0;
+    struct pending_pick { float x = 0.0F; float y = 0.0F; };
+    std::optional<pending_pick> pending_pick_request;
+
     void handle_control_plane_commands();
     void handle_scene_command(const control_plane::engine_command& command);
     void publish_frame_telemetry();
