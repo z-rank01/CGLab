@@ -112,16 +112,18 @@ foreach(_source IN LISTS _source_files)
 endforeach()
 
 # --- DoD style contract ---
-# The engine/scene layers must follow the DoD style the render-graph core
-# already enforces: no std::vector<bool> (bit-packed proxy container, an
+# The active parent-repository sources must follow the DoD style the render-graph
+# core already enforces: no std::vector<bool> (bit-packed proxy container, an
 # anti-pattern for SoA column models) and no nested std::vector<std::vector
 # (pointer chasing). Violations fail the build instead of living in comments.
+# Coverage is the whole src/ tree: engine/scene are the row-table heart, and
+# apps/asset/platform share the same rules (GPU-ABI rows that must stay
+# struct-of-array for shader layout are unaffected by these two checks).
 file(GLOB_RECURSE _dod_sources
     LIST_DIRECTORIES false
-    "${CGLAB_SOURCE_DIR}/src/engine/*.h"
-    "${CGLAB_SOURCE_DIR}/src/engine/*.cpp"
-    "${CGLAB_SOURCE_DIR}/src/scene/*.h"
-    "${CGLAB_SOURCE_DIR}/src/scene/*.cpp"
+    "${CGLAB_SOURCE_DIR}/src/*.h"
+    "${CGLAB_SOURCE_DIR}/src/*.hpp"
+    "${CGLAB_SOURCE_DIR}/src/*.cpp"
 )
 foreach(_source IN LISTS _dod_sources)
     file(RELATIVE_PATH _relative "${CGLAB_SOURCE_DIR}" "${_source}")
