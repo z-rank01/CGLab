@@ -82,7 +82,7 @@ compiled-plan rows。graph/compiler 的 `compiler_state`、DAG 与 free-function
 - `poll_events` 内有两处提前副作用（resize 直接 `request_resize`、拾取命中后即时发布遥测），应改为请求行并归并到 `publish_telemetry` 出口。
 - DI 风格不统一：`render_driver` 为 opaque state + function table，`asset_service`/`window` 为虚接口。
 - `scene_registry` 为胖 AoS 行（内含 `std::string`/`std::vector`）且 `find` 为 O(n) 线性扫描，可改为 id→slot 索引。
-- runtime 合并加载结果时把共享 blob 切片回拷为每 primitive 一份的 `geometry_asset` vectors（SoA→AoS 回退点）。
+- ~~runtime 合并加载结果时把共享 blob 切片回拷为每 primitive 一份的 `geometry_asset` vectors（SoA→AoS 回退点）。~~ ✅ 已修复（2026-08，A2）：`geometry_upload_row` 改为引用共享 blob 的批量行，整资产单事务零拷贝上传；`geometry_asset` AoS 已删除，见 [PerformancePlan.md](PerformancePlan.md)。
 - ~~RG compiler 丢失了最初设计的 pass culling（无 output 根 → 全部 pass/资源都参与调度与物理分配），持久资源经 `apply_resource_changes` 急切物化；`culling_compile` 等测试名为占位。偏差分析与实施方案见子仓 `docs/ArchitectureAndInternals.md` §13。~~ ✅ 已修复（2026-08-12）：pass culling 已恢复（§6.4），transient 惰性分配已生效，持久资源急切物化保持原样。
 - RG Vulkan backend：`vk_graph_executor` 与 `vk_runtime` 双资源表中心并存；executor 侧 retirement 以 frame 命名但实际按 submission 序号驱动；bindless 默认资源内含 default normal map（PBR 语义下沉）；`backend_capabilities()` 返回硬编码默认值而非设备实测。
 

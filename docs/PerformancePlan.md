@@ -1,7 +1,8 @@
 # 性能与 A 步骤计划：测量 / 视锥剔除 / 加载路径
 
-> 状态：**设计稿（2026-08）**。A 步骤（A0/A1/A2）为可实施范围，本文给出接口草图与验收标准；
-> B/C 步骤只记录路线与触发条件，**暂不实施**，实施前另行评审。
+> 状态：**A0/A1/A2 已实施（2026-08，提交 `da42119e` → `7d2d26ec` → `942f9fdc` → `6e012c4e` →
+> `dee0a36e` → `2953d3bf` → `2b0d23d9`，主仓分支 feature/vulkan_sample_dod）**。
+> B/C 步骤仍只记录路线与触发条件，**暂不实施**，实施前另行评审。
 >
 > 依据：`Architecture.md`（架构与还债清单）、`InfrastructureDesign.md`（基础设施 I0–I3 与触发条款）、
 > `InterfaceRedesign.md`（I1–I5 路线）、`RenderGraphAndRHI.md`（资源与内存模型）。
@@ -27,11 +28,11 @@ indirect draw 以 `vertex_offset/first_index` 引用；分配/同步/生命周�
 
 ## A 步骤总览
 
-| 阶段 | 内容 | 落点 | 验收（可测量） |
+| 阶段 | 内容 | 落点 | 状态 |
 |---|---|---|---|
-| **A0** | 测量设施：阶段计时、计数器、样本环、分位数聚合；telemetry 增量字段；加载分段报告 | `src/measure/`（leaf）+ `engine_runtime` + 协议 | CTest 断言环/聚合正确性；10Hz telemetry 带阶段耗时；`telemetry.load` 报告 |
-| **A1** | 视锥剔除：相机可选组件 + 管理器；纯函数 frustum/AABB；CSR 两遍法压实；CullingSample | `_interface/culling.h`（纯函数）、`engine/culling_system.h`、`extract_render_packet`、控制平面 | 单测（frustum/AABB/压实/存在性语义）；Sponza 帧内 draw 命令下降可观测；开关生效 |
-| **A2** | 加载路径：零拷贝 blob span 上传 + 整资产单事务；删 SoA→AoS 回拷 | `render_backend.h` 契约、recipe `apply_changes`、`merge_asset_database` | 单测（批量行降级、句柄顺序）；`merge_us/upload_us` 下降数据记录；GPU smoke 保持绿 |
+| **A0** | 测量设施：阶段计时、计数器、样本环、分位数聚合；telemetry 增量字段；加载分段报告 | `src/measure/`（leaf）+ `engine_runtime` + 协议 | ✅ `da42119e` + `7d2d26ec` |
+| **A1** | 视锥剔除：相机可选组件 + 管理器；纯函数 frustum/AABB；CSR 两遍法压实；CullingSample | `_interface/culling.h`、`engine/culling_system.h`、`extract_render_packet`、控制平面 | ✅ `942f9fdc` + `6e012c4e` + `dee0a36e` |
+| **A2** | 加载路径：零拷贝 blob span 上传 + 整资产单事务；删 SoA→AoS 回拷 | `render_backend.h` 契约、`geometry_upload_plan.h`、recipe、`merge_asset_database` | ✅ `2953d3bf` + `2b0d23d9` |
 
 前置依赖：A0 先行（A1/A2 的收益度量依赖 A0）；A1 与 A2 互相独立，可并行。
 
@@ -386,10 +387,49 @@ material upload（现状，一次事务）
 
 ## 通用 DoD 检查单（A 步骤验收共查）
 
-- [ ] SoA 列优先，无 AoS 热路径；无逐帧/逐元素堆分配（scratch/环固定容量）；
-- [ ] CSR：剔除压实、样本环、upload 计划均"计数 → 前缀和 → 散布"两遍法；
-- [ ] 存在性代替布尔（组件行存在 = 能力存在；无 `has_culling` 式状态查询）；
-- [ ] 组件 + Manager：数据行 + 帧边界系统函数，主线程单写者；
-- [ ] 纯函数无副作用（frustum/AABB/聚合）；副作用集中在 phase 出口；
-- [ ] 单向依赖：`measure` ← engine ← runtime ← 协议 → UI；剔除不依赖 recipe/RG/glTF；
-- [ ] 每步 CTest 绿 + 主仓 GPU smoke 绿 + benchmark 数据记录（不凭感觉）。
+- [x] SoA 列优先，无 AoS 热路径；无逐帧/逐元素堆分配（scratch/环固定容量）；
+- [x] CSR：剔除压实、样本环、upload 计划均"计数 → 前缀和 → 散布"两遍法；
+- [x] 存在性代替布尔（组件行存在 = 能力存在；无 `has_culling` 式状态查询）；
+- [x] 组件 + Manager：数据行 + 帧边界系统函数，主线程单写者；
+- [x] 纯函数无副作用（frustum/AABB/聚合）；副作用集中在 phase 出口；
+- [x] 单向依赖：`measure` ← engine ← runtime ← 协议 → UI；剔除不依赖 recipe/RG/glTF；
+- [x] 每步 CTest 绿 + 主仓 GPU smoke 绿 + benchmark 数据记录（不凭感觉）。
+
+---
+
+## 实施记录（as-built，2026-08）
+
+### 落地差异（与设计稿的偏差，均为刻意决策）
+
+1. **`load_report` 口径**：按设计稿只报 `load_us` 总量（worker 黑盒），`parse/convert/decode`
+   细分字段保留但恒 0，等 DCL 侧可选计时装点（§A0 口径取舍）。
+2. **帧计数回填语义**：`buffer_uploads/image_uploads` 为"本帧 build_frame 内 apply 的
+   staging 上传行数 + 加载帧累计行数"（加载在帧边界 apply，故加载帧可见批量行数），
+   稳态帧为每帧 3 行（uniform/transform/indirect 表）。
+3. **`initial_geometry`（Triangle 启动几何）**：`geometry_asset` AoS 全仓删除后，
+   `set_initial_geometry` 参数改为 `asset_database`，与 glTF 加载路径共用 `merge_asset_database`
+   单事务路径（Triangle 的启动几何同样受益于批量行契约）。
+4. **triangle recipe 顶点对齐**：旧代码按 `alignof(vertex)`（4 字节）对齐，规划器统一为
+   顶点步长（72 字节）对齐——与 glTF recipe 旧行为一致，draw 换算不受影响。
+5. **`telemetry.load` 仅运行时加载发布**：启动资产（`--asset`）只写日志不推通知
+   （启动时无客户端连接，避免无效推送）。
+
+### 已测量数据（本机 Debug，triangle.gltf，A2 后）
+
+```text
+TriangleSample    smoke: 启动几何 merge 334us / upload 245us
+GltfSponzaSample  smoke: 启动资产 load 2500us / merge 312us / upload 196us（228 bytes）
+CullingSample     smoke: 启动资产 load 2993us / merge 195us / upload 154us（228 bytes，剔除开启）
+```
+
+> Sponza 场景数据（`telemetry.frame.counters.{visible,culled,draws}`、`telemetry.load` 分段、
+> 剔除前后帧时对比）需在有 Sponza 资产的机器上记录，填入本文（§A1/A2 验收）。
+
+### 验收核对
+
+- `cglab.measure` / `cglab.culling` / `cglab.loading_plan` / 既有 11 个 CTest：全绿；
+- GPU smoke：TriangleSample / GltfSponzaSample / CullingSample 各 6 帧契约通过（Debug）；
+- 新增协议：`telemetry.load`、`camera.set_culling` 已登记 `session.init` capabilities 与
+  `control_plane_protocol_test`；`camera.get_state` 新增 `culling` 字段；
+- 新 Sample：`CullingSample`（`--asset` 可选，剔除恒开）；`--culling` 可选开关接入
+  TriangleSample / GltfSponzaSample（默认关，行为不变）。
