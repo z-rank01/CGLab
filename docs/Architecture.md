@@ -74,7 +74,7 @@ compiled-plan rows。graph/compiler 的 `compiler_state`、DAG 与 free-function
 - manager/system 整体遍历表，副作用集中在 phase 末端或 RG Vulkan lowering/execute 边界。
 - Engine、资产和 graph recipe 保持 API 无关；特殊能力由 backend capabilities 和结构化诊断表达。
 - 新 GPU 资源、descriptor、pipeline 或 command side effect 只能进入 RG Vulkan backend。
-- 构建时的 `ArchitectureContract.cmake` 固化这些依赖和调用边界。
+- 构建时的 `ArchitectureContract.cmake` 固化这些依赖和调用边界；DoD 风格检查（禁位打包代理容器与嵌套 vector）覆盖全 `src/`。
 
 **行表命名约定**（与 DCL "asset database"、RG 子仓 `*_rows → *_table` 卫生对齐；不采用 record/tuple——
 SoA 语义下 `row` 是"横跨并行列的逻辑切片"，`record` 暗示连续存储 blob，`tuple` 与 `std::tuple` 撞名）：
@@ -105,8 +105,10 @@ SoA 语义下 `row` 是"横跨并行列的逻辑切片"，`record` 暗示连续�
 `render_frame_packet` 不再承载固定字段集合，而是携带一个 `frame_channels` 行表
 （`engine/frame_channels.h`）：生产者（engine 的 extract 阶段）在帧首 `clear()` 后按阶段表
 顺序发布类型键控通道，消费者（recipe 的 `build_frame`）经 `find_rows<T>()`/`find_state<T>()`
-按类型取用。内置五类行（camera / instance / transform / material / mesh）是 extract 发布的
-前五个通道；光源表、probe 表等新组件表由 sample 侧发布、recipe 侧消费，engine 零改动。
+按类型取用。内置三类行（camera / instance / transform）是 extract 发布的通道；光源表、
+probe 表等新组件表由 sample 侧发布、recipe 侧消费，engine 零改动。
+行表按三列 SoA 存储（`channel_ids`/`channel_data`/`channel_counts`），查找与去重只扫 id 列；
+每通道单写者（debug 构建重复发布 assert，release 保留首个发布）。
 查找为小表线性扫（通道数 ~10），数据只存指针不复制，生存期 = 单帧。
 
 ## 还债清单（2026-08 准则审查）
@@ -118,6 +120,10 @@ SoA 语义下 `row` 是"横跨并行列的逻辑切片"，`record` 暗示连续�
 - ~~runtime 合并加载结果时把共享 blob 切片回拷为每 primitive 一份的 `geometry_asset` vectors（SoA→AoS 回退点）。~~ ✅ 已修复（2026-08，A2）：`geometry_upload_row` 改为引用共享 blob 的批量行，整资产单事务零拷贝上传；`geometry_asset` AoS 已删除，见 [PerformancePlan.md](PerformancePlan.md)。
 - ~~RG compiler 丢失了最初设计的 pass culling（无 output 根 → 全部 pass/资源都参与调度与物理分配），持久资源经 `apply_resource_changes` 急切物化；`culling_compile` 等测试名为占位。偏差分析与实施方案见子仓 `docs/ArchitectureAndInternals.md` §13。~~ ✅ 已修复（2026-08-12）：pass culling 已恢复（§6.4），transient 惰性分配已生效，持久资源急切物化保持原样。
 - RG Vulkan backend：`vk_graph_executor` 与 `vk_runtime` 双资源表中心并存；executor 侧 retirement 以 frame 命名但实际按 submission 序号驱动；bindless 默认资源内含 default normal map（PBR 语义下沉）；`backend_capabilities()` 返回硬编码默认值而非设备实测。
+- ~~两个 recipe 的 `geometry_row` 为 AoS 行且内含 `std::vector<draw_range>`（每 mesh 一次堆分配），`build_frame` 每帧逐实例指针追逐。~~ ✅ 已修复（2026-08-14）：geometry 列 CSR 化（扁平 `geometry_draws` + `geometry_draw_begins/counts` 切片 + `geometry_alive` uint8 列，与 scene_registry 同款模式）；glTF 分组 scratch 帧间复用，稳态零分配。
+- ~~`frame_channels` 通道表为 AoS `channel_row` 行，且"debug 重复发布 assert"注释未落实。~~ ✅ 已修复（2026-08-14）：三列 SoA（`channel_ids`/`channel_data`/`channel_counts`），查找/去重只扫 id 列；单写者 debug assert 落实（release 保留首个发布）。
+- ~~`swapchain_image_state` 用位打包代理容器存初始化标记。~~ ✅ 已修复（2026-08-14）：改 uint8 列；`ArchitectureContract.cmake` 的 DoD 检查覆盖从 engine/scene 扩至全 `src/`。
+- ~~geometry 上传布局计划 `primitive_plan` 行命名偏离行表约定且重复声明 draw 字段、自造 error 字符串。~~ ✅ 已修复（2026-08-14）：`primitive_plan_row`/`primitive_plan_rows` 命名 + 复用 `engine::draw_range` + 错误经 `engine::result` 返回 + 上界预留。
 
 > 性能相关实施计划（测量 / 视锥剔除 / 加载路径，含 B/C 路线记录）见 [PerformancePlan.md](PerformancePlan.md)。
 
