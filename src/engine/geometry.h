@@ -19,29 +19,12 @@ namespace engine
 
     using vertex = dcl::vertex;
 
-    struct geometry_primitive
-    {
-        std::vector<std::uint32_t> indices;
-        std::vector<vertex> vertices;
-        std::uint32_t material_index = 0;
-    };
-
     struct draw_range
     {
         std::uint32_t first_index = 0;
         std::uint32_t index_count = 0;
         std::int32_t vertex_offset = 0;
         std::uint32_t material_index = 0;
-    };
-
-    struct geometry_asset
-    {
-        std::string name;
-        std::vector<geometry_primitive> primitives;
-        glm::vec3 bounds_min{};
-        glm::vec3 bounds_max{};
-
-        [[nodiscard]] bool empty() const noexcept { return primitives.empty(); }
     };
 
     inline constexpr std::uint32_t invalid_asset_index = dcl::invalid_asset_index;

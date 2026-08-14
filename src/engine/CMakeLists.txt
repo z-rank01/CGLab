@@ -2,6 +2,7 @@ add_library(cglab_engine_core INTERFACE)
 
 target_sources(cglab_engine_core INTERFACE
     geometry.h
+    geometry_upload_plan.h
     render_backend.h
     culling_system.h
     ../_interface/input.h

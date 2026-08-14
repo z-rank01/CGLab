@@ -37,7 +37,7 @@ public:
     [[nodiscard]] std::uint32_t validation_error_count() const noexcept;
     [[nodiscard]] engine::render_statistics statistics() const noexcept { return run_statistics; }
 
-    void set_initial_geometry(engine::geometry_asset asset);
+    void set_initial_geometry(engine::asset_database asset);
     void set_required_startup_asset(std::filesystem::path path);
     void configure_sample(sample definition);
     // A1：给活动相机挂载/开关视锥剔除组件（能力可运行时增删，直通相机不受影响）。
@@ -71,7 +71,7 @@ private:
     scene::scene_registry scene_registry;
     // 场景实例到 RG persistent geometry handle 的行映射。
     std::vector<std::optional<engine::geometry_handle>> runtime_geometry_slots;
-    std::optional<engine::geometry_asset> initial_geometry;
+    std::optional<engine::asset_database> initial_geometry;
     std::optional<engine::asset_database> initial_asset;
     std::optional<std::filesystem::path> required_startup_asset;
     std::vector<engine::camera_row> render_cameras;

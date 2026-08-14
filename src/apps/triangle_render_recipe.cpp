@@ -10,6 +10,7 @@
 #include <glm/glm.hpp>
 
 #include "platform/vulkan/render_graph_driver.h"
+#include "engine/geometry_upload_plan.h"
 
 namespace apps
 {
@@ -57,9 +58,6 @@ namespace apps
             input.seekg(0);
             return static_cast<bool>(input.read(reinterpret_cast<char*>(words.data()), size));
         }
-
-        uint64_t align_up(uint64_t value, uint64_t alignment)
-        { return (value + alignment - 1) / alignment * alignment; }
 
         engine::result<bool> initialize(void* value,
                                         render_graph::render_device& device,
@@ -146,30 +144,44 @@ namespace apps
             for (const auto& row : batch.geometry_uploads)
             {
                 if (!row.asset) return {.error = "Triangle geometry upload row is empty"};
-                geometry_row geometry;
+                // A2：批量行 → 纯函数布局计划 → 零拷贝上传（span 直接引用共享 blob）
+                const auto plan = engine::plan_geometry_uploads(*row.asset, row.first_mesh, row.mesh_count,
+                                                                row.material_base, geometry_capacity, state.geometry_cursor);
+                if (!plan) return {.error = plan.error};
                 std::vector<render_graph::buffer_upload_row> uploads;
-                for (const auto& primitive : row.asset->primitives)
+                uploads.reserve(plan.primitives.size() * 2);
+                std::vector<geometry_row> created;
+                created.reserve(row.mesh_count);
+                std::size_t primitive_index = 0;
+                for (std::uint32_t mesh = 0; mesh < row.mesh_count; ++mesh)
                 {
-                    const uint64_t vertex_offset = align_up(state.geometry_cursor, alignof(engine::vertex));
-                    const uint64_t vertex_size = primitive.vertices.size() * sizeof(engine::vertex);
-                    const uint64_t index_offset = align_up(vertex_offset + vertex_size, alignof(uint32_t));
-                    const uint64_t index_size = primitive.indices.size() * sizeof(uint32_t);
-                    if (index_offset + index_size > geometry_capacity) return {.error = "Triangle geometry arena exhausted"};
-                    uploads.push_back({state.geometry, vertex_offset, std::as_bytes(std::span(primitive.vertices))});
-                    uploads.push_back({state.geometry, index_offset, std::as_bytes(std::span(primitive.indices))});
-                    geometry.draws.push_back({
-                        .first_index = static_cast<uint32_t>(index_offset / sizeof(uint32_t)),
-                        .index_count = static_cast<uint32_t>(primitive.indices.size()),
-                        .vertex_offset = static_cast<int32_t>(vertex_offset / sizeof(engine::vertex)),
-                        .material_index = primitive.material_index,
-                    });
-                    state.geometry_cursor = index_offset + index_size;
+                    geometry_row geometry;
+                    geometry.draws.reserve(plan.mesh_primitive_counts[mesh]);
+                    for (std::uint32_t k = 0; k < plan.mesh_primitive_counts[mesh]; ++k)
+                    {
+                        const auto& pp = plan.primitives[primitive_index++];
+                        uploads.push_back({state.geometry, pp.vertex_byte_offset,
+                                           std::as_bytes(std::span(row.asset->vertex_blob)
+                                                             .subspan(pp.vertex_element_offset, pp.vertex_count))});
+                        uploads.push_back({state.geometry, pp.index_byte_offset,
+                                           std::as_bytes(std::span(row.asset->index_blob)
+                                                             .subspan(pp.index_element_offset, pp.index_count))});
+                        geometry.draws.push_back({.first_index = pp.first_index,
+                                                  .index_count = pp.index_count,
+                                                  .vertex_offset = pp.vertex_offset,
+                                                  .material_index = pp.material_index});
+                    }
+                    created.push_back(std::move(geometry));
                 }
                 const auto uploaded = device.apply_resource_changes({.buffer_uploads = uploads});
                 if (!uploaded) return {.error = uploaded.error};
                 state.staged_buffer_upload_rows += uploads.size();
-                output.value.geometry_handles.push_back(static_cast<engine::geometry_handle>(state.geometries.size()));
-                state.geometries.push_back(std::move(geometry));
+                state.geometry_cursor = plan.cursor;
+                for (auto& geometry : created)
+                {
+                    output.value.geometry_handles.push_back(static_cast<engine::geometry_handle>(state.geometries.size()));
+                    state.geometries.push_back(std::move(geometry));
+                }
             }
             for (const auto& row : batch.geometry_retires)
                 if (row.handle < state.geometries.size()) state.geometries[row.handle].alive = false;

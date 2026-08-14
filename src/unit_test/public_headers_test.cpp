@@ -9,7 +9,7 @@
 
 int main()
 {
-    engine::geometry_asset asset;
+    engine::asset_database asset;
     engine::runtime_config config;
-    return asset.empty() && config.frames_in_flight == 3 ? 0 : 1;
+    return asset.name.empty() && config.frames_in_flight == 3 ? 0 : 1;
 }

@@ -103,7 +103,16 @@ namespace engine
         [[nodiscard]] explicit operator bool() const noexcept { return error.empty(); }
     };
 
-    struct geometry_upload_row { const geometry_asset* asset = nullptr; };
+    // A2 批量行：直接引用共享 blob 行模型（dcl::asset_database），零拷贝上传。
+    // 覆盖 [first_mesh, first_mesh + mesh_count) 的 mesh 行段；apply 返回
+    // geometry_handles，按 mesh 顺序每 mesh 一个句柄（整资产单事务）。
+    struct geometry_upload_row
+    {
+        const asset_database* asset = nullptr;
+        std::uint32_t first_mesh = 0;
+        std::uint32_t mesh_count = 0;     // ≥1
+        std::uint32_t material_base = 0;  // 材质上传返回的 base（recipe 需要）
+    };
     struct material_upload_row { const asset_database* asset = nullptr; };
     struct geometry_retire_row { geometry_handle handle = invalid_geometry_handle; };
     struct resource_change_batch

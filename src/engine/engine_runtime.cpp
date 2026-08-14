@@ -73,6 +73,7 @@ void engine_runtime::initialize()
         asset_loader = std::make_unique<asset::asset_service>();
     }
     asset_loader->start(config.working_directory);
+    engine::load_report startup_report;
     if (required_startup_asset)
     {
         const auto requested = asset_loader->request(*required_startup_asset);
@@ -89,6 +90,7 @@ void engine_runtime::initialize()
                 {
                     throw std::runtime_error("Failed to load startup asset: " + completed.front().result.error);
                 }
+                startup_report = std::move(completed.front().report);
                 initial_asset = std::move(completed.front().result.value);
                 break;
             }
@@ -111,36 +113,23 @@ void engine_runtime::initialize()
 
     if (initial_geometry)
     {
-        const geometry_upload_row upload_row{initial_geometry.operator->()};
-        const auto changed = renderer->apply_resource_changes({.geometry_uploads = std::span(&upload_row, 1)});
-        if (!changed || changed.value.geometry_handles.size() != 1)
-        {
-            throw std::runtime_error("Failed to upload startup geometry: " + changed.error);
-        }
-        const geometry_handle uploaded = changed.value.geometry_handles.front();
-        const scene::aabb bounds{initial_geometry->bounds_min, initial_geometry->bounds_max};
-        const scene::object_id id = scene_registry.register_object(
-            initial_geometry->name.empty() ? "startup" : initial_geometry->name,
-            bounds,
-            {},
-            true,
-            uploaded);
-        if (runtime_geometry_slots.size() <= id)
-        {
-            runtime_geometry_slots.resize(id + 1);
-        }
-        runtime_geometry_slots[id] = uploaded;
+        engine::load_report report;
+        const auto ids = merge_asset_database(std::move(*initial_geometry), true, &report);
+        if (ids.empty()) throw std::runtime_error("Startup geometry contains no mesh instances");
+        Logger::LogInfo("Loaded startup geometry in " + std::to_string(report.merge_us) + "us (upload " +
+                        std::to_string(report.upload_us) + "us, " +
+                        std::to_string(report.vertex_bytes + report.index_bytes) + " bytes)");
         initial_geometry.reset();
     }
     if (initial_asset)
     {
-        engine::load_report report;
-        const auto ids = merge_asset_database(std::move(*initial_asset), true, &report);
+        const auto ids = merge_asset_database(std::move(*initial_asset), true, &startup_report);
         if (ids.empty()) throw std::runtime_error("Startup asset contains no mesh instances");
-        Logger::LogInfo("Loaded startup asset \"" + report.path + "\" in " + std::to_string(report.load_us) +
-                        "us (merge " + std::to_string(report.merge_us) + "us, upload " +
-                        std::to_string(report.upload_us) + "us, " + std::to_string(report.vertex_bytes + report.index_bytes) +
-                        " bytes)");
+        Logger::LogInfo("Loaded startup asset \"" + startup_report.path + "\" in " +
+                        std::to_string(startup_report.load_us) + "us (merge " +
+                        std::to_string(startup_report.merge_us) + "us, upload " +
+                        std::to_string(startup_report.upload_us) + "us, " +
+                        std::to_string(startup_report.vertex_bytes + startup_report.index_bytes) + " bytes)");
         initial_asset.reset();
     }
 
@@ -242,47 +231,34 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
     }
     const std::uint32_t material_base = material_changes.value.material_bases.front();
     std::vector<engine::geometry_handle> mesh_handles(asset.meshes.size(), engine::invalid_geometry_handle);
-    for (std::uint32_t mesh_index = 0; mesh_index < asset.meshes.size(); mesh_index++)
+    if (!asset.meshes.empty())
     {
-        const auto& mesh = asset.meshes[mesh_index];
-        engine::geometry_asset geometry{.name = mesh.name, .bounds_min = mesh.bounds_min, .bounds_max = mesh.bounds_max};
-        geometry.primitives.reserve(mesh.primitive_count);
-        for (std::uint32_t row = 0; row < mesh.primitive_count; row++)
-        {
-            const auto& primitive = asset.primitives[mesh.first_primitive + row];
-            engine::geometry_primitive output{.material_index = material_base + primitive.material};
-            output.vertices.assign(asset.vertex_blob.begin() + primitive.vertex_offset,
-                                   asset.vertex_blob.begin() + primitive.vertex_offset + primitive.vertex_count);
-            output.indices.assign(asset.index_blob.begin() + primitive.index_offset,
-                                  asset.index_blob.begin() + primitive.index_offset + primitive.index_count);
-            geometry.primitives.push_back(std::move(output));
-        }
-        const geometry_upload_row geometry_row{&geometry};
+        // A2：整资产单事务——单条批量行覆盖全部 mesh，零拷贝（recipe 直接引用共享 blob span）。
+        // 单事务原子性：全成或全败，无逐 mesh 回滚。
+        const geometry_upload_row geometry_row{&asset, 0, static_cast<std::uint32_t>(asset.meshes.size()), material_base};
         const auto geometry_upload_begin = std::chrono::steady_clock::now();
         const auto geometry_changes = renderer->apply_resource_changes({.geometry_uploads = std::span(&geometry_row, 1)});
         track_upload(geometry_upload_begin);
-        if (!geometry_changes || geometry_changes.value.geometry_handles.size() != 1)
+        if (!geometry_changes || geometry_changes.value.geometry_handles.size() != asset.meshes.size())
         {
-            Logger::LogError("Failed to upload glTF mesh: " + geometry_changes.error);
-            std::vector<geometry_retire_row> rollback_rows;
-            for (const auto handle : mesh_handles)
-                if (handle != engine::invalid_geometry_handle) rollback_rows.push_back({handle});
-            if (!rollback_rows.empty())
-                (void)renderer->apply_resource_changes({.geometry_retires = rollback_rows});
+            Logger::LogError("Failed to upload glTF geometry: " + geometry_changes.error);
             return {};
         }
-        mesh_handles[mesh_index] = geometry_changes.value.geometry_handles.front();
-        // A1：维护按 geometry_handle 索引的 mesh bounds 表（extract 剔除消费）
-        const auto handle = mesh_handles[mesh_index];
-        if (handle != engine::invalid_geometry_handle)
+        for (std::uint32_t mesh_index = 0; mesh_index < asset.meshes.size(); mesh_index++)
         {
-            if (mesh_bounds_min.size() <= handle)
+            const auto handle = geometry_changes.value.geometry_handles[mesh_index];
+            mesh_handles[mesh_index] = handle;
+            // A1：维护按 geometry_handle 索引的 mesh bounds 表（extract 剔除消费）
+            if (handle != engine::invalid_geometry_handle)
             {
-                mesh_bounds_min.resize(handle + 1, glm::vec3(0.0F));
-                mesh_bounds_max.resize(handle + 1, glm::vec3(0.0F));
+                if (mesh_bounds_min.size() <= handle)
+                {
+                    mesh_bounds_min.resize(handle + 1, glm::vec3(0.0F));
+                    mesh_bounds_max.resize(handle + 1, glm::vec3(0.0F));
+                }
+                mesh_bounds_min[handle] = asset.meshes[mesh_index].bounds_min;
+                mesh_bounds_max[handle] = asset.meshes[mesh_index].bounds_max;
             }
-            mesh_bounds_min[handle] = mesh.bounds_min;
-            mesh_bounds_max[handle] = mesh.bounds_max;
         }
     }
 
@@ -999,7 +975,7 @@ std::uint32_t engine_runtime::validation_error_count() const noexcept
     return renderer ? renderer->validation_error_count() : final_validation_errors;
 }
 
-void engine_runtime::set_initial_geometry(engine::geometry_asset asset)
+void engine_runtime::set_initial_geometry(engine::asset_database asset)
 {
     initial_geometry = std::move(asset);
 }
@@ -1013,7 +989,7 @@ void engine_runtime::set_camera_culling(bool enabled)
 {
     if (enabled)
     {
-        engine::attach_culling(culling, camera_entity_index, true);
+        (void)engine::attach_culling(culling, camera_entity_index, true);
     }
     else
     {

@@ -24,7 +24,7 @@ namespace engine
     struct sample
     {
         std::string name;
-        std::optional<engine::geometry_asset> startup_geometry;
+        std::optional<engine::asset_database> startup_geometry;
         std::optional<std::filesystem::path> required_startup_asset;
         std::function<void(runtime_services&, float)> update;
     };

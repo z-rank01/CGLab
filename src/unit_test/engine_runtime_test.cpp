@@ -80,7 +80,11 @@ namespace
                 for ([[maybe_unused]] const auto& row : batch.geometry_uploads)
                 {
                     ++static_cast<fake_backend*>(value)->state->upload_calls;
-                    changed.geometry_handles.push_back(7);
+                    // A2 批量行：每 mesh 一个句柄（句柄数量 = mesh_count）
+                    for (std::uint32_t mesh = 0; mesh < row.mesh_count; ++mesh)
+                    {
+                        changed.geometry_handles.push_back(7);
+                    }
                 }
                 return engine::result<engine::resource_change_result>{.value = std::move(changed)};
             },
@@ -106,7 +110,7 @@ namespace
         return {new fake_backend(std::move(state)), &api};
     }
 
-    engine::geometry_asset triangle();
+    engine::asset_database triangle();
 
     struct asset_state
     {
@@ -125,15 +129,7 @@ namespace
         engine::result<engine::asset_request_id> request(std::filesystem::path) override
         {
             ++state->request_calls;
-            engine::geometry_asset geometry = triangle();
-            engine::asset_database asset{.name = geometry.name};
-            asset.vertex_blob = geometry.primitives[0].vertices;
-            asset.index_blob = geometry.primitives[0].indices;
-            asset.primitives.push_back({.mesh = 0, .material = 0, .vertex_count = 3, .index_count = 3});
-            asset.meshes.push_back({.name = geometry.name, .primitive_count = 1,
-                                    .bounds_min = geometry.bounds_min, .bounds_max = geometry.bounds_max});
-            asset.nodes.push_back({.name = geometry.name, .mesh = 0});
-            asset.materials.emplace_back();
+            engine::asset_database asset = triangle();
             state->completed.push_back({.id = 1, .result = {.value = std::move(asset)}});
             return {.value = 1};
         }
@@ -147,16 +143,19 @@ namespace
         std::shared_ptr<asset_state> state;
     };
 
-    engine::geometry_asset triangle()
+    engine::asset_database triangle()
     {
-        engine::geometry_asset asset;
+        engine::asset_database asset;
         asset.name = "test triangle";
-        asset.bounds_min = {-1.0F, -1.0F, 0.0F};
-        asset.bounds_max = {1.0F, 1.0F, 0.0F};
-        engine::geometry_primitive primitive;
-        primitive.indices = {0, 1, 2};
-        primitive.vertices.resize(3);
-        asset.primitives.push_back(std::move(primitive));
+        asset.vertex_blob.resize(3);
+        asset.index_blob = {0, 1, 2};
+        asset.meshes.push_back({.name = "test triangle", .first_primitive = 0, .primitive_count = 1,
+                                .bounds_min = {-1.0F, -1.0F, 0.0F}, .bounds_max = {1.0F, 1.0F, 0.0F}});
+        asset.primitives.push_back({.mesh = 0, .material = 0,
+                                    .vertex_offset = 0, .vertex_count = 3,
+                                    .index_offset = 0, .index_count = 3});
+        asset.nodes.push_back({.name = "test triangle", .mesh = 0});
+        asset.materials.emplace_back();
         return asset;
     }
 }

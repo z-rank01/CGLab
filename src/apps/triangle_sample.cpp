@@ -4,21 +4,23 @@
 
 namespace
 {
-    engine::geometry_asset make_triangle()
+    // A2：启动几何改为单 mesh 的 dcl 行模型（共享 blob），与 glTF 加载路径同一契约。
+    engine::asset_database make_triangle()
     {
-        engine::geometry_asset asset{
-            .name = "Triangle",
-            .bounds_min = {-1.0F, -1.0F, 0.0F},
-            .bounds_max = {1.0F, 1.0F, 0.0F},
+        engine::asset_database asset{.name = "Triangle"};
+        asset.vertex_blob = {
+            {{-1.0F, -1.0F, 0.0F}, {1.0F, 0.0F, 0.0F, 1.0F}},
+            {{1.0F, -1.0F, 0.0F}, {0.0F, 1.0F, 0.0F, 1.0F}},
+            {{0.0F, 1.0F, 0.0F}, {0.0F, 0.0F, 1.0F, 1.0F}},
         };
-        engine::geometry_primitive primitive;
-        primitive.indices = {0, 1, 2};
-        primitive.vertices = {
-            {.position = {-1.0F, -1.0F, 0.0F}, .color = {1.0F, 0.0F, 0.0F, 1.0F}},
-            {.position = {1.0F, -1.0F, 0.0F}, .color = {0.0F, 1.0F, 0.0F, 1.0F}},
-            {.position = {0.0F, 1.0F, 0.0F}, .color = {0.0F, 0.0F, 1.0F, 1.0F}},
-        };
-        asset.primitives.push_back(std::move(primitive));
+        asset.index_blob = {0, 1, 2};
+        asset.meshes.push_back({.name = "Triangle", .first_primitive = 0, .primitive_count = 1,
+                                .bounds_min = {-1.0F, -1.0F, 0.0F}, .bounds_max = {1.0F, 1.0F, 0.0F}});
+        asset.primitives.push_back({.mesh = 0, .material = 0,
+                                    .vertex_offset = 0, .vertex_count = 3,
+                                    .index_offset = 0, .index_count = 3});
+        asset.nodes.push_back({.name = "Triangle", .parent = engine::invalid_asset_index, .mesh = 0});
+        asset.materials.emplace_back();
         return asset;
     }
 }
