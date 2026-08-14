@@ -4,7 +4,8 @@
 //
 // 职责边界：
 // - 引擎保证秩序：帧首 clear()、发布窗口 = 阶段表顺序（engine 侧发布）、每通道单写者
-//   （debug 下重复发布 assert）、数据生存期 = 单帧（通道只存指针，不持有数据）。
+//   （debug 下重复发布 assert，release 保留首个发布）、数据生存期 = 单帧（通道只存指针，
+//   不持有数据）。
 // - 编写者保证语义：消费者 find_rows<T>()/find_state<T>() 缺失返回空 span / nullptr，
 //   引擎不校验内容——缺通道或数据不对是编写者责任。
 //
@@ -14,9 +15,12 @@
 // - channel_id<T>() 由静态局部原子计数器生成，全二进制唯一（主仓单可执行成立；
 //   DLL 化时需评审——静态局部跨 DLL 不共享）。
 //
-// 查找为小表线性扫（通道数 ~10，纳秒级）；entries 在帧首 clear，reserve 后稳态零分配。
+// 存储：三列 SoA（channel_ids / channel_data / channel_counts，槽位对齐）。查找与
+// 去重只扫 id 列（4 字节/槽），数据指针与行数仅在命中时读取；帧首 clear，reserve
+// 后稳态零分配。通道数 ~10，线性扫为纳秒级。
 
 #include <atomic>
+#include <cassert>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -25,16 +29,16 @@ namespace engine
 {
     struct frame_channels
     {
-        struct channel_row
+        std::vector<std::uint32_t> channel_ids;    // 通道类型 id 列
+        std::vector<const void*> channel_data;     // 行指针 / 状态指针列（不持有数据）
+        std::vector<std::uint32_t> channel_counts; // 行数列（状态通道 = 1）
+
+        void clear() noexcept
         {
-            std::uint32_t id = 0;
-            const void* data = nullptr;
-            std::uint32_t count = 0;
-        };
-
-        std::vector<channel_row> entries;
-
-        void clear() noexcept { entries.clear(); }
+            channel_ids.clear();
+            channel_data.clear();
+            channel_counts.clear();
+        }
 
         template <typename T>
         [[nodiscard]] static std::uint32_t channel_id() noexcept
@@ -61,24 +65,24 @@ namespace engine
         template <typename T>
         [[nodiscard]] std::span<const T> find_rows() const noexcept
         {
-            const channel_row* row = find(channel_id<T>());
-            if (row == nullptr)
+            const std::size_t slot = find_slot(channel_id<T>());
+            if (slot == channel_ids.size())
             {
                 return {};
             }
-            return std::span<const T>(static_cast<const T*>(row->data), row->count);
+            return std::span<const T>(static_cast<const T*>(channel_data[slot]), channel_counts[slot]);
         }
 
         // 查找状态通道；缺失返回 nullptr。
         template <typename T>
         [[nodiscard]] const T* find_state() const noexcept
         {
-            const channel_row* row = find(channel_id<T>());
-            if (row == nullptr || row->count == 0)
+            const std::size_t slot = find_slot(channel_id<T>());
+            if (slot == channel_ids.size() || channel_counts[slot] == 0)
             {
                 return nullptr;
             }
-            return static_cast<const T*>(row->data);
+            return static_cast<const T*>(channel_data[slot]);
         }
 
     private:
@@ -90,28 +94,31 @@ namespace engine
 
         void push(std::uint32_t id, const void* data, std::uint32_t count)
         {
-            for (const channel_row& existing : entries)
+            for (const std::uint32_t existing : channel_ids)
             {
-                if (existing.id == id)
+                if (existing == id)
                 {
-                    // 每通道单写者（发布窗口 = 阶段表顺序）；engine 侧不会触达，
-                    // 消费者误发布时显式暴露而非静默覆盖。
+                    // 每通道单写者：重复发布是编写者错误。debug 显式 assert 暴露；
+                    // release 保留首个发布（通道数据生存期 = 单帧，宁可见不崩溃）。
+                    assert(false && "frame channel published twice: single writer per channel");
                     return;
                 }
             }
-            entries.push_back({.id = id, .data = data, .count = count});
+            channel_ids.push_back(id);
+            channel_data.push_back(data);
+            channel_counts.push_back(count);
         }
 
-        [[nodiscard]] const channel_row* find(std::uint32_t id) const noexcept
+        [[nodiscard]] std::size_t find_slot(std::uint32_t id) const noexcept
         {
-            for (const channel_row& row : entries)
+            for (std::size_t slot = 0; slot < channel_ids.size(); ++slot)
             {
-                if (row.id == id)
+                if (channel_ids[slot] == id)
                 {
-                    return &row;
+                    return slot;
                 }
             }
-            return nullptr;
+            return channel_ids.size();
         }
     };
 } // namespace engine

@@ -1,6 +1,6 @@
 // engine::frame_channels 单元测试
 // 覆盖：行表通道发布/查找、状态通道、缺失返回空、帧首清零、多通道并存、
-//       每通道单写者（重复发布不覆盖）、id 类型隔离。
+//       每通道单写者（debug 由 assert 强制；release 保留首个发布）、id 类型隔离。
 
 #include <array>
 #include <cstdlib>
@@ -80,7 +80,9 @@ namespace
 
     void test_duplicate_publish_is_ignored()
     {
-        // 每通道单写者：重复发布不覆盖已发布行（防静默覆盖语义）。
+        // debug 构建下单写者由 assert 强制（重复发布会终止进程，无法在此断言）；
+        // release 构建断言保留首个发布语义。
+#ifdef NDEBUG
         engine::frame_channels channels;
         std::vector<camera_rows_t> first{{}, {}};
         std::vector<camera_rows_t> second{{}, {}, {}};
@@ -88,6 +90,7 @@ namespace
         channels.publish_rows<camera_rows_t>(second);
         const auto found = channels.find_rows<camera_rows_t>();
         check(found.size() == 2 && found.data() == first.data(), "duplicate publish keeps first");
+#endif
     }
 
     void test_channel_ids_are_type_isolated()
