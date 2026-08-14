@@ -285,7 +285,9 @@ namespace apps
                 std::vector<render_graph::buffer_upload_row> uploads;
                 for (const auto& primitive : row.asset->primitives)
                 {
-                    const uint64_t vertex_offset = align_up(state.geometry_cursor, alignof(engine::vertex));
+                    // The indirect draw's vertexOffset is in vertex units, so the byte
+                    // offset must stay an exact multiple of the vertex stride.
+                    const uint64_t vertex_offset = align_up(state.geometry_cursor, sizeof(engine::vertex));
                     const uint64_t vertex_size = primitive.vertices.size() * sizeof(engine::vertex);
                     const uint64_t index_offset = align_up(vertex_offset + vertex_size, alignof(uint32_t));
                     const uint64_t index_size = primitive.indices.size() * sizeof(uint32_t);
