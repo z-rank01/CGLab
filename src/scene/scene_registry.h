@@ -19,6 +19,17 @@
 //   注册表只保存"画哪些区间"的描述。
 // - 启动资产登记为 read_only 条目（draws 为空，走 legacy buffer），可列出/选中，不可卸载。
 // - revision：任何场景变更单调递增，供控制平面做场景快照的增量推送判定。
+//
+// D1（2026-08-14）：索引与存储卫生（EngineLayerDoDPlan D1）
+// - id→slot 直接寻址表（slot_by_id）：find/unload/set_* 从 O(n) 线性扫描降为 O(1)；
+//   id 单调递增不复用（句柄稳定），slot 复用，id 空间 = 累计注册数（文档约束：长时间
+//   加载/卸载循环会单调增长，属设计取舍）。
+// - active_slots 紧凑存活索引（注册/卸载时维护，保注册序）：objects()/pick 不再全槽扫描。
+// - scene_object 瘦身：draws 由 std::vector<draw_range> 改为扁平 draw_ranges 列 +
+//   draw_begin/draw_count 切片（消灭每对象一次堆分配）。scene_object 保留为公共记录类型
+//   （name/transform/matrix 等冷路径字段，pick/遥测/编辑命令消费）；热路径列式化在 D2
+//   （extract 直读列，不再经 objects() 指针追逐）。
+// - 热/冷路径哲学与 camera 的 hot/cold 分块一致：热（extract/culling）逐列，冷（pick/遥测）逐记录。
 
 namespace scene
 {
@@ -47,6 +58,8 @@ namespace scene
         std::int32_t  vertex_offset = 0; // 顶点区间起点（单位：vertex）
     };
 
+    // 对象记录（冷路径视图：遥测 / 拾取 / 编辑命令）。热路径（extract/culling）请用
+    // 列式访问（D2 起），不要在热路径逐对象走本结构。
     struct scene_object
     {
         object_id id = invalid_object_id;
@@ -55,7 +68,8 @@ namespace scene
         bool visible   = true;
         bool read_only = false;   // 启动资产：可列出/选中，不可卸载
         aabb local_bounds{};
-        std::vector<draw_range> draws; // 启动资产为空（走 legacy buffer）
+        std::uint32_t draw_begin = 0; // 扁平 draw_ranges 列切片（draw_ranges[begin, begin+count)）
+        std::uint32_t draw_count = 0;
         engine::geometry_handle render_geometry = engine::invalid_geometry_handle;
         glm::mat4 matrix{1.0F};
         bool use_matrix = false;
@@ -116,12 +130,14 @@ namespace scene
                                   engine::geometry_handle geometry = engine::invalid_geometry_handle)
         {
             scene_object object;
-            object.id          = next_id++;
-            object.name        = std::move(name);
-            object.local_bounds = local_bounds;
-            object.draws       = std::move(draws);
-            object.read_only   = read_only;
+            object.id            = next_id++;
+            object.name          = std::move(name);
+            object.local_bounds  = local_bounds;
+            object.read_only     = read_only;
             object.render_geometry = geometry;
+            object.draw_begin    = static_cast<std::uint32_t>(draw_ranges.size());
+            object.draw_count    = static_cast<std::uint32_t>(draws.size());
+            draw_ranges.insert(draw_ranges.end(), draws.begin(), draws.end());
 
             std::size_t slot;
             if (!free_slots.empty())
@@ -129,16 +145,22 @@ namespace scene
                 slot = free_slots.back();
                 free_slots.pop_back();
                 slots[slot] = std::move(object);
-                alive[slot] = true;
+                alive[slot] = 1;
             }
             else
             {
                 slot = slots.size();
                 slots.push_back(std::move(object));
-                alive.push_back(true);
+                alive.push_back(1);
             }
+            if (slot_by_id.size() <= object.id)
+            {
+                slot_by_id.resize(static_cast<std::size_t>(object.id) + 1, invalid_slot);
+            }
+            slot_by_id[object.id] = slot;
+            active_slots.push_back(slot);
             bump();
-            return slots[slot].id;
+            return object.id;
         }
 
         object_id register_matrix_object(std::string name, const aabb& local_bounds, const glm::mat4& matrix,
@@ -154,25 +176,34 @@ namespace scene
         // 卸载对象。不存在或 read_only 返回 false。卸载选中对象时清除选择。
         bool unload(object_id id)
         {
-            for (std::size_t slot = 0; slot < slots.size(); ++slot)
+            if (id >= slot_by_id.size())
             {
-                if (alive[slot] && slots[slot].id == id)
-                {
-                    if (slots[slot].read_only)
-                    {
-                        return false;
-                    }
-                    alive[slot] = false;
-                    free_slots.push_back(slot);
-                    if (selected_id == id)
-                    {
-                        selected_id = invalid_object_id;
-                    }
-                    bump();
-                    return true;
-                }
+                return false;
             }
-            return false;
+            const std::size_t slot = slot_by_id[id];
+            if (slot == invalid_slot || alive[slot] == 0)
+            {
+                return false;
+            }
+            if (slots[slot].read_only)
+            {
+                return false;
+            }
+            alive[slot] = 0;
+            slot_by_id[id] = invalid_slot;
+            free_slots.push_back(slot);
+            // 保注册序：active_slots 线性移除（unload 低频，可接受）。
+            const auto it = std::find(active_slots.begin(), active_slots.end(), slot);
+            if (it != active_slots.end())
+            {
+                active_slots.erase(it);
+            }
+            if (selected_id == id)
+            {
+                selected_id = invalid_object_id;
+            }
+            bump();
+            return true;
         }
 
         bool set_visibility(object_id id, bool visible)
@@ -226,28 +257,29 @@ namespace scene
 
         [[nodiscard]] object_id selected() const noexcept { return selected_id; }
 
+        // id→slot 直接寻址：O(1)。
         [[nodiscard]] const scene_object* find(object_id id) const
         {
-            for (std::size_t slot = 0; slot < slots.size(); ++slot)
+            if (id >= slot_by_id.size())
             {
-                if (alive[slot] && slots[slot].id == id)
-                {
-                    return &slots[slot];
-                }
+                return nullptr;
             }
-            return nullptr;
+            const std::size_t slot = slot_by_id[id];
+            if (slot == invalid_slot || alive[slot] == 0)
+            {
+                return nullptr;
+            }
+            return &slots[slot];
         }
 
-        // 全部存活对象（按注册顺序）
+        // 全部存活对象（按注册顺序），沿紧凑索引组装。
         [[nodiscard]] std::vector<const scene_object*> objects() const
         {
             std::vector<const scene_object*> result;
-            for (std::size_t slot = 0; slot < slots.size(); ++slot)
+            result.reserve(active_slots.size());
+            for (const std::size_t slot : active_slots)
             {
-                if (alive[slot])
-                {
-                    result.push_back(&slots[slot]);
-                }
+                result.push_back(&slots[slot]);
             }
             return result;
         }
@@ -258,13 +290,13 @@ namespace scene
         {
             pick_result best;
             float best_distance = std::numeric_limits<float>::max();
-            for (std::size_t slot = 0; slot < slots.size(); ++slot)
+            for (const std::size_t slot : active_slots)
             {
-                if (!alive[slot] || !slots[slot].visible)
+                const scene_object& object  = slots[slot];
+                if (!object.visible)
                 {
                     continue;
                 }
-                const scene_object& object  = slots[slot];
                 const glm::mat4 inverse     = glm::inverse(model_matrix(object));
                 const glm::vec3 local_origin = glm::vec3(inverse * glm::vec4(world_ray.origin, 1.0F));
                 const glm::vec3 local_dir    = glm::vec3(inverse * glm::vec4(world_ray.direction, 0.0F));
@@ -292,6 +324,8 @@ namespace scene
         [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
 
     private:
+        inline static constexpr std::size_t invalid_slot = std::numeric_limits<std::size_t>::max();
+
         // 局部空间射线 vs AABB 的 slab 测试；命中时 out_t 为进入距离（射线在盒内时为 0）
         static bool ray_aabb_intersect(const glm::vec3& origin, const glm::vec3& direction, const aabb& box,
                                        float& out_t)
@@ -328,14 +362,16 @@ namespace scene
 
         scene_object* find_mutable(object_id id)
         {
-            for (std::size_t slot = 0; slot < slots.size(); ++slot)
+            if (id >= slot_by_id.size())
             {
-                if (alive[slot] && slots[slot].id == id)
-                {
-                    return &slots[slot];
-                }
+                return nullptr;
             }
-            return nullptr;
+            const std::size_t slot = slot_by_id[id];
+            if (slot == invalid_slot || alive[slot] == 0)
+            {
+                return nullptr;
+            }
+            return &slots[slot];
         }
 
         void bump() { ++revision_; }
@@ -343,6 +379,9 @@ namespace scene
         std::vector<scene_object> slots;
         std::vector<std::uint8_t> alive;
         std::vector<std::size_t> free_slots;
+        std::vector<std::size_t> slot_by_id;    // id → slot（invalid_slot = 未占用）
+        std::vector<std::size_t> active_slots;  // 紧凑存活槽索引（注册序）
+        std::vector<draw_range> draw_ranges;    // 扁平 draws 列（scene_object.draw_begin/count 切片）
         object_id next_id     = 0;
         object_id selected_id = invalid_object_id;
         std::uint64_t revision_ = 0;

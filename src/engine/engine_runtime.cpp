@@ -598,7 +598,7 @@ nlohmann::json engine_runtime::current_scene_state() const
             {"name", object->name},
             {"visible", object->visible},
             {"read_only", object->read_only},
-            {"draw_count", object->draws.size()},
+            {"draw_count", object->draw_count},
             {"bounds",
              {{"min", {object->local_bounds.min.x, object->local_bounds.min.y, object->local_bounds.min.z}},
               {"max", {object->local_bounds.max.x, object->local_bounds.max.y, object->local_bounds.max.z}}}},

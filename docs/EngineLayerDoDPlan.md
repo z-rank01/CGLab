@@ -125,7 +125,7 @@ struct frame_channels {
 | 阶段 | best (µs) | median (µs) | 相对基线 |
 |------|-----------|-------------|---------|
 | D0 基线 | 11975 | 12711 | — |
-| D1 拆列后 | — | — | — |
+| D1 拆列后 | 11749 | 13397 | ≈持平（extract 仍走对象路径，提速在 D2） |
 | D2 列式重写后 | — | — | — |
 
 ## 阶段与提交记录
@@ -133,7 +133,8 @@ struct frame_channels {
 | 阶段 | 内容 | 提交 |
 |------|------|------|
 | 规划 | 本笔记 | — |
-| D0 | 契约 + 基线（✅ 2026-08-14：`ArchitectureContract.cmake` 增 DoD 检查，`scene_registry` `vector<bool>`→`uint8_t`，新增 `cglab.extract_benchmark`；41/41 绿，基线 11975/12711µs） | — |
+| D0 | 契约 + 基线（✅ 2026-08-14：`ArchitectureContract.cmake` 增 DoD 检查，`scene_registry` `vector<bool>`→`uint8_t`，新增 `cglab.extract_benchmark`；41/41 绿，基线 11975/12711µs） | `7e8e4844` |
+| D1 | scene_registry 索引化（✅ 2026-08-14：id→slot 直接寻址 O(1) 查找、active_slots 紧凑索引、draws 扁平列 + draw_begin/count 切片、scene_object 保留为冷路径记录；公共 API 不变；41/41 绿；基准 ≈持平） | — |
 | D1 | scene_registry 拆列 + id→slot | — |
 | D2 | extract 列式 + phase 做实 + 归并 | — |
 | D3 | context 收敛 | — |
