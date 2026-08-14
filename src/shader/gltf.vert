@@ -29,12 +29,16 @@ layout(set = 0, binding = 4, std430) readonly buffer TransformTable {
     TransformRow rows[];
 } transform_tables[];
 
+// 与 frag 的 ObjectPush 布局一致（前两字段本 stage 消费）
 layout(push_constant) uniform ObjectPush {
-    uint frame_uniform_slot;
+    uint light_uniform_slot;
     uint transform_buffer_slot;
+    uint frame_uniform_slot;
     uint material_buffer_slot;
     uint lights_buffer_slot;
-    uint light_count; // 与 frag 的 ObjectPush 布局一致（本 stage 未消费）
+    uint light_count;
+    uint shadow_map_slot;
+    uint shadow_sampler_slot;
 } object_push;
 
 void main() 

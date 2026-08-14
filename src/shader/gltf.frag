@@ -34,12 +34,25 @@ layout(set = 0, binding = 4, std430) readonly buffer LightTable {
     float light_intensities[];
 } light_tables[];
 
+// 平行光 UBO（std140；intensity=0 表示无平行光，跳过阴影采样）
+layout(set = 0, binding = 3) uniform LightUniform {
+    mat4 view_proj;
+    vec4 direction;
+    vec4 color;
+    float intensity;
+    float shadow_texel_size;
+    vec2 pad;
+} light_uniforms[];
+
 layout(push_constant) uniform ObjectPush {
-    uint frame_uniform_slot;
+    uint light_uniform_slot;
     uint transform_buffer_slot;
+    uint frame_uniform_slot;
     uint material_buffer_slot;
     uint lights_buffer_slot;
     uint light_count;
+    uint shadow_map_slot;
+    uint shadow_sampler_slot;
 } object_push;
 
 const float PI = 3.14159265359;
@@ -47,6 +60,29 @@ const float PI = 3.14159265359;
 vec2 material_uv(uint set_index)
 {
     return set_index == 1 ? texcoord1 : texcoord0;
+}
+
+// 3×3 手动 PCF 阴影（nearest sampler + 深度比较；slope-scaled bias 抗自阴影）
+float sample_shadow(vec3 world_pos, vec3 normal, vec3 light_dir, float texel)
+{
+    uint light_slot = nonuniformEXT(object_push.light_uniform_slot);
+    uint map_slot = nonuniformEXT(object_push.shadow_map_slot);
+    uint smp_slot = nonuniformEXT(object_push.shadow_sampler_slot);
+    vec4 light_proj = light_uniforms[light_slot].view_proj * vec4(world_pos, 1.0);
+    vec3 ndc = light_proj.xyz / light_proj.w;
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
+    float shadow_depth = ndc.z * 0.5 + 0.5;
+    float bias = max(0.001, 0.002 * (1.0 - max(dot(normal, light_dir), 0.0)));
+    float occluded = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x)
+        {
+            vec2 sample_uv = uv + vec2(x, y) * texel;
+            float reference = texture(sampler2D(sampled_images[map_slot], samplers[smp_slot]), sample_uv).r;
+            occluded += (shadow_depth - bias) > reference ? 1.0 : 0.0;
+        }
+    return 1.0 - occluded / 9.0;
 }
 
 void main()
@@ -74,23 +110,27 @@ void main()
     vec3 normal = base_normal;
     if (dot(tangent_raw, tangent_raw) > 1e-10 && dot(bitangent_raw, bitangent_raw) > 1e-10)
         normal = normalize(mat3(normalize(tangent_raw), normalize(bitangent_raw), base_normal) * tangent_normal);
-    vec3 light_direction = normalize(vec3(-0.4, -1.0, -0.3));
-    float light_intensity = 3.0;
-    if (object_push.light_count > 0)
+
+    // 平行光（主光）：方向/强度/颜色来自 light uniform；缺失时回退硬编码方向光。
+    uint light_slot = nonuniformEXT(object_push.light_uniform_slot);
+    vec3 sun_direction = normalize(-light_uniforms[light_slot].direction.xyz);
+    float sun_intensity = light_uniforms[light_slot].intensity;
+    vec3 sun_color = light_uniforms[light_slot].color.rgb;
+    if (sun_intensity <= 0.0)
     {
-        // 光源表第一盏灯（方向 = 灯 → 片元；强度来自通道）
-        uint light_slot = nonuniformEXT(object_push.lights_buffer_slot);
-        light_direction = normalize(light_tables[light_slot].light_positions[0].xyz - world_position);
-        light_intensity = light_tables[light_slot].light_intensities[0];
+        sun_direction = normalize(vec3(0.4, 1.0, 0.3));
+        sun_intensity = 3.0;
+        sun_color = vec3(1.0, 0.95, 0.9);
     }
+
     vec3 view_direction = normalize(-world_position);
-    vec3 half_vector = normalize(view_direction - light_direction);
+    vec3 half_vector = normalize(view_direction + sun_direction);
     uint mr_image = nonuniformEXT(material.image_slots.y);
     uint mr_sampler = nonuniformEXT(material.sampler_slots.y);
     vec4 mr_sample = texture(sampler2D(sampled_images[mr_image], samplers[mr_sampler]), material_uv(material.texcoords.y));
     float metallic = clamp(material.emissive_metallic.w * mr_sample.b, 0.0, 1.0);
     float roughness = clamp(material.roughness_alpha.x * mr_sample.g, 0.04, 1.0);
-    float ndotl = max(dot(normal, -light_direction), 0.0);
+    float ndotl = max(dot(normal, sun_direction), 0.0);
     float ndoth = max(dot(normal, half_vector), 0.0);
     vec3 f0 = mix(vec3(0.04), base_color.rgb, metallic);
     vec3 fresnel = f0 + (1.0 - f0) * pow(1.0 - max(dot(half_vector, view_direction), 0.0), 5.0);
@@ -108,6 +148,20 @@ void main()
                     texture(sampler2D(sampled_images[emissive_image], samplers[emissive_sampler]),
                             material_uv(material.emissive_texture.z)).rgb;
     vec3 ambient = base_color.rgb * 0.03 * occlusion;
-    vec3 color = ambient + (diffuse + specular) * ndotl * light_intensity + emissive;
+    // 阴影只调制平行光贡献（点光保持无阴影，避免双重遮挡）
+    float shadow = sample_shadow(world_position, normal, sun_direction,
+                                 light_uniforms[light_slot].shadow_texel_size);
+    vec3 sun_light = (diffuse + specular) * ndotl * sun_intensity * shadow;
+    vec3 point_light = vec3(0.0);
+    if (object_push.light_count > 0)
+    {
+        // 点光补充：方向 = 灯 → 片元；强度来自通道
+        uint point_slot = nonuniformEXT(object_push.lights_buffer_slot);
+        vec3 point_dir = normalize(light_tables[point_slot].light_positions[0].xyz - world_position);
+        float point_ndotl = max(dot(normal, point_dir), 0.0);
+        point_light = light_tables[point_slot].light_colors[0].rgb *
+                      light_tables[point_slot].light_intensities[0] * point_ndotl / PI;
+    }
+    vec3 color = ambient + sun_light * sun_color + point_light + emissive;
     out_color = vec4(color, base_color.a);
 }

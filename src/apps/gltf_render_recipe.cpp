@@ -1,5 +1,6 @@
 #include "apps/gltf_render_recipe.h"
 #include "apps/lights_table.h"
+#include "apps/sun_light.h"
 
 #include <algorithm>
 #include <array>
@@ -23,6 +24,8 @@ namespace apps
         constexpr uint32_t max_materials = 4096;
         // 光源表上传容量（SoA 三列连续布局：positions | colors | intensities）
         constexpr uint32_t max_lights = 64;
+        // 阴影图固定分辨率（独立于 swapchain；per-pass render_area 指定）
+        constexpr uint32_t shadow_map_size = 2048;
 
         struct frame_uniform { glm::mat4 model{1.0F}; glm::mat4 view{1.0F}; glm::mat4 projection{1.0F}; };
         struct transform_row { glm::mat4 model{1.0F}; glm::uvec4 metadata{}; };
@@ -37,13 +40,37 @@ namespace apps
             glm::uvec4 texcoords{};
             glm::uvec4 emissive_texture{};
         };
+        // 平行光 UBO（std140 布局，与 shader 的 LightUniform 块一致）：
+        // 光 view_proj 供 shadow pass 变换顶点与主 pass 采样阴影图。
+        struct light_uniform
+        {
+            glm::mat4 view_proj{1.0F};
+            glm::vec4 direction{0.0F};        // 光入射方向（光源 → 场景）
+            glm::vec4 color{1.0F};
+            float intensity = 0.0F;           // 0 = 无平行光（frag 跳过阴影采样）
+            float shadow_texel_size = 1.0F / static_cast<float>(shadow_map_size);
+            float pad0 = 0.0F;
+            float pad1 = 0.0F;
+        };
+        // 统一 push constant（32 字节 = 8 uint）。字段顺序即内存布局，shadow
+        // pass 推前 8 字节（light_uniform_slot + transform_buffer_slot），
+        // 主 pass 推全部；两个 shader 的 ObjectPush 块与之一一对应。
         struct push_constants
         {
-            uint32_t frame_uniform_slot = 0;
+            uint32_t light_uniform_slot = 0;
             uint32_t transform_buffer_slot = 0;
+            uint32_t frame_uniform_slot = 0;
             uint32_t material_buffer_slot = 0;
-            uint32_t lights_buffer_slot = 0; // 光源表所在 storage buffer 表 slot
-            uint32_t light_count = 0;        // 本帧光源数（0 = 无光源，shader 回退硬编码方向光）
+            uint32_t lights_buffer_slot = 0; // 点光源表所在 storage buffer 表 slot
+            uint32_t light_count = 0;        // 本帧点光源数（0 = 无点光）
+            uint32_t shadow_map_slot = 0;    // 阴影图在 sampled_images 表 slot
+            uint32_t shadow_sampler_slot = 0; // 阴影采样器在 samplers 表 slot
+        };
+        // shadow pass 的 push 切片（前 8 字节，vertex stage）
+        struct shadow_push
+        {
+            uint32_t light_uniform_slot = 0;
+            uint32_t transform_buffer_slot = 0;
         };
         struct draw_candidate
         {
@@ -59,12 +86,19 @@ namespace apps
             render_graph::device_buffer_handle indirect;
             render_graph::device_buffer_handle materials;
             render_graph::device_buffer_handle lights; // 光源表（positions | colors | intensities 三列连续）
+            render_graph::device_image_handle shadow_map;
+            render_graph::device_sampler_handle shadow_sampler;
             std::vector<render_graph::device_buffer_handle> frame_uniforms;
+            std::vector<render_graph::device_buffer_handle> light_uniforms;
             std::array<render_graph::device_pipeline_handle, 4> pipelines;
+            render_graph::device_pipeline_handle shadow_pipeline;
             uint32_t transform_slot = 0;
             uint32_t material_slot = 0;
             uint32_t lights_slot = 0;
+            uint32_t shadow_map_slot = 0;
+            uint32_t shadow_sampler_slot = 0;
             std::vector<uint32_t> frame_slots;
+            std::vector<uint32_t> light_uniform_slots;
             // geometry 列（CSR，与 scene_registry 同款模式）：扁平 draw 列 + 每 mesh
             // begin/count 切片 + 存活列；mesh handle 直接索引列槽（build_frame 热路径直读列）。
             std::vector<engine::draw_range> geometry_draws;
@@ -78,14 +112,15 @@ namespace apps
             // 加载帧的 staging 上传计数（build_frame 回填后清零）
             uint64_t staged_buffer_upload_count = 0;
             uint64_t staged_image_upload_count = 0;
-            std::array<render_graph::draw_indexed_indirect_row, 4> draws;
+            std::array<render_graph::draw_indexed_indirect_row, 5> draws;
             // 每帧分组 scratch（帧间复用，clear 后重建，稳态零分配）
             std::array<std::vector<draw_candidate>, 4> group_scratch;
             push_constants push;
-            std::array<render_graph::frame_resource_row, 5> frame_resources;
+            std::array<render_graph::frame_resource_row, 6> frame_resources;
             std::array<render_graph::frame_buffer_access_row, 3> frame_buffer_accesses;
-            std::array<render_graph::frame_attachment_row, 2> frame_attachments;
-            std::array<render_graph::frame_pass_row, 1> frame_passes;
+            std::array<render_graph::frame_image_access_row, 1> frame_image_accesses;
+            std::array<render_graph::frame_attachment_row, 3> frame_attachments;
+            std::array<render_graph::frame_pass_row, 2> frame_passes;
         };
 
         bool read_spirv(const std::filesystem::path& path, std::vector<uint32_t>& words)
@@ -146,12 +181,38 @@ namespace apps
                                     .memory = render_graph::memory_domain::upload,
                                     .mapping = render_graph::mapping_policy::persistent,
                                     .lifetime = render_graph::resource_lifetime_class::persistent}});
+            // 每帧 in-flight 一个平行光 UBO（阴影光 view_proj + 参数）
+            for (uint32_t frame = 0; frame < config.frames_in_flight; ++frame)
+                buffers.push_back({{.size = sizeof(light_uniform),
+                                    .usage = render_graph::buffer_usage::UNIFORM_BUFFER,
+                                    .memory = render_graph::memory_domain::upload,
+                                    .mapping = render_graph::mapping_policy::persistent,
+                                    .lifetime = render_graph::resource_lifetime_class::persistent}});
+            // 持久阴影图（DEPTH|SAMPLED）：shadow pass 作 depth 附件写，主 pass 采样读
+            std::vector<render_graph::image_create_row> images{
+                {{.fmt = render_graph::format::D32_SFLOAT,
+                  .extent = {shadow_map_size, shadow_map_size, 1},
+                  .usage = render_graph::image_usage::DEPTH_STENCIL_ATTACHMENT |
+                           render_graph::image_usage::SAMPLED,
+                  .memory = render_graph::memory_domain::device_local,
+                  .aliasing = render_graph::aliasing_policy::forbidden,
+                  .lifetime = render_graph::resource_lifetime_class::persistent}},
+            };
+            // 阴影采样器（nearest + clamp_to_edge，手动 PCF 用）
+            std::vector<render_graph::sampler_create_row> samplers{
+                {{.min_filter = render_graph::sampler_filter::nearest,
+                  .mag_filter = render_graph::sampler_filter::nearest,
+                  .address_u = render_graph::sampler_address_mode::clamp_to_edge,
+                  .address_v = render_graph::sampler_address_mode::clamp_to_edge}},
+            };
 
             std::vector<uint32_t> vertex_shader;
             std::vector<uint32_t> fragment_shader;
+            std::vector<uint32_t> shadow_vertex_shader;
             const auto shader_path = std::filesystem::path(config.working_directory) / "src" / "shader";
             if (!read_spirv(shader_path / "gltf.vert.spv", vertex_shader) ||
-                !read_spirv(shader_path / "gltf.frag.spv", fragment_shader))
+                !read_spirv(shader_path / "gltf.frag.spv", fragment_shader) ||
+                !read_spirv(shader_path / "gltf_shadow.vert.spv", shadow_vertex_shader))
                 return {.error = "Failed to read glTF Render Graph shaders"};
             std::vector<render_graph::graphics_pipeline_create_row> pipelines;
             for (uint32_t group = 0; group < 4; ++group)
@@ -180,7 +241,27 @@ namespace apps
                                             .size = sizeof(push_constants)}};
                 pipelines.push_back({std::move(pipeline)});
             }
+            // depth-only 阴影 pipeline：无 fragment shader、无 color format，
+            // front-face culling 防 peter-panning；推 shadow_push 切片（vertex stage）。
+            // 顶点属性只保留 location 0（position）——depth 输出不消费其余属性。
+            render_graph::graphics_pipeline_desc shadow_pipeline;
+            shadow_pipeline.shaders = {
+                {.stage = render_graph::shader_stage::vertex, .binary = shadow_vertex_shader},
+            };
+            shadow_pipeline.vertex_bindings = {{.binding = 0, .stride = sizeof(engine::vertex)}};
+            shadow_pipeline.vertex_attributes = {
+                {.location = 0, .binding = 0, .format = render_graph::vertex_format::float3, .offset = offsetof(engine::vertex, position)},
+            };
+            shadow_pipeline.cull = render_graph::cull_mode::front;
+            shadow_pipeline.depth_test = true;
+            shadow_pipeline.depth_write = true;
+            shadow_pipeline.depth_format = render_graph::format::D32_SFLOAT;
+            shadow_pipeline.push_constants = {{.stage_mask = render_graph::shader_stage_vertex_bit,
+                                               .size = sizeof(shadow_push)}};
+            pipelines.push_back({std::move(shadow_pipeline)});
             auto created = device.apply_resource_changes({.buffer_creates = buffers,
+                                                           .image_creates = images,
+                                                           .sampler_creates = samplers,
                                                            .graphics_pipeline_creates = pipelines});
             if (!created) return {.error = created.error};
             state.geometry = created.buffers[0];
@@ -188,8 +269,15 @@ namespace apps
             state.indirect = created.buffers[2];
             state.materials = created.buffers[3];
             state.lights = created.buffers[4];
-            state.frame_uniforms.assign(created.buffers.begin() + 5, created.buffers.end());
+            const std::size_t uniform_begin = 5;
+            state.frame_uniforms.assign(created.buffers.begin() + uniform_begin,
+                                        created.buffers.begin() + uniform_begin + config.frames_in_flight);
+            state.light_uniforms.assign(created.buffers.begin() + uniform_begin + config.frames_in_flight,
+                                        created.buffers.end());
+            state.shadow_map = created.images[0];
+            state.shadow_sampler = created.samplers[0];
             std::copy_n(created.graphics_pipelines.begin(), 4, state.pipelines.begin());
+            state.shadow_pipeline = created.graphics_pipelines[4];
 
             std::vector<render_graph::bindless_publish_row> publishes{
                 {.table = render_graph::bindless_table_kind::storage_buffers,
@@ -198,10 +286,15 @@ namespace apps
                  .buffer = state.materials, .size = sizeof(material_gpu_row) * max_materials},
                 {.table = render_graph::bindless_table_kind::storage_buffers,
                  .buffer = state.lights, .size = sizeof(glm::vec4) * max_lights * 2 + sizeof(float) * max_lights},
+                {.table = render_graph::bindless_table_kind::sampled_images, .image = state.shadow_map},
+                {.table = render_graph::bindless_table_kind::samplers, .sampler = state.shadow_sampler},
             };
             for (const auto buffer : state.frame_uniforms)
                 publishes.push_back({.table = render_graph::bindless_table_kind::uniform_buffers,
                                      .buffer = buffer, .size = sizeof(frame_uniform)});
+            for (const auto buffer : state.light_uniforms)
+                publishes.push_back({.table = render_graph::bindless_table_kind::uniform_buffers,
+                                     .buffer = buffer, .size = sizeof(light_uniform)});
             const render_graph::buffer_upload_row default_material{
                 state.materials, 0, std::as_bytes(std::span(state.material_rows))};
             auto bound = device.apply_resource_changes({.buffer_uploads = std::span(&default_material, 1),
@@ -210,7 +303,13 @@ namespace apps
             state.transform_slot = bound.bindless_slots[0];
             state.material_slot = bound.bindless_slots[1];
             state.lights_slot = bound.bindless_slots[2];
-            state.frame_slots.assign(bound.bindless_slots.begin() + 3, bound.bindless_slots.end());
+            state.shadow_map_slot = bound.bindless_slots[3];
+            state.shadow_sampler_slot = bound.bindless_slots[4];
+            const std::size_t frame_slot_begin = 5;
+            state.frame_slots.assign(bound.bindless_slots.begin() + frame_slot_begin,
+                                     bound.bindless_slots.begin() + frame_slot_begin + config.frames_in_flight);
+            state.light_uniform_slots.assign(bound.bindless_slots.begin() + frame_slot_begin + config.frames_in_flight,
+                                             bound.bindless_slots.end());
             return {.value = true};
         }
 
@@ -410,18 +509,11 @@ namespace apps
 
             state.transform_rows.clear();
             state.commands.clear();
-            uint64_t command_offset = 0;
+            // 每组命令在间接缓冲中的偏移（按组连续摆放，shadow 与主 pass 共享）
+            std::array<uint64_t, 4> group_offsets{};
             for (uint32_t group = 0; group < groups.size(); ++group)
             {
-                state.draws[group] = {
-                    .pipeline = state.pipelines[group],
-                    .vertex_buffer = state.geometry,
-                    .index_buffer = state.geometry,
-                    .indirect_buffer = state.indirect,
-                    .indirect_offset = command_offset,
-                    .draw_count = static_cast<uint32_t>(groups[group].size()),
-                    .stride = sizeof(render_graph::indexed_indirect_command),
-                };
+                group_offsets[group] = state.commands.size() * sizeof(render_graph::indexed_indirect_command);
                 for (const auto& candidate : groups[group])
                 {
                     const uint32_t draw_index = static_cast<uint32_t>(state.commands.size());
@@ -430,12 +522,33 @@ namespace apps
                     state.commands.push_back({candidate.range.index_count, 1, candidate.range.first_index,
                                               candidate.range.vertex_offset, draw_index});
                 }
-                command_offset = state.commands.size() * sizeof(render_graph::indexed_indirect_command);
             }
+            // shadow pass：只画不透明单面组（group 0，depth-only pipeline，front
+            // cull 防 peter-panning）。double-sided 材质不投影是常见简化。
+            state.draws[0] = {
+                .pipeline = state.shadow_pipeline,
+                .vertex_buffer = state.geometry,
+                .index_buffer = state.geometry,
+                .indirect_buffer = state.indirect,
+                .indirect_offset = group_offsets[0],
+                .draw_count = static_cast<uint32_t>(groups[0].size()),
+                .stride = sizeof(render_graph::indexed_indirect_command),
+            };
+            // 主 pass：四组（含透明，深度写入已按组关闭）
+            for (uint32_t group = 0; group < 4; ++group)
+                state.draws[group + 1] = {
+                    .pipeline = state.pipelines[group],
+                    .vertex_buffer = state.geometry,
+                    .index_buffer = state.geometry,
+                    .indirect_buffer = state.indirect,
+                    .indirect_offset = group_offsets[group],
+                    .draw_count = static_cast<uint32_t>(groups[group].size()),
+                    .stride = sizeof(render_graph::indexed_indirect_command),
+                };
             frame_uniform uniform{.view = camera_rows.front().view,
                                   .projection = camera_rows.front().projection};
             uniform.projection[1][1] *= -1.0F;
-            // 帧通道消费光源表（缺失 → 无光源，shader 回退硬编码方向光——编写者责任）。
+            // 帧通道消费点光源表（缺失 → 无点光，shader 只留平行光——编写者责任）。
             const apps::lights_table* lights = packet.channels->find_state<apps::lights_table>();
             const std::uint32_t light_count = (lights != nullptr && lights->count() <= max_lights)
                                                   ? static_cast<std::uint32_t>(lights->count())
@@ -455,7 +568,19 @@ namespace apps
                     gpu_intensities.push_back(lights->intensities[i]);
                 }
             }
-            std::array<render_graph::buffer_upload_row, 6> uploads{
+            // 帧通道消费平行光（缺失 → intensity=0，frag 跳过阴影采样——编写者责任）。
+            const apps::sun_light* sun = packet.channels->find_state<apps::sun_light>();
+            light_uniform light{};
+            if (sun != nullptr)
+            {
+                light.view_proj = sun->view_proj;
+                light.direction = glm::vec4(sun->direction, 0.0F);
+                light.color = glm::vec4(sun->color, 1.0F);
+                light.intensity = sun->intensity;
+            }
+            std::array<render_graph::buffer_upload_row, 7> uploads{
+                render_graph::buffer_upload_row{state.light_uniforms[environment.frame_index], 0,
+                                                std::as_bytes(std::span(&light, 1))},
                 render_graph::buffer_upload_row{state.frame_uniforms[environment.frame_index], 0,
                                                 std::as_bytes(std::span(&uniform, 1))},
                 render_graph::buffer_upload_row{state.transforms, 0,
@@ -469,7 +594,7 @@ namespace apps
                 render_graph::buffer_upload_row{state.lights, sizeof(glm::vec4) * max_lights * 2,
                                                 std::as_bytes(std::span(gpu_intensities))},
             };
-            const std::uint32_t upload_count = light_count > 0 ? 6U : 3U;
+            const std::uint32_t upload_count = light_count > 0 ? 7U : 4U;
             const auto updated = device.apply_resource_changes(
                 {.buffer_uploads = std::span(uploads.data(), upload_count)});
             if (!updated) return {.error = updated.error};
@@ -482,11 +607,14 @@ namespace apps
                 packet.counters->image_upload_count = std::exchange(state.staged_image_upload_count, 0);
             }
             state.push = {
-                .frame_uniform_slot = state.frame_slots[environment.frame_index],
+                .light_uniform_slot = state.light_uniform_slots[environment.frame_index],
                 .transform_buffer_slot = state.transform_slot,
+                .frame_uniform_slot = state.frame_slots[environment.frame_index],
                 .material_buffer_slot = state.material_slot,
                 .lights_buffer_slot = state.lights_slot,
                 .light_count = light_count,
+                .shadow_map_slot = state.shadow_map_slot,
+                .shadow_sampler_slot = state.shadow_sampler_slot,
             };
             plan.cache_key = 0x474c544650425200ull;
             state.frame_resources = {{
@@ -496,6 +624,8 @@ namespace apps
                  .name = "Transforms", .buffer = state.transforms},
                 {.source = render_graph::frame_resource_source::persistent_buffer,
                  .name = "Indirect", .buffer = state.indirect},
+                {.source = render_graph::frame_resource_source::persistent_image,
+                 .name = "ShadowMap", .image = state.shadow_map},
                 {.source = render_graph::frame_resource_source::swapchain_image, .name = "Swapchain"},
                 {.source = render_graph::frame_resource_source::transient_image, .name = "Depth",
                  .image_description = {.fmt = render_graph::format::D32_SFLOAT,
@@ -509,17 +639,32 @@ namespace apps
                 {{0}, render_graph::buffer_usage::INDEX_BUFFER, render_graph::access_type::read},
                 {{2}, render_graph::buffer_usage::INDIRECT_BUFFER, render_graph::access_type::read},
             }};
+            // 主 pass 以 shader 读方式采样阴影图（shadow pass 的 depth 写已在
+            // attachment 事件中表达；编译器自动推导 write → read barrier）。
+            // range.aspects=depth：D32 图的 barrier/视图必须用 DEPTH aspect。
+            state.frame_image_accesses = {{
+                {{3}, render_graph::image_usage::SAMPLED, render_graph::access_type::read,
+                 {.aspects = render_graph::image_aspect::depth}},
+            }};
             state.frame_attachments = {{
-                {.resource = {3}, .kind = render_graph::frame_attachment_kind::color,
+                {.resource = {3}, .kind = render_graph::frame_attachment_kind::depth_stencil,
+                 .store = render_graph::attachment_store_op::store,
+                 .clear = {.depth = 1.0F}},
+                {.resource = {4}, .kind = render_graph::frame_attachment_kind::color,
                  .clear = {.color = {0.03F, 0.04F, 0.08F, 1.0F}}},
-                {.resource = {4}, .kind = render_graph::frame_attachment_kind::depth_stencil,
+                {.resource = {5}, .kind = render_graph::frame_attachment_kind::depth_stencil,
                  .store = render_graph::attachment_store_op::dont_care,
                  .clear = {.depth = 1.0F}},
             }};
             state.frame_passes = {{
+                {.name = "ShadowPass", .kind = render_graph::pass_kind::raster,
+                 .attachments = {0, 1}, .indexed_indirect_draws = {0, 1},
+                 .push_constant_size = sizeof(shadow_push),
+                 .push_constant_stage_mask = render_graph::shader_stage_vertex_bit,
+                 .area = {.width = shadow_map_size, .height = shadow_map_size}},
                 {.name = "GltfSponzaPass", .kind = render_graph::pass_kind::raster,
-                 .buffer_accesses = {0, 3}, .attachments = {0, 2},
-                 .indexed_indirect_draws = {0, 4},
+                 .buffer_accesses = {0, 3}, .image_accesses = {0, 1},
+                 .attachments = {1, 2}, .indexed_indirect_draws = {1, 4},
                  .push_constant_size = sizeof(state.push),
                  .push_constant_stage_mask = render_graph::shader_stage_vertex_bit |
                                               render_graph::shader_stage_fragment_bit},
@@ -527,6 +672,7 @@ namespace apps
             plan.resources = state.frame_resources;
             plan.passes = state.frame_passes;
             plan.buffer_accesses = state.frame_buffer_accesses;
+            plan.image_accesses = state.frame_image_accesses;
             plan.attachments = state.frame_attachments;
             plan.push_constants = std::as_bytes(std::span(&state.push, 1));
             plan.indexed_indirect_draws = state.draws;
