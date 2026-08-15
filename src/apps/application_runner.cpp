@@ -51,7 +51,16 @@ namespace apps
                     statistics.pipeline_creations != request.expected_pipeline_creations ||
                     statistics.indirect_groups != *request.frame_limit * request.expected_indirect_groups_per_frame)
                 {
-                    Logger::LogError("GPU smoke counters did not match the requested frame contract");
+                    Logger::LogError("GPU smoke counters did not match the requested frame contract: "
+                                     "uploads=" + std::to_string(statistics.upload_pass_executions) +
+                                     " draw_passes=" + std::to_string(statistics.draw_pass_executions) +
+                                     " presented=" + std::to_string(statistics.presented_frames) +
+                                     " steady_desc_updates=" + std::to_string(statistics.steady_frame_descriptor_updates) +
+                                     " pipelines=" + std::to_string(statistics.pipeline_creations) +
+                                     " indirect_groups=" + std::to_string(statistics.indirect_groups) +
+                                     " (expected " + std::to_string(request.expected_draw_passes_per_frame) +
+                                     "/" + std::to_string(request.expected_pipeline_creations) +
+                                     "/" + std::to_string(request.expected_indirect_groups_per_frame) + " per frame)");
                     return EXIT_FAILURE;
                 }
             }

@@ -64,5 +64,33 @@ int main()
         const auto result = apps::parse_application_options(arguments);
         CHECK(result.status == apps::application_options_status::help);
     }
+    {
+        const std::array arguments{std::string_view{"--debug-view"}, std::string_view{"shadow"}};
+        const auto result = apps::parse_application_options(arguments);
+        CHECK(result.succeeded());
+        CHECK(result.options.debug_view == apps::debug_view_mode::shadow);
+    }
+    {
+        const std::array arguments{std::string_view{"--debug-view"}, std::string_view{"depth"}};
+        const auto result = apps::parse_application_options(arguments);
+        CHECK(result.succeeded());
+        CHECK(result.options.debug_view == apps::debug_view_mode::depth);
+    }
+    {
+        const std::array arguments{std::string_view{"--debug-view"}, std::string_view{"off"}};
+        const auto result = apps::parse_application_options(arguments);
+        CHECK(result.succeeded());
+        CHECK(result.options.debug_view == apps::debug_view_mode::off);
+    }
+    {
+        const std::array arguments{std::string_view{"--debug-view"}, std::string_view{"bogus"}};
+        const auto result = apps::parse_application_options(arguments);
+        CHECK(result.status == apps::application_options_status::error);
+    }
+    {
+        const std::array arguments{std::string_view{"--debug-view"}};
+        const auto result = apps::parse_application_options(arguments);
+        CHECK(result.status == apps::application_options_status::error);
+    }
     return EXIT_SUCCESS;
 }

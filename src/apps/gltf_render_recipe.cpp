@@ -1,10 +1,12 @@
 #include "apps/gltf_render_recipe.h"
+#include "apps/debug_view.h"
 #include "apps/lights_table.h"
 #include "apps/sun_light.h"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <span>
@@ -72,6 +74,16 @@ namespace apps
             uint32_t light_uniform_slot = 0;
             uint32_t transform_buffer_slot = 0;
         };
+        // 调试视图 push（R4/M3）：放在统一 push blob 的 32 字节偏移之后，
+        // 与主 pass 的 push 切片互不重叠（不同管线各读各的切片）。
+        struct debug_push
+        {
+            uint32_t image_slot = 0;
+            uint32_t sampler_slot = 0;
+            uint32_t mode = 0; // 0=原始深度 1=线性化热力图（debug_view_mode 语义）
+            float near_plane = 0.1F;
+            float far_plane = 240.0F;
+        };
         struct draw_candidate
         {
             glm::mat4 model{1.0F};
@@ -92,6 +104,9 @@ namespace apps
             render_graph::device_buffer_handle lights; // 光源表（positions | colors | intensities 三列连续）
             render_graph::device_image_handle shadow_map;
             render_graph::device_sampler_handle shadow_sampler;
+            // 调试视图（R4/M3）：NDC quad 几何 + 专用管线（采样阴影图到角落 inset）
+            render_graph::device_buffer_handle debug_quad;
+            render_graph::device_pipeline_handle debug_pipeline;
             std::vector<render_graph::device_buffer_handle> frame_uniforms;
             std::vector<render_graph::device_buffer_handle> light_uniforms;
             std::array<render_graph::device_pipeline_handle, 4> pipelines;
@@ -123,11 +138,11 @@ namespace apps
             // 每帧分组 scratch（帧间复用，clear 后重建，稳态零分配）
             std::array<std::vector<draw_candidate>, 4> group_scratch;
             push_constants push;
-            std::array<render_graph::frame_resource_row, 6> frame_resources;
-            std::array<render_graph::frame_buffer_access_row, 3> frame_buffer_accesses;
-            std::array<render_graph::frame_image_access_row, 1> frame_image_accesses;
-            std::array<render_graph::frame_attachment_row, 3> frame_attachments;
-            std::array<render_graph::frame_pass_row, 2> frame_passes;
+            std::array<render_graph::frame_resource_row, 7> frame_resources;
+            std::array<render_graph::frame_buffer_access_row, 4> frame_buffer_accesses;
+            std::array<render_graph::frame_image_access_row, 2> frame_image_accesses;
+            std::array<render_graph::frame_attachment_row, 4> frame_attachments;
+            std::array<render_graph::frame_pass_row, 3> frame_passes;
         };
 
         bool read_spirv(const std::filesystem::path& path, std::vector<uint32_t>& words)
@@ -160,6 +175,25 @@ namespace apps
                      .lifetime = render_graph::resource_lifetime_class::persistent}};
         }
 
+        // 调试视图 NDC quad（R4/M3）：6 顶点两三角，位置即 NDC（-1..1），
+        // uv 由顶点着色器从位置推导（含 Y 翻转），其余属性不消费。
+        std::array<engine::vertex, 6> debug_quad_vertices()
+        {
+            const glm::vec4 color{1.0F};
+            const glm::vec3 normal{0.0F, 0.0F, 1.0F};
+            const glm::vec4 tangent{1.0F, 0.0F, 0.0F, 1.0F};
+            const glm::vec2 uv0{};
+            const glm::vec2 uv1{};
+            return {{
+                {{-1.0F, -1.0F, 0.0F}, color, normal, tangent, uv0, uv1},
+                {{ 1.0F, -1.0F, 0.0F}, color, normal, tangent, uv0, uv1},
+                {{ 1.0F,  1.0F, 0.0F}, color, normal, tangent, uv0, uv1},
+                {{-1.0F, -1.0F, 0.0F}, color, normal, tangent, uv0, uv1},
+                {{ 1.0F,  1.0F, 0.0F}, color, normal, tangent, uv0, uv1},
+                {{-1.0F,  1.0F, 0.0F}, color, normal, tangent, uv0, uv1},
+            }};
+        }
+
         engine::result<bool> initialize(void* value,
                                         render_graph::render_device& device,
                                         const engine::backend_config& config)
@@ -187,6 +221,13 @@ namespace apps
                   .usage = render_graph::buffer_usage::STORAGE_BUFFER,
                   .memory = render_graph::memory_domain::upload,
                   .mapping = render_graph::mapping_policy::persistent,
+                  .lifetime = render_graph::resource_lifetime_class::persistent}},
+                // 调试视图 quad 几何（NDC 两三角，R4/M3）
+                {{.size = sizeof(engine::vertex) * 6,
+                  .usage = render_graph::buffer_usage::TRANSFER_DST | render_graph::buffer_usage::VERTEX_BUFFER |
+                           render_graph::buffer_usage::INDEX_BUFFER,
+                  .memory = render_graph::memory_domain::device_local,
+                  .aliasing = render_graph::aliasing_policy::forbidden,
                   .lifetime = render_graph::resource_lifetime_class::persistent}},
             };
             for (uint32_t frame = 0; frame < config.frames_in_flight; ++frame)
@@ -223,10 +264,14 @@ namespace apps
             std::vector<uint32_t> vertex_shader;
             std::vector<uint32_t> fragment_shader;
             std::vector<uint32_t> shadow_vertex_shader;
+            std::vector<uint32_t> debug_vertex_shader;
+            std::vector<uint32_t> debug_fragment_shader;
             const auto shader_path = std::filesystem::path(config.working_directory) / "src" / "shader";
             if (!read_spirv(shader_path / "gltf.vert.spv", vertex_shader) ||
                 !read_spirv(shader_path / "gltf.frag.spv", fragment_shader) ||
-                !read_spirv(shader_path / "gltf_shadow.vert.spv", shadow_vertex_shader))
+                !read_spirv(shader_path / "gltf_shadow.vert.spv", shadow_vertex_shader) ||
+                !read_spirv(shader_path / "debug_view.vert.spv", debug_vertex_shader) ||
+                !read_spirv(shader_path / "debug_view.frag.spv", debug_fragment_shader))
                 return {.error = "Failed to read glTF Render Graph shaders"};
             std::vector<render_graph::graphics_pipeline_create_row> pipelines;
             for (uint32_t group = 0; group < 4; ++group)
@@ -273,6 +318,24 @@ namespace apps
             shadow_pipeline.push_constants = {{.stage_mask = render_graph::shader_stage_vertex_bit,
                                                .size = sizeof(shadow_push)}};
             pipelines.push_back({std::move(shadow_pipeline)});
+            // 调试视图管线（R4/M3）：采样中间 RT 画到角落 inset；无深度测试/写入，
+            // 无 cull（NDC quad），push 只走 fragment stage。
+            render_graph::graphics_pipeline_desc debug_pipeline;
+            debug_pipeline.shaders = {
+                {.stage = render_graph::shader_stage::vertex, .binary = debug_vertex_shader},
+                {.stage = render_graph::shader_stage::fragment, .binary = debug_fragment_shader},
+            };
+            debug_pipeline.vertex_bindings = {{.binding = 0, .stride = sizeof(engine::vertex)}};
+            debug_pipeline.vertex_attributes = {
+                {.location = 0, .binding = 0, .format = render_graph::vertex_format::float3, .offset = offsetof(engine::vertex, position)},
+            };
+            debug_pipeline.cull = render_graph::cull_mode::none;
+            debug_pipeline.depth_test = false;
+            debug_pipeline.depth_write = false;
+            debug_pipeline.color_formats = {render_graph::format::UNDEFINED};
+            debug_pipeline.push_constants = {{.stage_mask = render_graph::shader_stage_fragment_bit,
+                                              .size = sizeof(debug_push)}};
+            pipelines.push_back({std::move(debug_pipeline)});
             auto created = device.apply_resource_changes({.buffer_creates = buffers,
                                                            .image_creates = images,
                                                            .sampler_creates = samplers,
@@ -283,7 +346,8 @@ namespace apps
             state.indirect = created.buffers[2];
             state.materials = created.buffers[3];
             state.lights = created.buffers[4];
-            const std::size_t uniform_begin = 5;
+            state.debug_quad = created.buffers[5];
+            const std::size_t uniform_begin = 6;
             state.frame_uniforms.assign(created.buffers.begin() + uniform_begin,
                                         created.buffers.begin() + uniform_begin + config.frames_in_flight);
             state.light_uniforms.assign(created.buffers.begin() + uniform_begin + config.frames_in_flight,
@@ -292,6 +356,7 @@ namespace apps
             state.shadow_sampler = created.samplers[0];
             std::copy_n(created.graphics_pipelines.begin(), 4, state.pipelines.begin());
             state.shadow_pipeline = created.graphics_pipelines[4];
+            state.debug_pipeline = created.graphics_pipelines[5];
 
             std::vector<render_graph::bindless_publish_row> publishes{
                 {.table = render_graph::bindless_table_kind::storage_buffers,
@@ -311,7 +376,12 @@ namespace apps
                                      .buffer = buffer, .size = sizeof(light_uniform)});
             const render_graph::buffer_upload_row default_material{
                 state.materials, 0, std::as_bytes(std::span(state.material_rows))};
-            auto bound = device.apply_resource_changes({.buffer_uploads = std::span(&default_material, 1),
+            // 调试视图 quad 几何（一次性上传）
+            const auto quad_vertices = debug_quad_vertices();
+            const render_graph::buffer_upload_row debug_quad_upload{
+                state.debug_quad, 0, std::as_bytes(std::span(quad_vertices))};
+            std::vector<render_graph::buffer_upload_row> initial_uploads{default_material, debug_quad_upload};
+            auto bound = device.apply_resource_changes({.buffer_uploads = initial_uploads,
                                                          .bindless_publishes = publishes});
             if (!bound) return {.error = bound.error};
             state.transform_slot = bound.bindless_slots[0];
@@ -505,6 +575,10 @@ namespace apps
             const auto instance_rows = packet.channels->find_rows<engine::instance_row>();
             const auto transform_rows = packet.channels->find_rows<glm::mat4>();
             if (camera_rows.empty()) return {.error = "glTF frame has no camera"};
+            // 调试视图请求（R4/M3）：缺失 = off；mode 决定 debug pass 是否存在，
+            // 折叠进 cache key（切换模式触发重编译）。
+            const apps::debug_view_request* debug = packet.channels->find_state<apps::debug_view_request>();
+            const uint32_t debug_mode = debug != nullptr && debug->mode <= 2U ? debug->mode : 0U;
             // 分组 scratch 帧间复用（clear 后重建，稳态零分配）
             std::array<std::vector<draw_candidate>, 4>& groups = state.group_scratch;
             for (auto& group : groups)
@@ -576,6 +650,16 @@ namespace apps
                     ++segments.back().draw_count;
                 }
             }
+            // 调试视图 quad 命令（追加在组命令之后；debug shader 不读 transform 表，
+            // draw_index 指向一个占位 transform 行保持索引语义一致）。
+            uint64_t debug_indirect_offset = 0;
+            if (debug_mode != 0U)
+            {
+                const uint32_t draw_index = static_cast<uint32_t>(state.transform_rows.size());
+                state.transform_rows.push_back({.model = glm::mat4{1.0F}, .metadata = {0, 0, 0, 0}});
+                debug_indirect_offset = state.commands.size() * sizeof(render_graph::indexed_indirect_command);
+                state.commands.push_back({6, 1, 0, 0, draw_index});
+            }
             // shadow pass：group 0 的各 arena 段（不透明单面组，depth-only pipeline，
             // front cull 防 peter-panning；double-sided 材质不投影是常见简化）。
             state.draws.clear();
@@ -602,6 +686,18 @@ namespace apps
                         .draw_count = segment.draw_count,
                         .stride = sizeof(render_graph::indexed_indirect_command),
                     });
+            const std::uint32_t main_draw_end = static_cast<std::uint32_t>(state.draws.size());
+            // 调试视图 draw（R4/M3）：NDC quad 画进角落 inset（load=load 保留主输出）
+            if (debug_mode != 0U)
+                state.draws.push_back({
+                    .pipeline = state.debug_pipeline,
+                    .vertex_buffer = state.debug_quad,
+                    .index_buffer = state.debug_quad,
+                    .indirect_buffer = state.indirect,
+                    .indirect_offset = debug_indirect_offset,
+                    .draw_count = 1,
+                    .stride = sizeof(render_graph::indexed_indirect_command),
+                });
             frame_uniform uniform{.view = camera_rows.front().view,
                                   .projection = camera_rows.front().projection};
             uniform.projection[1][1] *= -1.0F;
@@ -673,7 +769,21 @@ namespace apps
                 .shadow_map_slot = state.shadow_map_slot,
                 .shadow_sampler_slot = state.shadow_sampler_slot,
             };
-            plan.cache_key = 0x474c544650425200ull;
+            // 统一 push blob：主 push 在 [0, 32)，调试 push 在 [32, 52)——不同
+            // 管线各按自己的切片读取（主 pass 32 字节、shadow 前 8 字节、debug 20 字节）。
+            std::array<std::byte, sizeof(push_constants) + sizeof(debug_push)> push_blob{};
+            std::memcpy(push_blob.data(), &state.push, sizeof(state.push));
+            const debug_push debug_state{
+                .image_slot = state.shadow_map_slot,
+                .sampler_slot = state.shadow_sampler_slot,
+                .mode = debug_mode,
+                .near_plane = sun != nullptr ? sun->ortho_near : 0.1F,
+                .far_plane = sun != nullptr ? sun->ortho_far : 240.0F,
+            };
+            std::memcpy(push_blob.data() + sizeof(state.push), &debug_state, sizeof(debug_state));
+            // debug pass 会改变图结构（pass/附件/访问行），mode 折叠进 cache key 保证
+            // 切换模式时触发重编译；同模式帧间 key 稳定，plan cache 照常命中。
+            plan.cache_key = 0x474c544650425200ull ^ (static_cast<uint64_t>(debug_mode) << 32);
             state.frame_resources = {{
                 // Geometry 行声明 arena 0（首个 arena）；后续 arena 经 draw 行句柄
                 // 直接引用（持久 device-local 顶点/索引缓冲无 barrier 需求）。
@@ -692,16 +802,23 @@ namespace apps
                                        .usage = render_graph::image_usage::DEPTH_STENCIL_ATTACHMENT,
                                        .memory = render_graph::memory_domain::device_local,
                                        .lifetime = render_graph::resource_lifetime_class::transient}},
+                // 调试视图 quad 几何（仅 debug pass 引用）
+                {.source = render_graph::frame_resource_source::persistent_buffer,
+                 .name = "DebugQuad", .buffer = state.debug_quad},
             }};
             state.frame_buffer_accesses = {{
                 {{0}, render_graph::buffer_usage::VERTEX_BUFFER, render_graph::access_type::read},
                 {{0}, render_graph::buffer_usage::INDEX_BUFFER, render_graph::access_type::read},
                 {{2}, render_graph::buffer_usage::INDIRECT_BUFFER, render_graph::access_type::read},
+                {{6}, render_graph::buffer_usage::VERTEX_BUFFER | render_graph::buffer_usage::INDEX_BUFFER,
+                 render_graph::access_type::read},
             }};
             // 主 pass 以 shader 读方式采样阴影图（shadow pass 的 depth 写已在
             // attachment 事件中表达；编译器自动推导 write → read barrier）。
             // range.aspects=depth：D32 图的 barrier/视图必须用 DEPTH aspect。
             state.frame_image_accesses = {{
+                {{3}, render_graph::image_usage::SAMPLED, render_graph::access_type::read,
+                 {.aspects = render_graph::image_aspect::depth}},
                 {{3}, render_graph::image_usage::SAMPLED, render_graph::access_type::read,
                  {.aspects = render_graph::image_aspect::depth}},
             }};
@@ -714,6 +831,10 @@ namespace apps
                 {.resource = {5}, .kind = render_graph::frame_attachment_kind::depth_stencil,
                  .store = render_graph::attachment_store_op::dont_care,
                  .clear = {.depth = 1.0F}},
+                // 调试视图：复用 swapchain 颜色附件，load=load 保留主 pass 输出
+                {.resource = {4}, .kind = render_graph::frame_attachment_kind::color,
+                 .load = render_graph::attachment_load_op::load,
+                 .store = render_graph::attachment_store_op::store},
             }};
             state.frame_passes = {{
                 {.name = "ShadowPass", .kind = render_graph::pass_kind::raster,
@@ -725,17 +846,29 @@ namespace apps
                  .buffer_accesses = {0, 3}, .image_accesses = {0, 1},
                  .attachments = {1, 2},
                  .indexed_indirect_draws = {main_draw_begin,
-                                            static_cast<std::uint32_t>(state.draws.size() - main_draw_begin)},
+                                            static_cast<std::uint32_t>(main_draw_end - main_draw_begin)},
                  .push_constant_size = sizeof(state.push),
                  .push_constant_stage_mask = render_graph::shader_stage_vertex_bit |
                                               render_graph::shader_stage_fragment_bit},
+                {.name = "DebugViewPass", .kind = render_graph::pass_kind::raster,
+                 .buffer_accesses = {3, 1}, .image_accesses = {1, 1},
+                 .attachments = {3, 1},
+                 .indexed_indirect_draws = {main_draw_end,
+                                            static_cast<std::uint32_t>(state.draws.size() - main_draw_end)},
+                 .push_constant_offset = static_cast<uint32_t>(sizeof(state.push)),
+                 .push_constant_size = sizeof(debug_push),
+                 .push_constant_stage_mask = render_graph::shader_stage_fragment_bit,
+                 .area = {.x = 16, .y = 16, .width = 320, .height = 180}},
             }};
             plan.resources = state.frame_resources;
-            plan.passes = state.frame_passes;
+            // debug off 时只发布前两个 pass（DebugViewPass 行仍有效但被切片排除，
+            // 保证默认路径与旧契约一致：每帧恰好 2 个 raster pass）。
+            const std::size_t pass_count = debug_mode != 0U ? state.frame_passes.size() : 2U;
+            plan.passes = std::span(state.frame_passes).first(pass_count);
             plan.buffer_accesses = state.frame_buffer_accesses;
             plan.image_accesses = state.frame_image_accesses;
             plan.attachments = state.frame_attachments;
-            plan.push_constants = std::as_bytes(std::span(&state.push, 1));
+            plan.push_constants = push_blob;
             plan.indexed_indirect_draws = state.draws;
             return {};
         }

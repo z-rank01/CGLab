@@ -20,5 +20,8 @@ namespace apps
         float pad = 0.0F;
         glm::mat4 view_proj{1.0F};
         glm::vec4 ortho_box{0.0F}; // x=left, y=right, z=bottom, w=top
+        // 光正交视锥近/远平面（调试视图线性化深度用，R4/M3）
+        float ortho_near = 0.1F;
+        float ortho_far = 240.0F;
     };
 } // namespace apps

@@ -38,6 +38,7 @@ add_executable(GltfSponzaSample
     gltf_sponza_sample.cpp
     gltf_render_recipe.cpp
     gltf_render_recipe.h
+    debug_view.h
     lights_table.h
 )
 
@@ -46,6 +47,7 @@ add_executable(CullingSample
     culling_sample.cpp
     gltf_render_recipe.cpp
     gltf_render_recipe.h
+    debug_view.h
     lights_table.h
 )
 
@@ -54,6 +56,7 @@ add_executable(ShadowSample
     shadow_sample.cpp
     gltf_render_recipe.cpp
     gltf_render_recipe.h
+    debug_view.h
     lights_table.h
     sun_light.h
 )

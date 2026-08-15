@@ -3,6 +3,7 @@
 
 #include "apps/application_options.h"
 #include "apps/application_runner.h"
+#include "apps/debug_view.h"
 #include "apps/gltf_render_recipe.h"
 #include "apps/lights_table.h"
 #include "apps/sun_light.h"
@@ -56,6 +57,17 @@ int main(int argc, char** argv)
                     },
             };
             const auto frames = options.smoke_test ? std::optional<std::uint64_t>(options.frame_limit.value_or(3)) : options.frame_limit;
+            // 调试视图（R4/M3）：--debug-view 开启时经帧通道发布请求（owned 发布），
+            // recipe 追加 debug pass——引擎零改动；契约计数随 debug pass 增加。
+            // 注意：debug 管线在 recipe initialize 无条件创建（pass 才是条件性的），
+            // 故 pipeline 计数恒为 6；indirect groups / raster pass 计数随 debug pass
+            // 增加。MSVC 的 designated initializer 内不能直接放三元表达式（解析 bug），
+            // 期望计数先算成局部常量。
+            const auto debug_mode = options.debug_view;
+            const bool debug_on = debug_mode != apps::debug_view_mode::off;
+            const std::uint64_t expected_pipeline_creations = 6;
+            const std::uint64_t expected_indirect_groups = debug_on ? 3 : 2;
+            const std::uint64_t expected_draw_passes = debug_on ? 3 : 2;
             // 插件侧发布光源表（每帧两盏灯：暖色主光 + 冷色补光）与平行光：
             // sample 经 services.channels 发布组件表通道，gltf recipe 在 build_frame 经 find_state 消费。
             // 发布用 owned 变体（F4）：每帧新造对象并把所有权移交通道，帧尾统一释放，
@@ -63,8 +75,14 @@ int main(int argc, char** argv)
             engine::sample sample{
                 .name = "GltfSponzaSample",
                 .required_startup_asset = asset_path.string(),
-                .update = [](engine::runtime_services& services, float)
+                .update = [debug_mode](engine::runtime_services& services, float)
                 {
+                    if (debug_mode != apps::debug_view_mode::off)
+                    {
+                        auto debug = std::make_unique<apps::debug_view_request>();
+                        debug->mode = static_cast<std::uint32_t>(debug_mode);
+                        services.channels.publish_state_owned<apps::debug_view_request>(std::move(debug));
+                    }
                     auto lights = std::make_unique<apps::lights_table>();
                     lights->positions = {{-1.0F, 3.0F, 2.0F}, {2.0F, 2.0F, -1.0F}};
                     lights->colors = {{1.0F, 0.9F, 0.8F}, {0.4F, 0.6F, 1.0F}};
@@ -89,6 +107,8 @@ int main(int argc, char** argv)
                     light_proj[1][1] *= -1.0F;
                     sun->view_proj = light_proj * light_view;
                     sun->ortho_box = {-extent, extent, -extent, extent};
+                    sun->ortho_near = 0.1F;
+                    sun->ortho_far = depth_range * 2.0F;
                     services.channels.publish_state_owned<apps::sun_light>(std::move(sun));
                 },
             };
@@ -99,6 +119,9 @@ int main(int argc, char** argv)
                                                       .frame_limit = frames,
                                                       .require_validation_clean = options.validation,
                                                       .enforce_smoke_contract   = options.smoke_test,
+                                                      .expected_pipeline_creations = expected_pipeline_creations,
+                                                      .expected_indirect_groups_per_frame = expected_indirect_groups,
+                                                      .expected_draw_passes_per_frame = expected_draw_passes,
                                                       .culling_enabled          = options.culling,
                                                   }};
         },
