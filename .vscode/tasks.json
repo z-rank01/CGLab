@@ -2,17 +2,6 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "[CGLab] Setup workspace",
-      "type": "process",
-      "command": "${workspaceFolder}/scripts/cglab.sh",
-      "windows": {
-        "command": "${workspaceFolder}/scripts/cglab.cmd"
-      },
-      "args": ["setup", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "problemMatcher": []
-    },
-    {
       "label": "[CGLab] Diagnose environment",
       "type": "process",
       "command": "${workspaceFolder}/scripts/cglab.sh",
@@ -20,17 +9,6 @@
         "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
       "args": ["doctor"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "problemMatcher": []
-    },
-    {
-      "label": "[CGLab] Configure",
-      "type": "process",
-      "command": "${workspaceFolder}/scripts/cglab.sh",
-      "windows": {
-        "command": "${workspaceFolder}/scripts/cglab.cmd"
-      },
-      "args": ["configure", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--tests", "${input:buildTests}"],
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },
@@ -46,95 +24,13 @@
       "problemMatcher": []
     },
     {
-      "label": "[CGLab] Configure fresh",
+      "label": "[CGLab] Install vcpkg dependencies",
       "type": "process",
       "command": "${workspaceFolder}/scripts/cglab.sh",
       "windows": {
         "command": "${workspaceFolder}/scripts/cglab.cmd"
       },
-      "args": ["configure", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--tests", "${input:buildTests}", "--fresh"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "problemMatcher": []
-    },
-    {
-      "label": "[CGLab] Build selected target",
-      "type": "process",
-      "command": "${workspaceFolder}/scripts/cglab.sh",
-      "windows": {
-        "command": "${workspaceFolder}/scripts/cglab.cmd"
-      },
-      "args": ["build", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "${input:buildTarget}", "--jobs", "${input:buildJobs}", "--tests", "${input:buildTests}"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "group": { "kind": "build", "isDefault": true },
-      "problemMatcher": []
-    },
-    {
-      "label": "[CGLab] Build arbitrary target",
-      "type": "process",
-      "command": "${workspaceFolder}/scripts/cglab.sh",
-      "windows": {
-        "command": "${workspaceFolder}/scripts/cglab.cmd"
-      },
-      "args": ["build", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "${input:arbitraryTarget}", "--jobs", "${input:buildJobs}", "--tests", "${input:buildTests}"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "group": "build",
-      "problemMatcher": []
-    },
-    {
-      "label": "[CGLab] Test all",
-      "type": "process",
-      "command": "${workspaceFolder}/scripts/cglab.sh",
-      "windows": {
-        "command": "${workspaceFolder}/scripts/cglab.cmd"
-      },
-      "args": ["test", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--jobs", "${input:buildJobs}"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "group": "test",
-      "problemMatcher": []
-    },
-    {
-      "label": "[CGLab] Smoke: Triangle",
-      "type": "process",
-      "command": "${workspaceFolder}/scripts/cglab.sh",
-      "windows": {
-        "command": "${workspaceFolder}/scripts/cglab.cmd"
-      },
-      "args": ["smoke", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "TriangleSample", "--frames", "${input:smokeFrames}", "--jobs", "${input:buildJobs}"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "group": "test",
-      "problemMatcher": []
-    },
-    {
-      "label": "[CGLab] Smoke: glTF",
-      "type": "process",
-      "command": "${workspaceFolder}/scripts/cglab.sh",
-      "windows": {
-        "command": "${workspaceFolder}/scripts/cglab.cmd"
-      },
-      "args": ["smoke", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--target", "GltfSponzaSample", "--asset", "${input:smokeAsset}", "--frames", "${input:smokeFrames}", "--jobs", "${input:buildJobs}"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "group": "test",
-      "problemMatcher": []
-    },
-    {
-      "label": "[CGLab] Clean current preset",
-      "type": "process",
-      "command": "${workspaceFolder}/scripts/cglab.sh",
-      "windows": {
-        "command": "${workspaceFolder}/scripts/cglab.cmd"
-      },
-      "args": ["clean", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--jobs", "${input:buildJobs}"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "problemMatcher": []
-    },
-    {
-      "label": "[CGLab] Advanced: install dependencies",
-      "type": "process",
-      "command": "${workspaceFolder}/scripts/cglab.sh",
-      "windows": {
-        "command": "${workspaceFolder}/scripts/cglab.cmd"
-      },
-      "args": ["deps", "--preset", "${input:toolchainPreset}", "--config", "${input:buildType}", "--triplet", "${input:vcpkgTriplet}"],
+      "args": ["deps", "--preset", "${input:toolchainPreset}", "--triplet", "${input:vcpkgTriplet}"],
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     }
@@ -143,68 +39,9 @@
     {
       "id": "toolchainPreset",
       "type": "pickString",
-      "description": "选择平台工具链",
+      "description": "选择用于安装依赖的平台工具链",
       "options": ["windows-msvc-ninja", "linux-clang-ninja"],
       "default": "windows-msvc-ninja"
-    },
-    {
-      "id": "buildType",
-      "type": "pickString",
-      "description": "选择构建类型",
-      "options": ["Debug", "Release", "RelWithDebInfo"],
-      "default": "Debug"
-    },
-    {
-      "id": "buildTests",
-      "type": "pickString",
-      "description": "是否配置 CTest targets",
-      "options": ["OFF", "ON"],
-      "default": "OFF"
-    },
-    {
-      "id": "buildTarget",
-      "type": "pickString",
-      "description": "选择常用 CMake target",
-      "options": [
-        "all",
-        "TriangleSample",
-        "GltfSponzaSample",
-        "cglab_application_options_tests",
-        "cglab_swapchain_image_state_tests",
-        "cglab_camera_input_tests",
-        "cglab_camera_rig_tests",
-        "cglab_scene_registry_tests",
-        "cglab_control_plane_protocol_tests",
-        "cglab_engine_runtime_tests",
-        "cglab_public_headers_tests",
-        "cglab_asset_gltf_tests",
-        "cglab_asset_service_tests"
-      ],
-      "default": "TriangleSample"
-    },
-    {
-      "id": "arbitraryTarget",
-      "type": "promptString",
-      "description": "输入任意 CMake target 名称",
-      "default": "TriangleSample"
-    },
-    {
-      "id": "buildJobs",
-      "type": "promptString",
-      "description": "并行编译任务数",
-      "default": "4"
-    },
-    {
-      "id": "smokeFrames",
-      "type": "promptString",
-      "description": "GPU smoke 帧数",
-      "default": "6"
-    },
-    {
-      "id": "smokeAsset",
-      "type": "promptString",
-      "description": "glTF/GLB 资产路径",
-      "default": "assets/triangle.gltf"
     },
     {
       "id": "vcpkgTriplet",

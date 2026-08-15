@@ -4,68 +4,24 @@
     {
       "type": "cppvsdbg",
       "request": "launch",
-      "name": "CGLab Windows: TriangleSample",
-      "program": "${workspaceFolder}/build/windows-msvc-ninja/${input:debugBuildType}/TriangleSample.exe",
-      "cwd": "${workspaceFolder}",
-      "args": ["--validation"],
-      "console": "integratedTerminal"
-    },
-    {
-      "type": "cppvsdbg",
-      "request": "launch",
-      "name": "CGLab Windows: GltfSponzaSample",
-      "program": "${workspaceFolder}/build/windows-msvc-ninja/${input:debugBuildType}/GltfSponzaSample.exe",
+      "name": "CGLab Windows: Launch executable with asset",
+      "program": "${workspaceFolder}/${input:debugExecutable}",
       "cwd": "${workspaceFolder}",
       "args": ["--asset", "${input:debugAsset}", "--validation"],
       "console": "integratedTerminal"
-    },
-    {
-      "type": "cppdbg",
-      "request": "launch",
-      "name": "CGLab Linux: TriangleSample",
-      "program": "${workspaceFolder}/build/linux-clang-ninja/${input:debugBuildType}/TriangleSample",
-      "cwd": "${workspaceFolder}",
-      "args": ["--validation"],
-      "MIMode": "gdb",
-      "miDebuggerPath": "gdb",
-      "setupCommands": [
-        {
-          "description": "Enable pretty-printing for gdb",
-          "text": "-enable-pretty-printing",
-          "ignoreFailures": false
-        }
-      ]
-    },
-    {
-      "type": "cppdbg",
-      "request": "launch",
-      "name": "CGLab Linux: GltfSponzaSample",
-      "program": "${workspaceFolder}/build/linux-clang-ninja/${input:debugBuildType}/GltfSponzaSample",
-      "cwd": "${workspaceFolder}",
-      "args": ["--asset", "${input:debugAsset}", "--validation"],
-      "MIMode": "gdb",
-      "miDebuggerPath": "gdb",
-      "setupCommands": [
-        {
-          "description": "Enable pretty-printing for gdb",
-          "text": "-enable-pretty-printing",
-          "ignoreFailures": false
-        }
-      ]
     }
   ],
   "inputs": [
     {
-      "type": "pickString",
-      "id": "debugBuildType",
-      "description": "Select the already-built configuration",
-      "options": ["Debug", "Release", "RelWithDebInfo"],
-      "default": "Debug"
+      "type": "promptString",
+      "id": "debugExecutable",
+      "description": "输入相对于工作区的 .exe 路径",
+      "default": "build/windows-msvc-ninja/Debug/ShadowSample.exe"
     },
     {
       "type": "promptString",
       "id": "debugAsset",
-      "description": "glTF/GLB asset path",
+      "description": "输入 glTF/GLB 资产路径",
       "default": "assets/triangle.gltf"
     }
   ]

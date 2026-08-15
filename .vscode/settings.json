@@ -1,6 +1,8 @@
 {
   "cmake.configureOnOpen": false,
   "cmake.useCMakePresets": "always",
+  "cmake.useVsDeveloperEnvironment": "always",
+  "cmake.postConfigureTask": "[CGLab] Normalize compile_commands",
   "C_Cpp.exclusionPolicy": "checkFolders",
   "C_Cpp.files.exclude": {
     "${workspaceFolder}/vcpkg/**": true,
