@@ -131,7 +131,9 @@ mode 折叠进 cache key（切换触发重编译）；debug off 时 pass 被切�
 `uint32` 索引读取，导致 pass/提交计数正常但不产生有效像素；现已补独立索引切片并
 在 draw 行设置 `index_offset`。同时修正 CLI 模式映射：`shadow` 显示原始深度灰阶，
 `depth` 显示线性距离热力图；inset 增加高对比描边，以区分“深度恰好全为远平面”与
-“debug pass 根本没有输出”。
+“debug pass 根本没有输出”。二次目检又发现统一 push blob 是 `build_frame` 局部数组，
+返回后 `frame_plan.push_constants` 悬空，导致主/阴影/debug pass 读到失效的 bindless
+slot；现改由 recipe state 持有到帧录制完成。
 
 ---
 

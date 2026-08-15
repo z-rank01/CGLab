@@ -143,6 +143,9 @@ namespace apps
             // 每帧分组 scratch（帧间复用，clear 后重建，稳态零分配）
             std::array<std::vector<draw_candidate>, 4> group_scratch;
             push_constants push;
+            // frame_plan 只保存 span，数据必须活到 backend 完成本帧录制；不能使用
+            // build_frame 局部数组，否则返回后主/shadow/debug pass 都会读悬空 push 数据。
+            std::array<std::byte, sizeof(push_constants) + sizeof(debug_push)> push_blob{};
             std::array<render_graph::frame_resource_row, 7> frame_resources;
             std::array<render_graph::frame_buffer_access_row, 4> frame_buffer_accesses;
             std::array<render_graph::frame_image_access_row, 2> frame_image_accesses;
@@ -813,8 +816,7 @@ namespace apps
             };
             // 统一 push blob：主 push 在 [0, 32)，调试 push 在 [32, 52)——不同
             // 管线各按自己的切片读取（主 pass 32 字节、shadow 前 8 字节、debug 20 字节）。
-            std::array<std::byte, sizeof(push_constants) + sizeof(debug_push)> push_blob{};
-            std::memcpy(push_blob.data(), &state.push, sizeof(state.push));
+            std::memcpy(state.push_blob.data(), &state.push, sizeof(state.push));
             const debug_push debug_state{
                 .image_slot = state.shadow_map_slot,
                 .sampler_slot = state.shadow_sampler_slot,
@@ -822,7 +824,7 @@ namespace apps
                 .near_plane = sun != nullptr ? sun->ortho_near : 0.1F,
                 .far_plane = sun != nullptr ? sun->ortho_far : 240.0F,
             };
-            std::memcpy(push_blob.data() + sizeof(state.push), &debug_state, sizeof(debug_state));
+            std::memcpy(state.push_blob.data() + sizeof(state.push), &debug_state, sizeof(debug_state));
             // debug pass 会改变图结构（pass/附件/访问行），mode 折叠进 cache key 保证
             // 切换模式时触发重编译；同模式帧间 key 稳定，plan cache 照常命中。
             plan.cache_key = 0x474c544650425200ull ^ (static_cast<uint64_t>(debug_mode) << 32);
@@ -910,7 +912,7 @@ namespace apps
             plan.buffer_accesses = state.frame_buffer_accesses;
             plan.image_accesses = state.frame_image_accesses;
             plan.attachments = state.frame_attachments;
-            plan.push_constants = push_blob;
+            plan.push_constants = state.push_blob;
             plan.indexed_indirect_draws = state.draws;
             return {};
         }
