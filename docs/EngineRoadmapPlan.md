@@ -53,6 +53,12 @@ R2/R3 是打磨不该独占下一轮；下一个里程碑由"下一个瓶颈"决
 **验收**：42/42+ 测试绿 + Triangle/GltfSponza/ShadowSample smoke 各 6 帧；
 grep 确认 samples 中 `std::make_shared<apps::lights_table/sun_light>` 零残留。
 
+**结果（2026-08-16）**：✅ 已提交 `33e0285e`。`publish_state_owned`/`publish_rows_owned`
+落地（通道持有数据到帧尾 clear 释放；owned 条目类型擦除 + 先清列后析构）；
+两个 sample 迁移为每帧新造对象 + owned 发布（`plane_fit` 保持 sample 持久状态不发布）；
+`frame_channels` 单测补 3 项（悬空指针回归、owned state/rows 帧尾释放，计数类型验证
+无拷贝无泄漏）；43/43 ctest 绿 + Triangle/GltfSponza/ShadowSample smoke 6 帧通过。
+
 ---
 
 ## M2 — T1a 可增长 arena 池
@@ -212,7 +218,7 @@ sampler）与 M5（每阶视锥剔除）全部就绪。
 | 阶段 | 内容 | 提交 |
 |------|------|------|
 | 规划 | 本笔记 | — |
-| M1 | F4 帧通道保活机制化 | 待实施 |
+| M1 | F4 帧通道保活机制化 | ✅ 2026-08-16：`33e0285e` |
 | M2 | T1a 可增长 arena 池 | 待实施 |
 | M3 | R4 调试可视化（阴影图/深度查看器） | 待实施 |
 | M4 | R2 compare sampler + 硬件 PCF | 待实施 |
