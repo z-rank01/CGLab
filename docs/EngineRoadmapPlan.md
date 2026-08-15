@@ -73,6 +73,14 @@ arena（池），`geometry_cursor` 跨 arena 续接；句柄管理保持不变�
 **验收**：`cglab.loading_benchmark` 复测 + 契约测试绿 + GPU smoke；记录超 256 MB
 合成负载可加载（或 benchmark 中 N 加大对照）。
 
+**结果（2026-08-16）**：✅ 已提交 `22e4521d`。geometry 单 buffer → `geometry_arenas`
+池（arena 0 初始化创建，容量不足时按当前批整体开新 arena 从头布局，单资产超
+256MB 仍报错）；`geometry_draw_arenas` 列与 draw 列并行；build_frame 命令按
+(组, arena) 分段（段内保持距离序），draw 行每段一条引用对应 arena——单 arena 时
+与旧布局逐字节一致。43/43 ctest 绿 + 三个 sample smoke 6 帧通过；
+`cglab.loading_benchmark` 复测 N=4096 1734µs / N=65536 33683µs（与历史记录一致，
+plan 纯函数未动）。多 arena 激活路径（>256MB 资产）待大资产到场后实机验证。
+
 ---
 
 ## M3 — R4 调试可视化：阴影图/深度查看器
@@ -219,7 +227,7 @@ sampler）与 M5（每阶视锥剔除）全部就绪。
 |------|------|------|
 | 规划 | 本笔记 | — |
 | M1 | F4 帧通道保活机制化 | ✅ 2026-08-16：`33e0285e` |
-| M2 | T1a 可增长 arena 池 | 待实施 |
+| M2 | T1a 可增长 arena 池 | ✅ 2026-08-16：`22e4521d` |
 | M3 | R4 调试可视化（阴影图/深度查看器） | 待实施 |
 | M4 | R2 compare sampler + 硬件 PCF | 待实施 |
 | M5 | R3 阴影视锥剔除 + per-pass 遥测 | 待实施 |
