@@ -1,4 +1,5 @@
 #include <filesystem>
+#include <memory>
 
 #include "apps/application_options.h"
 #include "apps/application_runner.h"
@@ -55,36 +56,38 @@ int main(int argc, char** argv)
                     },
             };
             const auto frames = options.smoke_test ? std::optional<std::uint64_t>(options.frame_limit.value_or(3)) : options.frame_limit;
-            // 插件侧发布光源表（每帧两盏灯：暖色主光 + 冷色补光）：sample 经
-            // services.channels 发布组件表通道，gltf recipe 在 build_frame 经 find_state 消费。
+            // 帧通道存裸指针、生存期=单帧：局部变量在 update 返回即销毁（消费在
+            // 后续 phase），用捕获的 shared_ptr 把发布数据保活到本帧 submit。
+            auto lights = std::make_shared<apps::lights_table>();
+            auto sun = std::make_shared<apps::sun_light>();
+            // 插件侧发布光源表（每帧两盏灯：暖色主光 + 冷色补光）与平行光：
+            // sample 经 services.channels 发布组件表通道，gltf recipe 在 build_frame 经 find_state 消费。
             engine::sample sample{
                 .name = "GltfSponzaSample",
                 .required_startup_asset = asset_path.string(),
-                .update = [](engine::runtime_services& services, float)
+                .update = [lights, sun](engine::runtime_services& services, float)
                 {
-                    apps::lights_table lights;
-                    lights.positions = {{-1.0F, 3.0F, 2.0F}, {2.0F, 2.0F, -1.0F}};
-                    lights.colors = {{1.0F, 0.9F, 0.8F}, {0.4F, 0.6F, 1.0F}};
-                    lights.intensities = {3.0F, 2.0F};
-                    services.channels.publish_state<apps::lights_table>(&lights);
+                    lights->positions = {{-1.0F, 3.0F, 2.0F}, {2.0F, 2.0F, -1.0F}};
+                    lights->colors = {{1.0F, 0.9F, 0.8F}, {0.4F, 0.6F, 1.0F}};
+                    lights->intensities = {3.0F, 2.0F};
+                    services.channels.publish_state<apps::lights_table>(lights.get());
 
                     // 平行光（sun_light）：斜向入射 + 正交光空间矩阵（Y 翻转与主相机
                     // 一致，shadow pass 与主 pass 采样共用同一矩阵）。正交范围按
                     // Sponza 量级场景固定；后续 CSM/自适应可按场景包围盒收紧。
-                    apps::sun_light sun;
-                    sun.direction = glm::normalize(glm::vec3(-0.4F, -1.0F, -0.3F));
-                    sun.intensity = 3.0F;
-                    sun.color = {1.0F, 0.95F, 0.9F};
+                    sun->direction = glm::normalize(glm::vec3(-0.4F, -1.0F, -0.3F));
+                    sun->intensity = 3.0F;
+                    sun->color = {1.0F, 0.95F, 0.9F};
                     const float extent = 40.0F;      // 光正交视锥半宽
                     const float depth_range = 120.0F; // 光眼位距场景中心
                     const glm::vec3 center{0.0F, 0.0F, 0.0F};
-                    const glm::vec3 eye = center - sun.direction * depth_range;
+                    const glm::vec3 eye = center - sun->direction * depth_range;
                     const glm::mat4 light_view = glm::lookAt(eye, center, glm::vec3(0.0F, 1.0F, 0.0F));
                     glm::mat4 light_proj = glm::ortho(-extent, extent, -extent, extent, 0.1F, depth_range * 2.0F);
-                    sun.view_proj = light_proj * light_view;
-                    sun.view_proj[1][1] *= -1.0F;
-                    sun.ortho_box = {-extent, extent, -extent, extent};
-                    services.channels.publish_state<apps::sun_light>(&sun);
+                    sun->view_proj = light_proj * light_view;
+                    sun->view_proj[1][1] *= -1.0F;
+                    sun->ortho_box = {-extent, extent, -extent, extent};
+                    services.channels.publish_state<apps::sun_light>(sun.get());
                 },
             };
             return apps::application_setup_result{.request = apps::application_run_request{

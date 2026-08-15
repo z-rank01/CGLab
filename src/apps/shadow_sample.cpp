@@ -1,5 +1,6 @@
 #include <filesystem>
 #include <limits>
+#include <memory>
 
 #include "apps/application_options.h"
 #include "apps/application_runner.h"
@@ -90,37 +91,39 @@ int main(int argc, char** argv)
                     },
             };
             const auto frames = options.smoke_test ? std::optional<std::uint64_t>(options.frame_limit.value_or(3)) : options.frame_limit;
+            // 帧通道存裸指针、生存期=单帧：发布的数据必须活到本帧 submit。局部变量
+            // 在 update 返回即销毁（消费在后续 phase），这里用捕获的 shared_ptr 保活。
+            auto lights = std::make_shared<apps::lights_table>();
+            auto sun = std::make_shared<apps::sun_light>();
             // 平面贴地状态：首帧把平面移到物件包围盒最低点之下（对任意 glb 自适应）
             auto plane_fit = std::make_shared<bool>(false);
             engine::sample sample{
                 .name = "ShadowSample",
                 .startup_geometry = make_ground_plane(),
                 .required_startup_asset = asset_path.string(),
-                .update = [plane_fit](engine::runtime_services& services, float)
+                .update = [lights, sun, plane_fit](engine::runtime_services& services, float)
                 {
                     // 冷色补光：照亮物件背光面（无阴影，避免与主光阴影打架）
-                    apps::lights_table lights;
-                    lights.positions = {{2.5F, 2.5F, 3.5F}};
-                    lights.colors = {{0.45F, 0.55F, 0.7F}};
-                    lights.intensities = {1.4F};
-                    services.channels.publish_state<apps::lights_table>(&lights);
+                    lights->positions = {{2.5F, 2.5F, 3.5F}};
+                    lights->colors = {{0.45F, 0.55F, 0.7F}};
+                    lights->intensities = {1.4F};
+                    services.channels.publish_state<apps::lights_table>(lights.get());
 
                     // 斜射平行光：右上前方入射（受光面朝默认相机），影子向左后铺开。
                     // 正交视锥 ±4 覆盖地面与影子落点；Y 翻转与主相机一致。
-                    apps::sun_light sun;
-                    sun.direction = glm::normalize(glm::vec3(-0.5F, -0.8F, -0.35F));
-                    sun.intensity = 3.5F;
-                    sun.color = {1.0F, 0.96F, 0.9F};
+                    sun->direction = glm::normalize(glm::vec3(-0.5F, -0.8F, -0.35F));
+                    sun->intensity = 3.5F;
+                    sun->color = {1.0F, 0.96F, 0.9F};
                     const float extent = 4.0F;       // 光正交视锥半宽（覆盖 6×6 地面 + 影子）
                     const float distance = 15.0F;     // 光眼位距场景中心
                     const glm::vec3 center{0.0F, 0.3F, 0.0F};
-                    const glm::vec3 eye = center - sun.direction * distance;
+                    const glm::vec3 eye = center - sun->direction * distance;
                     const glm::mat4 light_view = glm::lookAt(eye, center, glm::vec3(0.0F, 1.0F, 0.0F));
                     glm::mat4 light_proj = glm::ortho(-extent, extent, -extent, extent, 0.1F, distance * 2.0F);
-                    sun.view_proj = light_proj * light_view;
-                    sun.view_proj[1][1] *= -1.0F;
-                    sun.ortho_box = {-extent, extent, -extent, extent};
-                    services.channels.publish_state<apps::sun_light>(&sun);
+                    sun->view_proj = light_proj * light_view;
+                    sun->view_proj[1][1] *= -1.0F;
+                    sun->ortho_box = {-extent, extent, -extent, extent};
+                    services.channels.publish_state<apps::sun_light>(sun.get());
 
                     // 平面贴地（一次性）：物件原点常在包围盒中心（如 helmet），平面
                     // 需移到物件最低点之下，否则下半截插进地里。扫描除平面外的
