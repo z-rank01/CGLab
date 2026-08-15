@@ -91,26 +91,26 @@ int main(int argc, char** argv)
                     },
             };
             const auto frames = options.smoke_test ? std::optional<std::uint64_t>(options.frame_limit.value_or(3)) : options.frame_limit;
-            // 帧通道存裸指针、生存期=单帧：发布的数据必须活到本帧 submit。局部变量
-            // 在 update 返回即销毁（消费在后续 phase），这里用捕获的 shared_ptr 保活。
-            auto lights = std::make_shared<apps::lights_table>();
-            auto sun = std::make_shared<apps::sun_light>();
-            // 平面贴地状态：首帧把平面移到物件包围盒最低点之下（对任意 glb 自适应）
+            // 平面贴地状态：首帧把平面移到物件包围盒最低点之下（对任意 glb 自适应）。
+            // 这是 sample 持久状态（不发布）；发布数据一律走 owned 变体（F4）——
+            // 每帧新造对象、所有权移交通道，帧尾统一释放，无需手工保活。
             auto plane_fit = std::make_shared<bool>(false);
             engine::sample sample{
                 .name = "ShadowSample",
                 .startup_geometry = make_ground_plane(),
                 .required_startup_asset = asset_path.string(),
-                .update = [lights, sun, plane_fit](engine::runtime_services& services, float)
+                .update = [plane_fit](engine::runtime_services& services, float)
                 {
                     // 冷色补光：照亮物件背光面（无阴影，避免与主光阴影打架）
+                    auto lights = std::make_unique<apps::lights_table>();
                     lights->positions = {{2.5F, 2.5F, 3.5F}};
                     lights->colors = {{0.45F, 0.55F, 0.7F}};
                     lights->intensities = {1.4F};
-                    services.channels.publish_state<apps::lights_table>(lights.get());
+                    services.channels.publish_state_owned<apps::lights_table>(std::move(lights));
 
                     // 斜射平行光：右上前方入射（受光面朝默认相机），影子向左后铺开。
                     // 正交视锥 ±4 覆盖地面与影子落点；Y 翻转与主相机一致。
+                    auto sun = std::make_unique<apps::sun_light>();
                     sun->direction = glm::normalize(glm::vec3(-0.5F, -0.8F, -0.35F));
                     sun->intensity = 3.5F;
                     sun->color = {1.0F, 0.96F, 0.9F};
@@ -126,7 +126,7 @@ int main(int argc, char** argv)
                     light_proj[1][1] *= -1.0F;
                     sun->view_proj = light_proj * light_view;
                     sun->ortho_box = {-extent, extent, -extent, extent};
-                    services.channels.publish_state<apps::sun_light>(sun.get());
+                    services.channels.publish_state_owned<apps::sun_light>(std::move(sun));
 
                     // 平面贴地（一次性）：物件原点常在包围盒中心（如 helmet），平面
                     // 需移到物件最低点之下，否则下半截插进地里。扫描除平面外的

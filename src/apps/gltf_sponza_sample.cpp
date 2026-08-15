@@ -56,25 +56,25 @@ int main(int argc, char** argv)
                     },
             };
             const auto frames = options.smoke_test ? std::optional<std::uint64_t>(options.frame_limit.value_or(3)) : options.frame_limit;
-            // 帧通道存裸指针、生存期=单帧：局部变量在 update 返回即销毁（消费在
-            // 后续 phase），用捕获的 shared_ptr 把发布数据保活到本帧 submit。
-            auto lights = std::make_shared<apps::lights_table>();
-            auto sun = std::make_shared<apps::sun_light>();
             // 插件侧发布光源表（每帧两盏灯：暖色主光 + 冷色补光）与平行光：
             // sample 经 services.channels 发布组件表通道，gltf recipe 在 build_frame 经 find_state 消费。
+            // 发布用 owned 变体（F4）：每帧新造对象并把所有权移交通道，帧尾统一释放，
+            // 不需要 shared_ptr 手工保活——不存在"update 返回后悬空指针"的路径。
             engine::sample sample{
                 .name = "GltfSponzaSample",
                 .required_startup_asset = asset_path.string(),
-                .update = [lights, sun](engine::runtime_services& services, float)
+                .update = [](engine::runtime_services& services, float)
                 {
+                    auto lights = std::make_unique<apps::lights_table>();
                     lights->positions = {{-1.0F, 3.0F, 2.0F}, {2.0F, 2.0F, -1.0F}};
                     lights->colors = {{1.0F, 0.9F, 0.8F}, {0.4F, 0.6F, 1.0F}};
                     lights->intensities = {3.0F, 2.0F};
-                    services.channels.publish_state<apps::lights_table>(lights.get());
+                    services.channels.publish_state_owned<apps::lights_table>(std::move(lights));
 
                     // 平行光（sun_light）：斜向入射 + 正交光空间矩阵（Y 翻转与主相机
                     // 一致，shadow pass 与主 pass 采样共用同一矩阵）。正交范围按
                     // Sponza 量级场景固定；后续 CSM/自适应可按场景包围盒收紧。
+                    auto sun = std::make_unique<apps::sun_light>();
                     sun->direction = glm::normalize(glm::vec3(-0.4F, -1.0F, -0.3F));
                     sun->intensity = 3.0F;
                     sun->color = {1.0F, 0.95F, 0.9F};
@@ -89,7 +89,7 @@ int main(int argc, char** argv)
                     light_proj[1][1] *= -1.0F;
                     sun->view_proj = light_proj * light_view;
                     sun->ortho_box = {-extent, extent, -extent, extent};
-                    services.channels.publish_state<apps::sun_light>(sun.get());
+                    services.channels.publish_state_owned<apps::sun_light>(std::move(sun));
                 },
             };
             return apps::application_setup_result{.request = apps::application_run_request{
