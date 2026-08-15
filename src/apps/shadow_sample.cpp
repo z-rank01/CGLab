@@ -120,8 +120,11 @@ int main(int argc, char** argv)
                     const glm::vec3 eye = center - sun->direction * distance;
                     const glm::mat4 light_view = glm::lookAt(eye, center, glm::vec3(0.0F, 1.0F, 0.0F));
                     glm::mat4 light_proj = glm::ortho(-extent, extent, -extent, extent, 0.1F, distance * 2.0F);
+                    // Vulkan 的 framebuffer Y 翻转属于投影变换。若在 view_proj
+                    // 合成后只改 [1][1]，旋转过的 light_view 会被剪切，导致沿
+                    // sun.direction 的点在阴影图 XY 上发生漂移，影子方向便与光照不一致。
+                    light_proj[1][1] *= -1.0F;
                     sun->view_proj = light_proj * light_view;
-                    sun->view_proj[1][1] *= -1.0F;
                     sun->ortho_box = {-extent, extent, -extent, extent};
                     services.channels.publish_state<apps::sun_light>(sun.get());
 

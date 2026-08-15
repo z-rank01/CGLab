@@ -84,8 +84,10 @@ int main(int argc, char** argv)
                     const glm::vec3 eye = center - sun->direction * depth_range;
                     const glm::mat4 light_view = glm::lookAt(eye, center, glm::vec3(0.0F, 1.0F, 0.0F));
                     glm::mat4 light_proj = glm::ortho(-extent, extent, -extent, extent, 0.1F, depth_range * 2.0F);
+                    // 在投影阶段翻转 Vulkan framebuffer Y；合成后只修改
+                    // view_proj[1][1] 会剪切旋转过的光空间，使阴影偏离入射方向。
+                    light_proj[1][1] *= -1.0F;
                     sun->view_proj = light_proj * light_view;
-                    sun->view_proj[1][1] *= -1.0F;
                     sun->ortho_box = {-extent, extent, -extent, extent};
                     services.channels.publish_state<apps::sun_light>(sun.get());
                 },
