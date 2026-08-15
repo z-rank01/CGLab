@@ -26,6 +26,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Vulkan 裁剪空间 z ∈ [0,1]（非 OpenGL 的 [-1,1]）：所有 GLM 投影矩阵
+# （主相机 perspective / 光源 ortho）按 0..1 生成，深度缓冲值与 NDC z 一致，
+# 光源近平面不再裁掉朝光半壳；阴影采样端也无需 [-1,1]→[0,1] 重映射。
+add_compile_definitions(GLM_FORCE_DEPTH_ZERO_TO_ONE)
+
 # -----------------------------------------------------------------------------
 # Build options
 # -----------------------------------------------------------------------------

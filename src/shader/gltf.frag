@@ -72,7 +72,8 @@ float sample_shadow(vec3 world_pos, vec3 normal, vec3 light_dir, float texel)
     vec3 ndc = light_proj.xyz / light_proj.w;
     vec2 uv = ndc.xy * 0.5 + 0.5;
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
-    float shadow_depth = ndc.z * 0.5 + 0.5;
+    // GLM_FORCE_DEPTH_ZERO_TO_ONE：NDC z 与 Vulkan 深度缓冲同刻度，直接比较
+    float shadow_depth = ndc.z;
     float bias = max(0.001, 0.002 * (1.0 - max(dot(normal, light_dir), 0.0)));
     float occluded = 0.0;
     for (int y = -1; y <= 1; ++y)
