@@ -109,6 +109,19 @@ plan 纯函数未动）。多 arena 激活路径（>256MB 资产）待大资产�
 **验收**：`--debug-view shadow` smoke 6 帧（--validation）通过 + 人工目检阴影图
 内容正确（物体轮廓 + 深度渐变）；`--debug-view off` 与现有 smoke 契约逐字一致。
 
+**结果（2026-08-16）**：✅ 已提交 `ef1a1687`（主仓，含子仓指针）。
+`--debug-view shadow|depth|off` CLI → sample 经帧通道发布 `debug_view_request`
+（owned 发布）→ recipe 追加 DebugViewPass（swapchain load=load 保留主输出，
+320×180 角落 inset，NDC quad 几何 + debug 管线 + 独立 push 切片 [32,52)）；
+mode 折叠进 cache key（切换触发重编译）；debug off 时 pass 被切片排除，默认契约
+逐字不变（管线恒 6 = 4 材质 + shadow + debug，pass/indirect 随 mode 2/2 → 3/3）。
+**顺带修复 RG 编译器潜在缺陷**（子仓 `4d7a4b5`）：多 pass 时颜色 CSR 的
+`color_begins` 全为 0（pass 行统一创建），≥3 pass 时尾部 pass 会把前面 pass 的
+颜色包进 span——按附件入列顺序重置 begins + 新增 `multi_pass_color_csr_contract`
+回归测试。另：smoke 契约不匹配现在打印实际计数（`application_runner.cpp`）。
+43/43 ctest 绿 + Triangle/GltfSponza/ShadowSample/CullingSample 默认与
+`--debug-view`（shadow/depth）共 7 组 smoke 全过（--validation 零错误）。
+
 ---
 
 ## M4 — R2 compare sampler + 硬件 PCF
@@ -228,7 +241,7 @@ sampler）与 M5（每阶视锥剔除）全部就绪。
 | 规划 | 本笔记 | — |
 | M1 | F4 帧通道保活机制化 | ✅ 2026-08-16：`33e0285e` |
 | M2 | T1a 可增长 arena 池 | ✅ 2026-08-16：`22e4521d` |
-| M3 | R4 调试可视化（阴影图/深度查看器） | 待实施 |
+| M3 | R4 调试可视化（阴影图/深度查看器） | ✅ 2026-08-16：`ef1a1687`（子仓修复 `4d7a4b5`） |
 | M4 | R2 compare sampler + 硬件 PCF | 待实施 |
 | M5 | R3 阴影视锥剔除 + per-pass 遥测 | 待实施 |
 | M6 | R5 后处理链路 | 待实施 |
