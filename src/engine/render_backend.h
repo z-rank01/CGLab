@@ -74,6 +74,15 @@ namespace engine
         std::uint64_t parse_us = 0;
         std::uint64_t convert_us = 0;
         std::uint64_t decode_us = 0;
+        // Geometry arena pool snapshot after this asset upload (M2 diagnostics).
+        // Timings are scoped to this upload transaction; sizes/count are pool totals.
+        std::uint32_t geometry_arena_count = 0;
+        std::uint32_t geometry_arenas_created = 0;
+        std::uint64_t geometry_arena_reserved_bytes = 0;
+        std::uint64_t geometry_arena_used_bytes = 0;
+        std::uint64_t geometry_arena_allocation_us = 0;
+        std::uint64_t geometry_plan_us = 0;
+        std::uint64_t geometry_transfer_us = 0;
     };
 
     // 帧通道行表：packet 不承载固定字段集合；extract 按阶段表顺序发布类型键控通道
@@ -126,6 +135,15 @@ namespace engine
     {
         std::vector<geometry_handle> geometry_handles;
         std::vector<std::uint32_t> material_bases;
+        // Optional recipe-provided arena diagnostics. Recipes without an arena
+        // pool leave this zero-initialized.
+        std::uint32_t geometry_arena_count = 0;
+        std::uint32_t geometry_arenas_created = 0;
+        std::uint64_t geometry_arena_reserved_bytes = 0;
+        std::uint64_t geometry_arena_used_bytes = 0;
+        std::uint64_t geometry_arena_allocation_us = 0;
+        std::uint64_t geometry_plan_us = 0;
+        std::uint64_t geometry_transfer_us = 0;
     };
 
     struct render_driver_api

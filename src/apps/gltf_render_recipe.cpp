@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstring>
 #include <filesystem>
@@ -28,6 +29,8 @@ namespace apps
         constexpr uint32_t max_lights = 64;
         // 阴影图固定分辨率（独立于 swapchain；per-pass render_area 指定）
         constexpr uint32_t shadow_map_size = 2048;
+        constexpr std::uint64_t debug_quad_vertex_bytes = sizeof(engine::vertex) * 6;
+        constexpr std::uint64_t debug_quad_index_bytes = sizeof(std::uint32_t) * 6;
 
         struct frame_uniform { glm::mat4 model{1.0F}; glm::mat4 view{1.0F}; glm::mat4 projection{1.0F}; };
         struct transform_row { glm::mat4 model{1.0F}; glm::uvec4 metadata{}; };
@@ -98,6 +101,8 @@ namespace apps
             // 单 arena 时与单缓冲布局逐字节一致。arena 0 在 initialize 创建，
             // 后续 arena 在 apply_changes 发现容量不足时创建。
             std::vector<render_graph::device_buffer_handle> geometry_arenas;
+            // 每个 arena 的高水位；与 geometry_arenas 并行，用于 M2 容量/利用率观测。
+            std::vector<std::uint64_t> geometry_arena_used_bytes;
             render_graph::device_buffer_handle transforms;
             render_graph::device_buffer_handle indirect;
             render_graph::device_buffer_handle materials;
@@ -194,6 +199,11 @@ namespace apps
             }};
         }
 
+        constexpr std::array<std::uint32_t, 6> debug_quad_indices()
+        {
+            return {0, 1, 2, 3, 4, 5};
+        }
+
         engine::result<bool> initialize(void* value,
                                         render_graph::render_device& device,
                                         const engine::backend_config& config)
@@ -223,7 +233,7 @@ namespace apps
                   .mapping = render_graph::mapping_policy::persistent,
                   .lifetime = render_graph::resource_lifetime_class::persistent}},
                 // 调试视图 quad 几何（NDC 两三角，R4/M3）
-                {{.size = sizeof(engine::vertex) * 6,
+                {{.size = debug_quad_vertex_bytes + debug_quad_index_bytes,
                   .usage = render_graph::buffer_usage::TRANSFER_DST | render_graph::buffer_usage::VERTEX_BUFFER |
                            render_graph::buffer_usage::INDEX_BUFFER,
                   .memory = render_graph::memory_domain::device_local,
@@ -342,6 +352,7 @@ namespace apps
                                                            .graphics_pipeline_creates = pipelines});
             if (!created) return {.error = created.error};
             state.geometry_arenas.push_back(created.buffers[0]);
+            state.geometry_arena_used_bytes.push_back(0);
             state.transforms = created.buffers[1];
             state.indirect = created.buffers[2];
             state.materials = created.buffers[3];
@@ -378,9 +389,15 @@ namespace apps
                 state.materials, 0, std::as_bytes(std::span(state.material_rows))};
             // 调试视图 quad 几何（一次性上传）
             const auto quad_vertices = debug_quad_vertices();
-            const render_graph::buffer_upload_row debug_quad_upload{
-                state.debug_quad, 0, std::as_bytes(std::span(quad_vertices))};
-            std::vector<render_graph::buffer_upload_row> initial_uploads{default_material, debug_quad_upload};
+            const auto quad_indices = debug_quad_indices();
+            const std::array debug_quad_uploads{
+                render_graph::buffer_upload_row{state.debug_quad, 0,
+                                                std::as_bytes(std::span(quad_vertices))},
+                render_graph::buffer_upload_row{state.debug_quad, debug_quad_vertex_bytes,
+                                                std::as_bytes(std::span(quad_indices))},
+            };
+            std::vector<render_graph::buffer_upload_row> initial_uploads{
+                default_material, debug_quad_uploads[0], debug_quad_uploads[1]};
             auto bound = device.apply_resource_changes({.buffer_uploads = initial_uploads,
                                                          .bindless_publishes = publishes});
             if (!bound) return {.error = bound.error};
@@ -495,20 +512,35 @@ namespace apps
                 // 批量行 → 纯函数布局计划 → 零拷贝上传（span 直接引用共享 blob）。
                 // arena 池（M2）：先按当前 arena 剩余空间布局；不足则开新 arena
                 // 从头布局（游标归零）。单个资产超过 arena 容量（256MB）仍报错。
+                const auto plan_begin = std::chrono::steady_clock::now();
                 engine::result<engine::geometry_upload_plan> planned = engine::plan_geometry_uploads(
                     *row.asset, row.first_mesh, row.mesh_count, row.material_base,
                     geometry_capacity, state.geometry_cursor);
                 std::uint32_t arena_index = state.geometry_arena;
+                bool needs_new_arena = false;
                 if (!planned)
                 {
                     planned = engine::plan_geometry_uploads(*row.asset, row.first_mesh, row.mesh_count,
                                                             row.material_base, geometry_capacity, 0);
                     if (!planned) return {.error = planned.error};
                     arena_index = static_cast<std::uint32_t>(state.geometry_arenas.size());
+                    needs_new_arena = true;
+                }
+                output.value.geometry_plan_us += static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - plan_begin).count());
+                if (needs_new_arena)
+                {
                     const render_graph::buffer_create_row arena_desc = geometry_arena_desc();
+                    const auto allocation_begin = std::chrono::steady_clock::now();
                     const auto created = device.apply_resource_changes({.buffer_creates = std::span(&arena_desc, 1)});
+                    output.value.geometry_arena_allocation_us += static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - allocation_begin).count());
                     if (!created) return {.error = created.error};
                     state.geometry_arenas.push_back(created.buffers[0]);
+                    state.geometry_arena_used_bytes.push_back(0);
+                    ++output.value.geometry_arenas_created;
                 }
                 const engine::geometry_upload_plan& layout = planned.value;
                 state.geometry_arena = arena_index;
@@ -543,13 +575,18 @@ namespace apps
                         created_draw_arenas.push_back(arena_index);
                     }
                 }
+                const auto transfer_begin = std::chrono::steady_clock::now();
                 const auto uploaded = device.apply_resource_changes({.buffer_uploads = uploads});
+                output.value.geometry_transfer_us += static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - transfer_begin).count());
                 if (!uploaded) return {.error = uploaded.error};
                 state.staged_buffer_upload_count += uploads.size();
                 const std::size_t first_draw_index = state.geometry_draws.size();
                 state.geometry_draws.insert(state.geometry_draws.end(), created_draws.begin(), created_draws.end());
                 state.geometry_draw_arenas.insert(state.geometry_draw_arenas.end(),
                                                   created_draw_arenas.begin(), created_draw_arenas.end());
+                state.geometry_arena_used_bytes[arena_index] = layout.cursor;
                 for (std::size_t i = 0; i < created_begins.size(); ++i)
                 {
                     output.value.geometry_handles.push_back(
@@ -562,6 +599,10 @@ namespace apps
             }
             for (const auto& row : batch.geometry_retires)
                 if (row.handle < state.geometry_alive.size()) state.geometry_alive[row.handle] = 0;
+            output.value.geometry_arena_count = static_cast<std::uint32_t>(state.geometry_arenas.size());
+            output.value.geometry_arena_reserved_bytes = state.geometry_arenas.size() * geometry_capacity;
+            for (const std::uint64_t used : state.geometry_arena_used_bytes)
+                output.value.geometry_arena_used_bytes += used;
             return output;
         }
 
@@ -693,6 +734,7 @@ namespace apps
                     .pipeline = state.debug_pipeline,
                     .vertex_buffer = state.debug_quad,
                     .index_buffer = state.debug_quad,
+                    .index_offset = debug_quad_vertex_bytes,
                     .indirect_buffer = state.indirect,
                     .indirect_offset = debug_indirect_offset,
                     .draw_count = 1,
@@ -776,7 +818,7 @@ namespace apps
             const debug_push debug_state{
                 .image_slot = state.shadow_map_slot,
                 .sampler_slot = state.shadow_sampler_slot,
-                .mode = debug_mode,
+                .mode = debug_mode == 0U ? 0U : debug_mode - 1U,
                 .near_plane = sun != nullptr ? sun->ortho_near : 0.1F,
                 .far_plane = sun != nullptr ? sun->ortho_far : 240.0F,
             };

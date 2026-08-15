@@ -153,7 +153,7 @@ worker 只填 load_us（值类型，符合"worker 只写私有结果"横切准�
 | `telemetry.frame` | `phase_us: {poll_events, consume_control_commands, ..., publish_telemetry}` | 各阶段近 10Hz 均值（µs） |
 | `telemetry.frame` | `quantiles: {frame_p50_ms, frame_p95_ms, frame_p99_ms}` | 环上帧时分位数 |
 | `telemetry.frame` | `counters: {instances, visible, culled, draws, buffer_uploads, image_uploads}` | 帧计数 |
-| `telemetry.load`（新） | `{path, load_us, merge_us, upload_us, vertex_bytes, index_bytes, images}`（+ 可选 `parse_us/convert_us/decode_us`） | 每次加载完成 |
+| `telemetry.load`（新） | `{path, load_us, merge_us, upload_us, vertex_bytes, index_bytes, images, geometry_arena: {count, created, reserved_bytes, used_bytes, allocation_us, plan_us, transfer_us}}`（+ 可选 `parse_us/convert_us/decode_us`） | 每次加载完成；arena 大小为池快照，耗时为本次事务 |
 
 > 新增通知/方法须同步登记 `control_plane/json_rpc.cpp` 的方法清单（A0 为 `telemetry.load`；
 > A1 为 `camera.set_culling` / `camera.get_state` 扩展），否则客户端无法发现。

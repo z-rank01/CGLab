@@ -31,5 +31,12 @@ void main()
     {
         color = vec3(1.0 - depth);
     }
+    // 高对比边框让“pass 没执行”和“纹理恰好全是远平面”可直接区分。
+    // 约 2 px（320x180 inset）宽，不遮挡主体深度内容。
+    vec2 edge = min(in_uv, vec2(1.0) - in_uv);
+    if (min(edge.x, edge.y) < 0.01)
+    {
+        color = vec3(0.1, 0.9, 1.0);
+    }
     out_color = vec4(color, 1.0);
 }

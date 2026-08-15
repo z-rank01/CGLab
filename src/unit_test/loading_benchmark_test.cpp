@@ -186,6 +186,51 @@ namespace
         std::uint64_t coalesced = 0;
     };
 
+    struct arena_pool_snapshot
+    {
+        std::size_t count = 1;
+        std::uint64_t used_bytes = 0;
+        std::uint64_t reserved_bytes = 0;
+    };
+
+    // Run repeated logical loads through the same fallback policy as the glTF
+    // recipe, without allocating another payload buffer. This makes arena growth
+    // and utilization visible in the benchmark output at modest host-memory cost.
+    arena_pool_snapshot simulate_arena_pool(const engine::asset_database& asset,
+                                            std::uint64_t arena_capacity,
+                                            std::uint32_t logical_loads)
+    {
+        std::vector<std::uint64_t> high_water_marks{0};
+        std::size_t arena = 0;
+        std::uint64_t cursor = 0;
+        for (std::uint32_t load = 0; load < logical_loads; ++load)
+        {
+            auto plan = engine::plan_geometry_uploads(
+                asset, 0, static_cast<std::uint32_t>(asset.meshes.size()), 0, arena_capacity, cursor);
+            if (!plan)
+            {
+                plan = engine::plan_geometry_uploads(
+                    asset, 0, static_cast<std::uint32_t>(asset.meshes.size()), 0, arena_capacity, 0);
+                if (!plan)
+                {
+                    return {};
+                }
+                arena = high_water_marks.size();
+                high_water_marks.push_back(0);
+            }
+            cursor = plan.value.cursor;
+            high_water_marks[arena] = cursor;
+        }
+        std::uint64_t used = 0;
+        for (const std::uint64_t high_water : high_water_marks)
+        {
+            used += high_water;
+        }
+        return {.count = high_water_marks.size(),
+                .used_bytes = used,
+                .reserved_bytes = high_water_marks.size() * arena_capacity};
+    }
+
     void run_scale(std::size_t primitive_count, int iterations)
     {
         const engine::asset_database asset = make_asset(primitive_count);
@@ -255,6 +300,9 @@ namespace
         const std::size_t row_meta_bytes = sizeof(upload_row) * 2 + sizeof(engine::draw_range);
         const std::size_t primitive_payload_bytes =
             vertices_per_primitive * sizeof(engine::vertex) + indices_per_primitive * sizeof(std::uint32_t);
+        constexpr std::uint64_t arena_capacity = 256ull * 1024ull * 1024ull;
+        constexpr std::uint32_t logical_loads = 3;
+        const arena_pool_snapshot pool = simulate_arena_pool(asset, arena_capacity, logical_loads);
         std::cout << "[bench] load N=" << primitive_count
                   << " per_row_us=" << per_row_total
                   << " coalesced_us=" << coalesced_total
@@ -262,7 +310,14 @@ namespace
                   << " consume=" << consume_median << " coalesced_consume=" << coalesced_median << ')'
                   << " payload_MB=" << payload_bytes / (1024 * 1024)
                   << " meta_vs_payload=" << row_meta_bytes * 100 / primitive_payload_bytes << '%'
-                  << " per_row_ns=" << per_row_total * 1000 / primitive_count << '\n';
+                  << " per_row_ns=" << per_row_total * 1000 / primitive_count
+                  << " arena_loads=" << logical_loads
+                  << " arena_count=" << pool.count
+                  << " arena_reserved_MB=" << pool.reserved_bytes / (1024 * 1024)
+                  << " arena_used_MB=" << pool.used_bytes / (1024 * 1024)
+                  << " arena_utilization_pct="
+                  << (pool.reserved_bytes == 0 ? 0 : pool.used_bytes * 100 / pool.reserved_bytes)
+                  << '\n';
     }
 } // namespace
 

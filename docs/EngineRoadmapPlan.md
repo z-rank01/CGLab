@@ -81,6 +81,11 @@ arena（池），`geometry_cursor` 跨 arena 续接；句柄管理保持不变�
 `cglab.loading_benchmark` 复测 N=4096 1734µs / N=65536 33683µs（与历史记录一致，
 plan 纯函数未动）。多 arena 激活路径（>256MB 资产）待大资产到场后实机验证。
 
+**后续修正（2026-08-16）**：补齐 arena 池可观测性：加载日志与 `telemetry.load`
+现在同时报告池的 arena 数、本次新建数、reserved/used 字节，以及本事务
+allocation/plan/transfer 耗时；loading benchmark 用 3 次逻辑加载显式报告扩容后的
+arena 数、保留/使用 MB 与利用率，不再只给上传行 CPU 时间。
+
 ---
 
 ## M3 — R4 调试可视化：阴影图/深度查看器
@@ -121,6 +126,12 @@ mode 折叠进 cache key（切换触发重编译）；debug off 时 pass 被切�
 回归测试。另：smoke 契约不匹配现在打印实际计数（`application_runner.cpp`）。
 43/43 ctest 绿 + Triangle/GltfSponza/ShadowSample/CullingSample 默认与
 `--debug-view`（shadow/depth）共 7 组 smoke 全过（--validation 零错误）。
+
+**后续修正（2026-08-16）**：定位到 debug quad 只上传顶点、却把顶点字节同时按
+`uint32` 索引读取，导致 pass/提交计数正常但不产生有效像素；现已补独立索引切片并
+在 draw 行设置 `index_offset`。同时修正 CLI 模式映射：`shadow` 显示原始深度灰阶，
+`depth` 显示线性距离热力图；inset 增加高对比描边，以区分“深度恰好全为远平面”与
+“debug pass 根本没有输出”。
 
 ---
 

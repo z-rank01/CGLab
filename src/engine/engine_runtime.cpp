@@ -13,6 +13,21 @@ namespace
 {
     // 遥测推送间隔（秒）：10 Hz，避免每帧全量推 JSON
     constexpr float telemetry_interval_seconds = 0.1F;
+
+    std::string geometry_arena_summary(const engine::load_report& report)
+    {
+        if (report.geometry_arena_count == 0)
+        {
+            return {};
+        }
+        return ", arena count=" + std::to_string(report.geometry_arena_count) +
+               " reserved=" + std::to_string(report.geometry_arena_reserved_bytes) +
+               " used=" + std::to_string(report.geometry_arena_used_bytes) +
+               " bytes (created=" + std::to_string(report.geometry_arenas_created) +
+               ", alloc=" + std::to_string(report.geometry_arena_allocation_us) +
+               "us, plan=" + std::to_string(report.geometry_plan_us) +
+               "us, transfer=" + std::to_string(report.geometry_transfer_us) + "us)";
+    }
 } // namespace
 
 namespace engine
@@ -118,7 +133,8 @@ void engine_runtime::initialize()
         if (ids.empty()) throw std::runtime_error("Startup geometry contains no mesh instances");
         Logger::LogInfo("Loaded startup geometry in " + std::to_string(report.merge_us) + "us (upload " +
                         std::to_string(report.upload_us) + "us, " +
-                        std::to_string(report.vertex_bytes + report.index_bytes) + " bytes)");
+                        std::to_string(report.vertex_bytes + report.index_bytes) + " bytes" +
+                        geometry_arena_summary(report) + ")");
         loads.initial_geometry.reset();
     }
     if (loads.initial_asset)
@@ -129,7 +145,8 @@ void engine_runtime::initialize()
                         std::to_string(startup_report.load_us) + "us (merge " +
                         std::to_string(startup_report.merge_us) + "us, upload " +
                         std::to_string(startup_report.upload_us) + "us, " +
-                        std::to_string(startup_report.vertex_bytes + startup_report.index_bytes) + " bytes)");
+                        std::to_string(startup_report.vertex_bytes + startup_report.index_bytes) + " bytes" +
+                        geometry_arena_summary(startup_report) + ")");
         loads.initial_asset.reset();
     }
 
@@ -191,7 +208,8 @@ void engine_runtime::apply_completed_loads()
                         " in " + std::to_string(completed.report.load_us) + "us (merge " +
                         std::to_string(completed.report.merge_us) + "us, upload " +
                         std::to_string(completed.report.upload_us) + "us, " +
-                        std::to_string(completed.report.vertex_bytes + completed.report.index_bytes) + " bytes)");
+                        std::to_string(completed.report.vertex_bytes + completed.report.index_bytes) + " bytes" +
+                        geometry_arena_summary(completed.report) + ")");
         if (control_plane)
         {
             publish_load_telemetry(completed.report);
@@ -243,6 +261,16 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
         {
             Logger::LogError("Failed to upload glTF geometry: " + geometry_changes.error);
             return {};
+        }
+        if (report)
+        {
+            report->geometry_arena_count = geometry_changes.value.geometry_arena_count;
+            report->geometry_arenas_created = geometry_changes.value.geometry_arenas_created;
+            report->geometry_arena_reserved_bytes = geometry_changes.value.geometry_arena_reserved_bytes;
+            report->geometry_arena_used_bytes = geometry_changes.value.geometry_arena_used_bytes;
+            report->geometry_arena_allocation_us = geometry_changes.value.geometry_arena_allocation_us;
+            report->geometry_plan_us = geometry_changes.value.geometry_plan_us;
+            report->geometry_transfer_us = geometry_changes.value.geometry_transfer_us;
         }
         for (std::uint32_t mesh_index = 0; mesh_index < asset.meshes.size(); mesh_index++)
         {
@@ -313,6 +341,9 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
             loads.pending_geometry_retires.push_back({handle});
     if (report)
     {
+        report->vertex_bytes = asset.vertex_blob.size() * sizeof(engine::vertex);
+        report->index_bytes = asset.index_blob.size() * sizeof(std::uint32_t);
+        report->image_count = static_cast<std::uint32_t>(asset.images.size());
         report->merge_us = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - merge_begin).count());
         report->upload_us = upload_us;
@@ -751,8 +782,16 @@ void engine_runtime::publish_load_telemetry(const engine::load_report& report) c
                                                                 {"images", report.image_count},
                                                                 {"parse_us", report.parse_us},
                                                                 {"convert_us", report.convert_us},
-                                                                {"decode_us", report.decode_us},
-                                                            }));
+                                                                 {"decode_us", report.decode_us},
+                                                                 {"geometry_arena",
+                                                                  {{"count", report.geometry_arena_count},
+                                                                   {"created", report.geometry_arenas_created},
+                                                                   {"reserved_bytes", report.geometry_arena_reserved_bytes},
+                                                                   {"used_bytes", report.geometry_arena_used_bytes},
+                                                                   {"allocation_us", report.geometry_arena_allocation_us},
+                                                                   {"plan_us", report.geometry_plan_us},
+                                                                   {"transfer_us", report.geometry_transfer_us}}},
+                                                             }));
 }
 
 bool engine_runtime::tick(std::optional<std::uint64_t> frame_limit)
