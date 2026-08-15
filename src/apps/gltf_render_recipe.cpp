@@ -77,11 +77,15 @@ namespace apps
             glm::mat4 model{1.0F};
             engine::draw_range range;
             float distance_squared = 0.0F;
+            std::uint32_t arena = 0; // 几何所在 arena 池下标（draw 行按 (组, arena) 分段）
         };
 
         struct recipe_state
         {
-            render_graph::device_buffer_handle geometry;
+            // 几何 arena 池（M2）：按需开新 256MB arena，几何句柄按 arena 分化；
+            // 单 arena 时与单缓冲布局逐字节一致。arena 0 在 initialize 创建，
+            // 后续 arena 在 apply_changes 发现容量不足时创建。
+            std::vector<render_graph::device_buffer_handle> geometry_arenas;
             render_graph::device_buffer_handle transforms;
             render_graph::device_buffer_handle indirect;
             render_graph::device_buffer_handle materials;
@@ -101,18 +105,21 @@ namespace apps
             std::vector<uint32_t> light_uniform_slots;
             // geometry 列（CSR，与 scene_registry 同款模式）：扁平 draw 列 + 每 mesh
             // begin/count 切片 + 存活列；mesh handle 直接索引列槽（build_frame 热路径直读列）。
+            // geometry_draw_arenas 与 draw 列并行（每 draw 所在 arena，draw 行分段用）。
             std::vector<engine::draw_range> geometry_draws;
             std::vector<std::uint32_t> geometry_draw_begins;
             std::vector<std::uint32_t> geometry_draw_counts;
             std::vector<std::uint8_t> geometry_alive;
+            std::vector<std::uint32_t> geometry_draw_arenas;
             std::vector<material_gpu_row> material_rows{1};
-            uint64_t geometry_cursor = 0;
+            uint32_t geometry_arena = 0;      // 当前 arena（geometry_cursor 归属）
+            uint64_t geometry_cursor = 0;     // 当前 arena 内游标
             std::vector<transform_row> transform_rows;
             std::vector<render_graph::indexed_indirect_command> commands;
             // 加载帧的 staging 上传计数（build_frame 回填后清零）
             uint64_t staged_buffer_upload_count = 0;
             uint64_t staged_image_upload_count = 0;
-            std::array<render_graph::draw_indexed_indirect_row, 5> draws;
+            std::vector<render_graph::draw_indexed_indirect_row> draws;
             // 每帧分组 scratch（帧间复用，clear 后重建，稳态零分配）
             std::array<std::vector<draw_candidate>, 4> group_scratch;
             push_constants push;
@@ -141,18 +148,25 @@ namespace apps
             return render_graph::sampler_address_mode::repeat;
         }
 
+        // 几何 arena 描述（M2）：池内每个 arena 同一形态——大 buffer 子分配语义，
+        // 按需开新实例消除固定容量墙。
+        render_graph::buffer_create_row geometry_arena_desc()
+        {
+            return {{.size = geometry_capacity,
+                     .usage = render_graph::buffer_usage::TRANSFER_DST | render_graph::buffer_usage::VERTEX_BUFFER |
+                              render_graph::buffer_usage::INDEX_BUFFER,
+                     .memory = render_graph::memory_domain::device_local,
+                     .aliasing = render_graph::aliasing_policy::forbidden,
+                     .lifetime = render_graph::resource_lifetime_class::persistent}};
+        }
+
         engine::result<bool> initialize(void* value,
                                         render_graph::render_device& device,
                                         const engine::backend_config& config)
         {
             auto& state = *static_cast<recipe_state*>(value);
             std::vector<render_graph::buffer_create_row> buffers{
-                {{.size = geometry_capacity,
-                  .usage = render_graph::buffer_usage::TRANSFER_DST | render_graph::buffer_usage::VERTEX_BUFFER |
-                           render_graph::buffer_usage::INDEX_BUFFER,
-                  .memory = render_graph::memory_domain::device_local,
-                  .aliasing = render_graph::aliasing_policy::forbidden,
-                  .lifetime = render_graph::resource_lifetime_class::persistent}},
+                geometry_arena_desc(),
                 {{.size = sizeof(transform_row) * max_draws,
                   .usage = render_graph::buffer_usage::STORAGE_BUFFER,
                   .memory = render_graph::memory_domain::upload,
@@ -264,7 +278,7 @@ namespace apps
                                                            .sampler_creates = samplers,
                                                            .graphics_pipeline_creates = pipelines});
             if (!created) return {.error = created.error};
-            state.geometry = created.buffers[0];
+            state.geometry_arenas.push_back(created.buffers[0]);
             state.transforms = created.buffers[1];
             state.indirect = created.buffers[2];
             state.materials = created.buffers[3];
@@ -408,16 +422,34 @@ namespace apps
             for (const auto& row : batch.geometry_uploads)
             {
                 if (!row.asset) return {.error = "glTF geometry upload row is empty"};
-                // 批量行 → 纯函数布局计划 → 零拷贝上传（span 直接引用共享 blob）
-                const auto plan = engine::plan_geometry_uploads(*row.asset, row.first_mesh, row.mesh_count,
-                                                                row.material_base, geometry_capacity, state.geometry_cursor);
-                if (!plan) return {.error = plan.error};
-                const engine::geometry_upload_plan& layout = plan.value;
+                // 批量行 → 纯函数布局计划 → 零拷贝上传（span 直接引用共享 blob）。
+                // arena 池（M2）：先按当前 arena 剩余空间布局；不足则开新 arena
+                // 从头布局（游标归零）。单个资产超过 arena 容量（256MB）仍报错。
+                engine::result<engine::geometry_upload_plan> planned = engine::plan_geometry_uploads(
+                    *row.asset, row.first_mesh, row.mesh_count, row.material_base,
+                    geometry_capacity, state.geometry_cursor);
+                std::uint32_t arena_index = state.geometry_arena;
+                if (!planned)
+                {
+                    planned = engine::plan_geometry_uploads(*row.asset, row.first_mesh, row.mesh_count,
+                                                            row.material_base, geometry_capacity, 0);
+                    if (!planned) return {.error = planned.error};
+                    arena_index = static_cast<std::uint32_t>(state.geometry_arenas.size());
+                    const render_graph::buffer_create_row arena_desc = geometry_arena_desc();
+                    const auto created = device.apply_resource_changes({.buffer_creates = std::span(&arena_desc, 1)});
+                    if (!created) return {.error = created.error};
+                    state.geometry_arenas.push_back(created.buffers[0]);
+                }
+                const engine::geometry_upload_plan& layout = planned.value;
+                state.geometry_arena = arena_index;
+                state.geometry_cursor = layout.cursor;
                 std::vector<render_graph::buffer_upload_row> uploads;
                 uploads.reserve(layout.primitive_plan_rows.size() * 2);
                 // 先建本地列，上传成功后才并入 state（失败不污染状态）
                 std::vector<engine::draw_range> created_draws;
                 created_draws.reserve(layout.primitive_plan_rows.size());
+                std::vector<std::uint32_t> created_draw_arenas;
+                created_draw_arenas.reserve(layout.primitive_plan_rows.size());
                 std::vector<std::uint32_t> created_begins;
                 created_begins.reserve(row.mesh_count);
                 std::vector<std::uint32_t> created_counts;
@@ -431,21 +463,23 @@ namespace apps
                     for (std::uint32_t k = 0; k < draw_count; ++k)
                     {
                         const auto& pp = layout.primitive_plan_rows[primitive_index++];
-                        uploads.push_back({state.geometry, pp.vertex_byte_offset,
+                        uploads.push_back({state.geometry_arenas[arena_index], pp.vertex_byte_offset,
                                            std::as_bytes(std::span(row.asset->vertex_blob)
                                                              .subspan(pp.vertex_element_offset, pp.vertex_count))});
-                        uploads.push_back({state.geometry, pp.index_byte_offset,
+                        uploads.push_back({state.geometry_arenas[arena_index], pp.index_byte_offset,
                                            std::as_bytes(std::span(row.asset->index_blob)
                                                              .subspan(pp.index_element_offset, pp.index_count))});
                         created_draws.push_back(pp.draw);
+                        created_draw_arenas.push_back(arena_index);
                     }
                 }
                 const auto uploaded = device.apply_resource_changes({.buffer_uploads = uploads});
                 if (!uploaded) return {.error = uploaded.error};
                 state.staged_buffer_upload_count += uploads.size();
-                state.geometry_cursor = layout.cursor;
                 const std::size_t first_draw_index = state.geometry_draws.size();
                 state.geometry_draws.insert(state.geometry_draws.end(), created_draws.begin(), created_draws.end());
+                state.geometry_draw_arenas.insert(state.geometry_draw_arenas.end(),
+                                                  created_draw_arenas.begin(), created_draw_arenas.end());
                 for (std::size_t i = 0; i < created_begins.size(); ++i)
                 {
                     output.value.geometry_handles.push_back(
@@ -499,7 +533,8 @@ namespace apps
                     const uint32_t group = (blend ? 2u : 0u) + (double_sided ? 1u : 0u);
                     const glm::vec3 position = glm::vec3(model[3]);
                     groups[group].push_back({model, range,
-                        glm::dot(position - camera_position, position - camera_position)});
+                        glm::dot(position - camera_position, position - camera_position),
+                        state.geometry_draw_arenas[draw_slot]});
                 }
             }
             for (uint32_t group = 2; group < groups.size(); ++group)
@@ -509,42 +544,64 @@ namespace apps
 
             state.transform_rows.clear();
             state.commands.clear();
-            // 每组命令在间接缓冲中的偏移（按组连续摆放，shadow 与主 pass 共享）
-            std::array<uint64_t, 4> group_offsets{};
+            // 命令按 (组, arena) 分段：组内候选按 arena 分桶（每段保持原距离序），
+            // 每段一条 draw 行引用对应 arena 的 vertex/index 缓冲。单 arena 时每组
+            // 恰一段，命令布局与单缓冲时代逐字节一致（多 arena 仅在几何 >256MB 时出现）。
+            struct arena_segment
+            {
+                std::uint32_t arena = 0;
+                std::uint64_t indirect_offset = 0;
+                std::uint32_t draw_count = 0;
+            };
+            std::array<std::vector<arena_segment>, 4> group_segments;
+            for (auto& segments : group_segments)
+                segments.clear();
             for (uint32_t group = 0; group < groups.size(); ++group)
             {
-                group_offsets[group] = state.commands.size() * sizeof(render_graph::indexed_indirect_command);
+                std::vector<arena_segment>& segments = group_segments[group];
                 for (const auto& candidate : groups[group])
                 {
+                    if (segments.empty() || segments.back().arena != candidate.arena)
+                    {
+                        segments.push_back({.arena = candidate.arena,
+                                            .indirect_offset = state.commands.size() *
+                                                               sizeof(render_graph::indexed_indirect_command),
+                                            .draw_count = 0});
+                    }
                     const uint32_t draw_index = static_cast<uint32_t>(state.commands.size());
                     state.transform_rows.push_back({.model = candidate.model,
                                                     .metadata = {candidate.range.material_index, 0, 0, 0}});
                     state.commands.push_back({candidate.range.index_count, 1, candidate.range.first_index,
                                               candidate.range.vertex_offset, draw_index});
+                    ++segments.back().draw_count;
                 }
             }
-            // shadow pass：只画不透明单面组（group 0，depth-only pipeline，front
-            // cull 防 peter-panning）。double-sided 材质不投影是常见简化。
-            state.draws[0] = {
-                .pipeline = state.shadow_pipeline,
-                .vertex_buffer = state.geometry,
-                .index_buffer = state.geometry,
-                .indirect_buffer = state.indirect,
-                .indirect_offset = group_offsets[0],
-                .draw_count = static_cast<uint32_t>(groups[0].size()),
-                .stride = sizeof(render_graph::indexed_indirect_command),
-            };
-            // 主 pass：四组（含透明，深度写入已按组关闭）
-            for (uint32_t group = 0; group < 4; ++group)
-                state.draws[group + 1] = {
-                    .pipeline = state.pipelines[group],
-                    .vertex_buffer = state.geometry,
-                    .index_buffer = state.geometry,
+            // shadow pass：group 0 的各 arena 段（不透明单面组，depth-only pipeline，
+            // front cull 防 peter-panning；double-sided 材质不投影是常见简化）。
+            state.draws.clear();
+            for (const auto& segment : group_segments[0])
+                state.draws.push_back({
+                    .pipeline = state.shadow_pipeline,
+                    .vertex_buffer = state.geometry_arenas[segment.arena],
+                    .index_buffer = state.geometry_arenas[segment.arena],
                     .indirect_buffer = state.indirect,
-                    .indirect_offset = group_offsets[group],
-                    .draw_count = static_cast<uint32_t>(groups[group].size()),
+                    .indirect_offset = segment.indirect_offset,
+                    .draw_count = segment.draw_count,
                     .stride = sizeof(render_graph::indexed_indirect_command),
-                };
+                });
+            const std::uint32_t main_draw_begin = static_cast<std::uint32_t>(state.draws.size());
+            // 主 pass：四组 × 各 arena 段（含透明，深度写入已按组关闭）
+            for (uint32_t group = 0; group < 4; ++group)
+                for (const auto& segment : group_segments[group])
+                    state.draws.push_back({
+                        .pipeline = state.pipelines[group],
+                        .vertex_buffer = state.geometry_arenas[segment.arena],
+                        .index_buffer = state.geometry_arenas[segment.arena],
+                        .indirect_buffer = state.indirect,
+                        .indirect_offset = segment.indirect_offset,
+                        .draw_count = segment.draw_count,
+                        .stride = sizeof(render_graph::indexed_indirect_command),
+                    });
             frame_uniform uniform{.view = camera_rows.front().view,
                                   .projection = camera_rows.front().projection};
             uniform.projection[1][1] *= -1.0F;
@@ -618,8 +675,10 @@ namespace apps
             };
             plan.cache_key = 0x474c544650425200ull;
             state.frame_resources = {{
+                // Geometry 行声明 arena 0（首个 arena）；后续 arena 经 draw 行句柄
+                // 直接引用（持久 device-local 顶点/索引缓冲无 barrier 需求）。
                 {.source = render_graph::frame_resource_source::persistent_buffer,
-                 .name = "Geometry", .buffer = state.geometry},
+                 .name = "Geometry", .buffer = state.geometry_arenas.front()},
                 {.source = render_graph::frame_resource_source::persistent_buffer,
                  .name = "Transforms", .buffer = state.transforms},
                 {.source = render_graph::frame_resource_source::persistent_buffer,
@@ -658,13 +717,15 @@ namespace apps
             }};
             state.frame_passes = {{
                 {.name = "ShadowPass", .kind = render_graph::pass_kind::raster,
-                 .attachments = {0, 1}, .indexed_indirect_draws = {0, 1},
+                 .attachments = {0, 1}, .indexed_indirect_draws = {0, main_draw_begin},
                  .push_constant_size = sizeof(shadow_push),
                  .push_constant_stage_mask = render_graph::shader_stage_vertex_bit,
                  .area = {.width = shadow_map_size, .height = shadow_map_size}},
                 {.name = "GltfSponzaPass", .kind = render_graph::pass_kind::raster,
                  .buffer_accesses = {0, 3}, .image_accesses = {0, 1},
-                 .attachments = {1, 2}, .indexed_indirect_draws = {1, 4},
+                 .attachments = {1, 2},
+                 .indexed_indirect_draws = {main_draw_begin,
+                                            static_cast<std::uint32_t>(state.draws.size() - main_draw_begin)},
                  .push_constant_size = sizeof(state.push),
                  .push_constant_stage_mask = render_graph::shader_stage_vertex_bit |
                                               render_graph::shader_stage_fragment_bit},
