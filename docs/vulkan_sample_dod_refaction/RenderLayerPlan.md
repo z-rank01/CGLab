@@ -1,6 +1,6 @@
 # 渲染层 R 系列计划：阴影 pass 与 render-graph 能力扩展
 
-> 状态：**R0a–R0c + R1a–R1d 已实施完成（2026-08-15，提交见 §阶段记录）；R2/R3 后置待立项**。
+> 状态：**R0a–R0c + R1a–R1e + R2 已实施完成（2026-08-16，提交见 §阶段记录）；R3 后置待立项**。
 > 依据：`Architecture.md`（四层模型、还债清单、帧通道术语表）、
 > `EngineLayerDoDPlan.md`（D/F 系列推进纪律与文档风格）、render-graph 子仓
 > `docs/ArchitectureAndInternals.md`（pass 模型、同步两遍法）与 `docs/计划.md`。
@@ -151,12 +151,32 @@ attachment format 进 pipeline key；per-pass push constant 切片与独立 indi
   - 一盏冷色补光（无阴影）lift 背光面。
 - 验收：smoke 6 帧（--validation）通过，阴影契约（5/2/2）保持成立。
 
-## R2 — compare sampler + 硬件 PCF（后置独立段，本轮不做）
+## R2 — compare sampler + 硬件 PCF（✅ 已实施 2026-08-16，提交见 §阶段记录）
 
 RG 子仓 `sampler_desc` 加 compare 字段（min/mag/compare op；`vk_runtime.h` 的
 `vk_sampler_desc`、`vk_bindless.cpp create_sampler`、`vulkan_device.cpp` lowering、
 DX12/Metal 契约测试同步）→ 主仓 shadow sampler 换 comparison sampler，shader 删
-手动比较。触发：R1 落地后作为独立提交评审。
+手动比较。
+
+**实施细节（2026-08-16）**：
+
+- 子仓（`6cf61c5`）：`sampler_compare_op` 枚举（never = 普通采样，存在性代替
+  布尔）+ `sampler_desc.compare_op`；`vk_sampler_desc.compare_op` →
+  `create_sampler` 按 `compare_op != NEVER` 设 `compareEnable`/`compareOp`
+  （linear 滤波 + dref 采样 = 硬件 2×2 PCF）；vulkan lowering 经可测的
+  `lower_vk_compare_op`；DX12 `lower/normalize_dx12_sampler_desc`
+  （`D3D12_SAMPLER_DESC` + `COMPARISON_FUNC` 往返）、Metal `metal_sampler_lowering`
+  契约同步；`resource_description_lowering_test` 增三后端断言（默认 never 不被
+  误判为 comparison sampler）。
+- 主仓：shadow sampler 改 comparison sampler（`LESS_OR_EQUAL` + linear 滤波），
+  `gltf.frag` 的 3×3 手动比较循环删为单次 `sampler2DShadow` dref 采样
+  （`OpImageSampleDrefImplicitLod`，slope-scaled bias 进 reference 深度）；
+  `light_uniform` 删 `shadow_texel_size`（std140 布局不变，三 pad 补齐）。
+- **调试视图适配**：comparison sampler 禁止非比较读取（validation VUID），
+  debug shader 读原始深度必须用独立普通采样器——新增 debug raw sampler
+  （nearest + clamp，无比较）进 bindless，`debug_push.sampler_slot` 改指它；
+  M3 的 `--debug-view shadow|depth` 语义与输出逐字不变。
+- reversed-Z 评审结论：**不做**（见 §不做）。
 
 ## R3 — 可选后置：阴影视锥剔除 + per-pass draw 遥测
 
@@ -176,7 +196,10 @@ R1 后评估阴影 pass 的 CPU 成本再立项。
 
 - cascaded shadow map（CSM 分阶投影后续再说）、PCSS/软阴影。
 - 透明物投影（shadow pass 只画不透明两组；透明物不投影是常见简化）。
-- reversed-Z（需 depthCompareOp 扩展，正向 Z + bias 够用；R2 评审时再议）。
+- reversed-Z（**2026-08-16 M4 评审结论：不做**。阴影图是正交投影，深度线性、
+  D32 精度充足；主 pass 当前无 z-fighting 症状。若 M10 CSM 近阶小视锥或大场景
+  实机数据（Plan.md §4 欠债）出现精度问题再评估——届时翻转需同步改 depth
+  clear/比较方向、采样器比较方向与 bias 符号，并重审 `0ef2da49` 的深度约定）。
 - compare sampler（R2）、transient→bindless 槽位协议（缺口 D）、后处理
   （per-pass area 已铺路）、GI、IBL。
 - 大场景上传路径 / job system / DI 风格统一：维持各自触发条款，不在本轮。
@@ -194,5 +217,5 @@ R1 后评估阴影 pass 的 CPU 成本再立项。
 | R1c | gltf_shadow.vert + frag 阴影采样（✅ 2026-08-15：glslc 编译通过；frag 平行光主光 + 3×3 手动 PCF + slope-scaled bias；点光保留无阴影） | `9baf0335` |
 | R1d | smoke 契约 + 全量验证（✅ 2026-08-15：契约默认值 4→5 / 1→2 且 `expected_draw_passes_per_frame=2`（triangle 覆盖 1/1/1）；43/43 ctest 绿 + Triangle/GltfSponza GPU smoke 6 帧（--validation）通过零警告） | `b2d1ac72` |
 | R1e | ShadowSample 小物件阴影展示（✅ 2026-08-15：接影地面 + 斜射太阳光 + 紧凑正交视锥 + 冷色补光；smoke 6 帧通过） | `f68bed06` |
-| R2 | compare sampler + 硬件 PCF | 后置 |
+| R2 | compare sampler + 硬件 PCF（✅ 2026-08-16：子仓 `6cf61c5`（sampler_desc.compare_op + 三后端契约）；主仓 `0f1348ec`（comparison sampler + dref 硬件 PCF + debug raw sampler）；42/42 ctest + 7 组 GPU smoke 全过；reversed-Z 评审结论=不做） | ✅ 2026-08-16：子仓 `6cf61c5`、主仓 `0f1348ec` |
 | R3 | 阴影视锥剔除 + per-pass 遥测 | 可选后置 |

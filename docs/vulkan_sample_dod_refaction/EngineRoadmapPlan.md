@@ -147,6 +147,24 @@ slot；现改由 recipe state 持有到帧录制完成。
 **验收补充**：M3 的 debug view 用于 PCF 前后 A/B 目检；reversed-Z 按计划在
 本阶段评审。
 
+**结果（2026-08-16）**：✅ 已提交子仓 `6cf61c5` + 主仓 `0f1348ec`。
+`sampler_compare_op` 枚举（never=普通采样，存在性代替布尔）→ `sampler_desc`
+compare 字段贯通 vk create_sampler（compareEnable/compareOp）+ DX12/Metal
+lowering 契约 + 三后端契约测试；主仓 shadow sampler 改 comparison sampler
+（LESS_OR_EQUAL + linear 滤波），`gltf.frag` 3×3 手动比较循环删为单次
+`sampler2DShadow` dref 采样（硬件 2×2 PCF，slope-scaled bias 进 reference）；
+`light_uniform` 删 `shadow_texel_size`（std140 布局不变）。**调试视图适配**：
+comparison sampler 禁非比较读取（VUID），debug shader 读原始深度改用独立
+debug raw sampler（nearest+clamp 无比较），`--debug-view` 语义输出逐字不变。
+42/42 ctest 绿 + Triangle/GltfSponza/Shadow/Culling 默认与 `--debug-view`
+（shadow/depth）共 7 组 smoke 全过（--validation 零错误；稳态帧 descriptor
+updates=0 保持）。PCF 前后 A/B：同场景前后构建截帧逐字节一致（2048² 阴影图
+±4 正交盒下两种 PCF 亚像素等价，硬件路径 1 次 dref 替代 9 次手动比较）；
+真人大尺度目检待外部资产（helmet 等）交互验证。**reversed-Z 评审结论：不做**
+（阴影图正交投影深度线性、D32 精度充足；主 pass 无 z-fighting 症状；
+M10 CSM 近阶小视锥或大场景实机数据出现精度问题再评估——届时需同步翻转
+depth clear/比较方向、采样器比较方向与 bias 符号）。
+
 ---
 
 ## M5 — R3 阴影视锥剔除 + per-pass 遥测
@@ -247,7 +265,7 @@ sampler）与 M5（每阶视锥剔除）全部就绪。
 
 - deferred / G-Buffer（若立项，其查看器复用 M3 机制）；
 - GI 本体（M9 只做 IBL；probe 系统另立计划）；
-- PCSS 软阴影、透明物投影、reversed-Z（M4 评审后再议）；
+- PCSS 软阴影、透明物投影、reversed-Z（**2026-08-16 M4 评审结论：不做**，见 §M4 结果）。
 - C1 job system、层级 B：维持触发式后置，不在本计划排期。
 
 ## 阶段与提交记录
@@ -258,7 +276,7 @@ sampler）与 M5（每阶视锥剔除）全部就绪。
 | M1 | F4 帧通道保活机制化 | ✅ 2026-08-16：`33e0285e` |
 | M2 | T1a 可增长 arena 池 | ✅ 2026-08-16：`22e4521d` |
 | M3 | R4 调试可视化（阴影图/深度查看器） | ✅ 2026-08-16：`ef1a1687`（子仓修复 `4d7a4b5`） |
-| M4 | R2 compare sampler + 硬件 PCF | 待实施 |
+| M4 | R2 compare sampler + 硬件 PCF | ✅ 2026-08-16：子仓 `6cf61c5` + 主仓 `0f1348ec` |
 | M5 | R3 阴影视锥剔除 + per-pass 遥测 | 待实施 |
 | M6 | R5 后处理链路 | 待实施 |
 | M7 | T1b 分块流式上传 | 待实施 |

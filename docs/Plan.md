@@ -79,7 +79,7 @@
 | 层级 B：RG 持久资源逻辑句柄化 | 大场景裁剪/热重载需求出现时 | RG 子仓 `ArchitectureAndInternals.md` §13.4 |
 | T2/T3 NVMe DMA + GPU 解压 | M7 数据证明仍有量级差距时 | 子仓上传规划 §五.4/§五.5 |
 | 专用传输线程（§五.3） | 随 M7 立项一并评审（触发 C1） | 子仓上传规划 §五.3 |
-| reversed-Z | M4 评审时给结论 | `RenderLayerPlan.md` §不做 |
+| reversed-Z | ~~M4 评审时给结论~~ ✅ 2026-08-16 结论：**不做**（阴影图正交投影深度线性、D32 精度充足；主 pass 无精度症状；M10 CSM 近阶或大场景实机数据出现 z-fighting 再评估） | `RenderLayerPlan.md` §不做 |
 | DI 风格统一（`render_driver` function-table vs `asset_service`/`window` 虚接口） | 下次新增边界接口时一并评审 | `Architecture.md` 还债清单 |
 | 物理多队列启用 / history 资源语义 | RG 预留能力，无排期 | RG 子仓 `ArchitectureAndInternals.md` |
 | pipeline 去重的全量哈希 + 线性扫（`vk_pipeline_store.cpp:79-88/249-258`） | 非每帧路径；批量建管线可测到开销时再议 | H1 审查记录 |
@@ -116,7 +116,7 @@
 | M1 | F4 帧通道保活机制化 | ✅ 2026-08-16：`33e0285e` |
 | M2 | T1a 可增长 arena 池 | ✅ 2026-08-16：`22e4521d` |
 | M3 | R4 调试可视化（阴影图/深度查看器） | ✅ 2026-08-16：`ef1a1687`（子仓 `4d7a4b5`；修复 `acdf5467`/`fcb9b403`） |
-| M4 | R2 compare sampler + 硬件 PCF | 待实施 |
+| M4 | R2 compare sampler + 硬件 PCF | ✅ 2026-08-16：`0f1348ec`（子仓 `6cf61c5`；reversed-Z 评审结论=不做，见 RenderLayerPlan §不做） |
 | M5 | R3 阴影视锥剔除 + per-pass 遥测 | 待实施 |
 | H1 | 录制路径 DoD 还债 | 待实施 |
 | M7 | T1b 分块流式上传 | 待实施 |
