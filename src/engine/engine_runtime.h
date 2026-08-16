@@ -36,6 +36,12 @@ public:
     void shutdown() noexcept;
     [[nodiscard]] std::uint32_t validation_error_count() const noexcept;
     [[nodiscard]] engine::render_statistics statistics() const noexcept { return run_statistics; }
+    // 末帧计数器（R3/M5）：smoke 契约按帧校验 per-pass draw 计数（主 pass = 全量、
+    // 阴影 pass ≤ 主 pass、debug pass 仅调试模式画 quad）。
+    [[nodiscard]] const engine::frame_counters& last_frame_counters() const noexcept
+    {
+        return telemetry.frame_counters;
+    }
 
     void set_initial_geometry(engine::asset_database asset);
     void set_required_startup_asset(std::filesystem::path path);

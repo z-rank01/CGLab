@@ -247,8 +247,10 @@ namespace apps
             if (!updated) return {.error = updated.error};
             if (packet.counters)
             {
-                // draw/upload 计数回填：本帧命令数 + 加载帧的 staging 行数
+                // draw/upload 计数回填：本帧命令数 + 加载帧的 staging 行数。
+                // per-pass 口径（R3/M5）：单 pass 即主 pass，阴影/调试 pass 恒 0。
                 packet.counters->draw_commands = state.commands.size();
+                packet.counters->main_draw_count = state.commands.size();
                 packet.counters->buffer_upload_count =
                     uploads.size() + std::exchange(state.staged_buffer_upload_count, 0);
                 packet.counters->image_upload_count = std::exchange(state.staged_image_upload_count, 0);

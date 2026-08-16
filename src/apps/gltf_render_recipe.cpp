@@ -15,6 +15,7 @@
 
 #include <glm/glm.hpp>
 
+#include "_interface/culling.h"
 #include "platform/vulkan/render_graph_driver.h"
 #include "engine/geometry_upload_plan.h"
 
@@ -93,6 +94,7 @@ namespace apps
             engine::draw_range range;
             float distance_squared = 0.0F;
             std::uint32_t arena = 0; // 几何所在 arena 池下标（draw 行按 (组, arena) 分段）
+            std::uint8_t light_visible = 1; // 光视图可见掩码（R3/M5；0 = 阴影 pass 跳过）
         };
 
         struct recipe_state
@@ -135,11 +137,19 @@ namespace apps
             std::vector<std::uint32_t> geometry_draw_counts;
             std::vector<std::uint8_t> geometry_alive;
             std::vector<std::uint32_t> geometry_draw_arenas;
+            // 每 geometry handle 的 mesh 局部 bounds（R3/M5 光视图剔除输入；
+            // 与 geometry_draw_begins 同长同序，上传时随句柄维护）
+            std::vector<glm::vec3> mesh_bounds_min;
+            std::vector<glm::vec3> mesh_bounds_max;
             std::vector<material_gpu_row> material_rows{1};
             uint32_t geometry_arena = 0;      // 当前 arena（geometry_cursor 归属）
             uint64_t geometry_cursor = 0;     // 当前 arena 内游标
             std::vector<transform_row> transform_rows;
             std::vector<render_graph::indexed_indirect_command> commands;
+            // 阴影 pass 独立命令区（R3/M5）：只含光视锥内 group 0 候选，
+            // 上传到 indirect buffer 主命令区之后；阴影 draw 行按 (arena) 分段引用。
+            std::vector<render_graph::indexed_indirect_command> shadow_commands;
+            std::uint64_t shadow_draw_count = 0; // 本帧阴影 pass 候选 draw 数（per-pass 遥测）
             // 加载帧的 staging 上传计数（build_frame 回填后清零）
             uint64_t staged_buffer_upload_count = 0;
             uint64_t staged_image_upload_count = 0;
@@ -614,6 +624,10 @@ namespace apps
                         static_cast<std::uint32_t>(first_draw_index + created_begins[i]));
                     state.geometry_draw_counts.push_back(created_counts[i]);
                     state.geometry_alive.push_back(1);
+                    // R3/M5：随句柄维护 mesh 局部 bounds（光视图剔除输入）
+                    const auto& mesh = row.asset->meshes[row.first_mesh + i];
+                    state.mesh_bounds_min.push_back(mesh.bounds_min);
+                    state.mesh_bounds_max.push_back(mesh.bounds_max);
                 }
             }
             for (const auto& row : batch.geometry_retires)
@@ -639,6 +653,13 @@ namespace apps
             // 折叠进 cache key（切换模式触发重编译）。
             const apps::debug_view_request* debug = packet.channels->find_state<apps::debug_view_request>();
             const uint32_t debug_mode = debug != nullptr && debug->mode <= 2U ? debug->mode : 0U;
+            // R3/M5 光视图剔除：sun 缺失（无平行光）时保守全画（原行为）。
+            // 光视图是 apps 层概念（sun_light 通道），剔除在 recipe 侧完成——
+            // 与 engine 相机剔除共用 _interface/culling.h 纯函数，双视图各归其位。
+            const apps::sun_light* sun = packet.channels->find_state<apps::sun_light>();
+            const auto light_frustum = sun != nullptr
+                ? std::optional<interface::culling::frustum>(interface::culling::make_frustum(sun->view_proj))
+                : std::optional<interface::culling::frustum>{};
             // 分组 scratch 帧间复用（clear 后重建，稳态零分配）
             std::array<std::vector<draw_candidate>, 4>& groups = state.group_scratch;
             for (auto& group : groups)
@@ -651,6 +672,18 @@ namespace apps
                     continue;
                 if (state.geometry_alive[instance.mesh] == 0) continue;
                 const auto& model = transform_rows[instance.transform];
+                // 光视图掩码（R3/M5）：实例级世界 AABB × 光视锥；mesh 越界保守判可见。
+                // 光视锥近侧平面取 -w<=z<=w 松约束（保留光后少量对象，宁多画不丢影）。
+                std::uint8_t light_visible = 1;
+                if (light_frustum)
+                {
+                    if (instance.mesh < state.mesh_bounds_min.size())
+                    {
+                        const auto world = interface::culling::transform_aabb(
+                            model, state.mesh_bounds_min[instance.mesh], state.mesh_bounds_max[instance.mesh]);
+                        light_visible = interface::culling::test_aabb(*light_frustum, world.min, world.max) ? 1 : 0;
+                    }
+                }
                 // CSR 直读列：mesh handle → 扁平 draw 列切片（无堆指针追逐）
                 const std::uint32_t draw_end = state.geometry_draw_begins[instance.mesh] +
                                                state.geometry_draw_counts[instance.mesh];
@@ -666,9 +699,12 @@ namespace apps
                     const bool double_sided = material.roughness_alpha.w != 0.0F;
                     const uint32_t group = (blend ? 2u : 0u) + (double_sided ? 1u : 0u);
                     const glm::vec3 position = glm::vec3(model[3]);
-                    groups[group].push_back({model, range,
-                        glm::dot(position - camera_position, position - camera_position),
-                        state.geometry_draw_arenas[draw_slot]});
+                    groups[group].push_back({.model = model,
+                                             .range = range,
+                                             .distance_squared = glm::dot(position - camera_position,
+                                                                          position - camera_position),
+                                             .arena = state.geometry_draw_arenas[draw_slot],
+                                             .light_visible = light_visible});
                 }
             }
             for (uint32_t group = 2; group < groups.size(); ++group)
@@ -720,19 +756,57 @@ namespace apps
                 debug_indirect_offset = state.commands.size() * sizeof(render_graph::indexed_indirect_command);
                 state.commands.push_back({6, 1, 0, 0, draw_index});
             }
-            // shadow pass：group 0 的各 arena 段（不透明单面组，depth-only pipeline，
-            // front cull 防 peter-panning；double-sided 材质不投影是常见简化）。
-            state.draws.clear();
-            for (const auto& segment : group_segments[0])
+            // shadow pass 命令区（R3/M5）：只含光视锥内 group 0 候选（不透明单面组，
+            // depth-only pipeline，front cull 防 peter-panning；double-sided 材质不投影
+            // 是常见简化）。独立命令区上传到 indirect buffer 主命令区之后，按 (arena)
+            // 分段出 draw 行（段内保持候选原序；draw_index = 候选在 group 0 的序号，
+            // 与 transform 行写入顺序一致）。
+            state.shadow_commands.clear();
+            state.shadow_draw_count = 0;
+            struct shadow_segment
+            {
+                std::uint32_t arena = 0;
+                std::uint32_t begin = 0; // shadow_commands 内段起点
+                std::uint32_t count = 0;
+            };
+            std::optional<shadow_segment> active_shadow;
+            const auto emit_shadow_segment = [&]()
+            {
+                if (!active_shadow || active_shadow->count == 0) return;
                 state.draws.push_back({
                     .pipeline = state.shadow_pipeline,
-                    .vertex_buffer = state.geometry_arenas[segment.arena],
-                    .index_buffer = state.geometry_arenas[segment.arena],
+                    .vertex_buffer = state.geometry_arenas[active_shadow->arena],
+                    .index_buffer = state.geometry_arenas[active_shadow->arena],
                     .indirect_buffer = state.indirect,
-                    .indirect_offset = segment.indirect_offset,
-                    .draw_count = segment.draw_count,
+                    .indirect_offset = (state.commands.size() + active_shadow->begin) *
+                                       sizeof(render_graph::indexed_indirect_command),
+                    .draw_count = active_shadow->count,
                     .stride = sizeof(render_graph::indexed_indirect_command),
                 });
+            };
+            state.draws.clear();
+            std::uint32_t group0_ordinal = 0;
+            for (const auto& candidate : groups[0])
+            {
+                if (candidate.light_visible != 0)
+                {
+                    if (!active_shadow || active_shadow->arena != candidate.arena)
+                    {
+                        emit_shadow_segment();
+                        active_shadow = shadow_segment{
+                            .arena = candidate.arena,
+                            .begin = static_cast<std::uint32_t>(state.shadow_commands.size()),
+                            .count = 0,
+                        };
+                    }
+                    state.shadow_commands.push_back({candidate.range.index_count, 1, candidate.range.first_index,
+                                                     candidate.range.vertex_offset, group0_ordinal});
+                    ++active_shadow->count;
+                    ++state.shadow_draw_count;
+                }
+                ++group0_ordinal;
+            }
+            emit_shadow_segment();
             const std::uint32_t main_draw_begin = static_cast<std::uint32_t>(state.draws.size());
             // 主 pass：四组 × 各 arena 段（含透明，深度写入已按组关闭）
             for (uint32_t group = 0; group < 4; ++group)
@@ -783,7 +857,7 @@ namespace apps
                 }
             }
             // 帧通道消费平行光（缺失 → intensity=0，frag 跳过阴影采样——编写者责任）。
-            const apps::sun_light* sun = packet.channels->find_state<apps::sun_light>();
+            // sun 指针在帧首已取（R3/M5 光视图剔除），此处复用。
             light_uniform light{};
             if (sun != nullptr)
             {
@@ -792,7 +866,7 @@ namespace apps
                 light.color = glm::vec4(sun->color, 1.0F);
                 light.intensity = sun->intensity;
             }
-            std::array<render_graph::buffer_upload_row, 7> uploads{
+            std::array<render_graph::buffer_upload_row, 8> uploads{
                 render_graph::buffer_upload_row{state.light_uniforms[environment.frame_index], 0,
                                                 std::as_bytes(std::span(&light, 1))},
                 render_graph::buffer_upload_row{state.frame_uniforms[environment.frame_index], 0,
@@ -808,7 +882,15 @@ namespace apps
                 render_graph::buffer_upload_row{state.lights, sizeof(glm::vec4) * max_lights * 2,
                                                 std::as_bytes(std::span(gpu_intensities))},
             };
-            const std::uint32_t upload_count = light_count > 0 ? 7U : 4U;
+            std::uint32_t upload_count = light_count > 0 ? 7U : 4U;
+            // R3/M5：阴影 pass 独立命令区（主命令区之后）
+            if (!state.shadow_commands.empty())
+            {
+                uploads[upload_count] = {
+                    state.indirect, sizeof(render_graph::indexed_indirect_command) * state.commands.size(),
+                    std::as_bytes(std::span(state.shadow_commands))};
+                ++upload_count;
+            }
             const auto updated = device.apply_resource_changes(
                 {.buffer_uploads = std::span(uploads.data(), upload_count)});
             if (!updated) return {.error = updated.error};
@@ -819,6 +901,12 @@ namespace apps
                 packet.counters->buffer_upload_count =
                     upload_count + std::exchange(state.staged_buffer_upload_count, 0);
                 packet.counters->image_upload_count = std::exchange(state.staged_image_upload_count, 0);
+                // R3/M5 per-pass draw 计数（M8 pass 瀑布数据源）：主 pass = 全量候选
+                // （debug quad 命令归属 debug pass）；阴影 pass = 光视锥内 group 0 候选。
+                packet.counters->shadow_draw_count = state.shadow_draw_count;
+                packet.counters->main_draw_count =
+                    static_cast<std::uint64_t>(state.commands.size()) - (debug_mode != 0U ? 1u : 0u);
+                packet.counters->debug_draw_count = debug_mode != 0U ? 1u : 0u;
             }
             state.push = {
                 .light_uniform_slot = state.light_uniform_slots[environment.frame_index],

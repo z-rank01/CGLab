@@ -17,6 +17,12 @@ namespace interface::culling
         std::array<glm::vec4, 6> planes{};
     };
 
+    struct aabb
+    {
+        glm::vec3 min{0.0F};
+        glm::vec3 max{0.0F};
+    };
+
     // 从 view_projection 提取 6 个外向平面（GLM 约定：view_projection = projection * view）。
     [[nodiscard]] inline frustum make_frustum(const glm::mat4& view_projection)
     {
@@ -61,5 +67,23 @@ namespace interface::culling
             }
         }
         return true;
+    }
+
+    // 用模型矩阵求世界空间 AABB：闭式解（世界半径 = |M| · local_half_extent，
+    // 等价于 8 角点变换，但无逐角点分支，可向量化）。R3/M5 起作为光视图
+    // 剔除的共享实现（scene::transform_bounds 委托本函数，双视图同款数学）。
+    [[nodiscard]] inline aabb transform_aabb(const glm::mat4& model,
+                                             const glm::vec3& min,
+                                             const glm::vec3& max)
+    {
+        const glm::vec3 center = glm::vec3(model * glm::vec4((min + max) * 0.5F, 1.0F));
+        const glm::vec3 half = (max - min) * 0.5F;
+        const glm::mat3 linear(model);
+        const glm::vec3 radius{
+            glm::dot(glm::abs(linear[0]), half),
+            glm::dot(glm::abs(linear[1]), half),
+            glm::dot(glm::abs(linear[2]), half),
+        };
+        return aabb{center - radius, center + radius};
     }
 } // namespace interface::culling

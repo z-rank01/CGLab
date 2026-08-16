@@ -763,7 +763,11 @@ void engine_runtime::publish_frame_telemetry()
                                                                   {"culled", telemetry.frame_counters.culled_count},
                                                                   {"draws", telemetry.frame_counters.draw_commands},
                                                                   {"buffer_uploads", telemetry.frame_counters.buffer_upload_count},
-                                                                  {"image_uploads", telemetry.frame_counters.image_upload_count}}},
+                                                                  {"image_uploads", telemetry.frame_counters.image_upload_count},
+                                                                  // R3/M5 per-pass draw 计数（M8 pass 瀑布数据源）
+                                                                  {"shadow_draws", telemetry.frame_counters.shadow_draw_count},
+                                                                  {"main_draws", telemetry.frame_counters.main_draw_count},
+                                                                  {"debug_draws", telemetry.frame_counters.debug_draw_count}}},
                                                             }));
 
     publish_scene_telemetry_if_changed();
@@ -834,6 +838,10 @@ bool engine_runtime::tick(std::optional<std::uint64_t> frame_limit)
             counter_slots[3] = telemetry.frame_counters.draw_commands;
             counter_slots[4] = telemetry.frame_counters.buffer_upload_count;
             counter_slots[5] = telemetry.frame_counters.image_upload_count;
+            // R3/M5 per-pass draw 计数（槽 6–8，槽 6–15 预留区间内）
+            counter_slots[6] = telemetry.frame_counters.shadow_draw_count;
+            counter_slots[7] = telemetry.frame_counters.main_draw_count;
+            counter_slots[8] = telemetry.frame_counters.debug_draw_count;
             measure::push(*telemetry.metrics_ring,
                           static_cast<std::uint64_t>(
                               std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() -

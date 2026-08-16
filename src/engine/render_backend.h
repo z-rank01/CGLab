@@ -57,6 +57,11 @@ namespace engine
         std::uint64_t draw_commands = 0;
         std::uint64_t buffer_upload_count = 0;
         std::uint64_t image_upload_count = 0;
+        // R3/M5 per-pass draw 计数（recipe 填）：M8 B3 pass 瀑布的数据源；
+        // 协议扩展即"pass 维度"（阴影/主/调试三 pass 固定集，随 recipe 演进）。
+        std::uint64_t shadow_draw_count = 0;
+        std::uint64_t main_draw_count = 0;
+        std::uint64_t debug_draw_count = 0;
     };
 
     // 加载分段报告：worker 填 load_us（dcl::load_gltf 全程，单次黑盒调用），

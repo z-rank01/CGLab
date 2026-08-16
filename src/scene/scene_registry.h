@@ -10,6 +10,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "_interface/culling.h"
 #include "engine/geometry.h"
 
 // scene::scene_registry
@@ -109,18 +110,13 @@ namespace scene
     }
 
     // 用变换矩阵求世界空间 AABB：闭式解（世界半径 = |M| · local_half_extent，
-    // 等价于 8 角点变换，但无逐角点分支，可向量化）
+    // 等价于 8 角点变换，但无逐角点分支，可向量化）。
+    // R3/M5 起委托 _interface/culling.h 的 transform_aabb（光视图剔除同款数学，
+    // 双视图单一实现）。
     [[nodiscard]] inline aabb transform_bounds(const aabb& local, const glm::mat4& model)
     {
-        const glm::vec3 center = glm::vec3(model * glm::vec4((local.min + local.max) * 0.5F, 1.0F));
-        const glm::vec3 half   = (local.max - local.min) * 0.5F;
-        const glm::mat3 linear(model);
-        const glm::vec3 radius{
-            glm::dot(glm::abs(linear[0]), half),
-            glm::dot(glm::abs(linear[1]), half),
-            glm::dot(glm::abs(linear[2]), half),
-        };
-        return aabb{center - radius, center + radius};
+        const auto world = interface::culling::transform_aabb(model, local.min, local.max);
+        return aabb{world.min, world.max};
     }
 
     class scene_registry
