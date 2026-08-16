@@ -1026,6 +1026,8 @@ namespace apps
                 packet.counters->shadow_draw_count = state.shadow_draw_count;
                 packet.counters->main_draw_count =
                     static_cast<std::uint64_t>(state.commands.size()) - 1u - (debug_mode != 0U ? 1u : 0u);
+                // resolve/debug 恒为一条全屏 quad draw——结构常量而非实测；
+                // pass 是否真执行由 smoke 契约（draw_pass_executions==帧数）覆盖。
                 packet.counters->resolve_draw_count = 1u;
                 packet.counters->debug_draw_count = debug_mode != 0U ? 1u : 0u;
             }
@@ -1075,7 +1077,7 @@ namespace apps
                 {.source = render_graph::frame_resource_source::persistent_image,
                  .name = "ShadowMap", .image = state.shadow_map},
                 {.source = render_graph::frame_resource_source::swapchain_image, .name = "Swapchain"},
-                // M6/R5：半分辨率 HDR 中间 RT（persistent，随 extent 重建）+
+                // M6/R5：半分辨率中间 RT（R8G8B8A8_UNORM，LDR 口径；persistent，随 extent 重建）+
                 // 半分辨率深度（transient）——主 pass 输出到这里，resolve 采样上屏。
                 {.source = render_graph::frame_resource_source::persistent_image,
                  .name = "HalfResColor", .image = state.half_res_image},
@@ -1121,7 +1123,7 @@ namespace apps
                 {.resource = {6}, .kind = render_graph::frame_attachment_kind::depth_stencil,
                  .store = render_graph::attachment_store_op::dont_care,
                  .clear = {.depth = 1.0F}},
-                // resolve：全屏 quad 覆盖整帧，load=dont_care
+                // resolve：全屏 quad 覆盖整帧，load 用默认 clear（不读旧内容）
                 {.resource = {4}, .kind = render_graph::frame_attachment_kind::color,
                  .store = render_graph::attachment_store_op::store},
                 // 调试视图：复用 swapchain 颜色附件，load=load 保留 resolve 输出

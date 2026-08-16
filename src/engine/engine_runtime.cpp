@@ -241,6 +241,7 @@ void engine_runtime::drain_streamed_uploads()
         const auto material_base = upload_asset_materials(upload.asset, &upload.report);
         if (!material_base)
         {
+            Logger::LogError("Streamed upload failed at material stage: " + material_base.error);
             if (control_plane && upload.respond)
             {
                 control_plane->post_response(upload.client_id,
@@ -262,11 +263,17 @@ void engine_runtime::drain_streamed_uploads()
                                                             chunk.mesh_count, &upload.report);
         if (!geometry_changes)
         {
+            Logger::LogError("Streamed upload failed at geometry chunk (mesh " +
+                             std::to_string(upload.next_mesh) + "): " + geometry_changes.error);
             if (control_plane && upload.respond)
             {
                 control_plane->post_response(upload.client_id,
                                              control_plane::make_error(upload.rpc_id, -32000, geometry_changes.error));
             }
+            // 已上传分片的句柄 retire（未上传部分仍是 invalid_geometry_handle 哨兵），
+            // 经 pending_geometry_retires 在 retire 边界统一排空——失败不泄漏 arena/句柄。
+            for (const auto handle : upload.mesh_handles)
+                if (handle != engine::invalid_geometry_handle) loads.pending_geometry_retires.push_back({handle});
             loads.streamed_uploads.erase(loads.streamed_uploads.begin());
             return;
         }
@@ -1132,7 +1139,8 @@ void engine_runtime::apply_resource_changes(frame_phase_context& context)
 {
     if (context.stop == frame_stop_reason::user_requested) return;
     apply_completed_loads();
-    // T1b/M7：分块流式上传逐帧排空（每帧一片；先 retire 再上传，句柄语义一致）
+    // T1b/M7：分块流式上传逐帧排空（每帧一片）；失败路径会把已上传句柄并入
+    // pending_geometry_retires，随后的 retire 边界同帧回收。
     drain_streamed_uploads();
     if (loads.pending_geometry_retires.empty()) return;
     const auto changed = renderer->apply_resource_changes({.geometry_retires = loads.pending_geometry_retires});
