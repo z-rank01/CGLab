@@ -220,6 +220,21 @@ updates 仍为 0（bindless 复用）。
 **验收**：帧时间 p99 有界（加载基准复测）+ GPU smoke + 进度上报在 web UI 可见
 （若 M8 已先行）。
 
+**结果（2026-08-16）**：✅ 已提交 `e5cad5c8`（子仓 docs `7c8aff0`）。engine 侧
+分片：运行时资产一律经 `streamed_upload` 逐帧排空（每帧一片，8MB 字节预算，
+整 mesh 边界；单片超预算的 mesh 独立成片）；片规划为纯函数 `plan_upload_chunk`
+（`loading_plan_test` 覆盖预算边界/超预算单 mesh/空 mesh/续传累加）；片间经 M2
+arena 池 `geometry_cursor` 跨帧续传，recipe 零改动（批量行本就支持任意 mesh
+范围）。`merge_asset_database` 拆为 upload_asset_materials / upload_asset_geometry /
+register_asset_scene：启动路径三者紧邻（行为不变），运行时路径上传分片、注册在
+全部片完成后一次完成。A0 协议新增 `telemetry.load_progress`（path/uploaded_bytes/
+total_bytes/fraction/meshes），capabilities 同步（protocol 测试断言）。
+**验证**：42/42 ctest + 6 组 smoke 全过；91.2MB 合成 glb（100 mesh，build/
+stream_test.glb 由 build/gen_stream_glb.ps1 生成）经 scene.load_asset 运行时加载
+13 片，进度 0.09→1.0 线性，**流式期间帧时间 p50/p99/max≈7ms 有界**（消除
+1–3 s/GB 单事务挂帧）；T1/T2/T3（压缩/GPU 解压/DMA）仍按上传路径规划 §六
+分级回退待后续（触发式）。
+
 ---
 
 ## M8 — B1 → B3：控制平面收尾 + RG 事件浏览器
@@ -295,7 +310,7 @@ sampler）与 M5（每阶视锥剔除）全部就绪。
 | M4 | R2 compare sampler + 硬件 PCF | ✅ 2026-08-16：子仓 `6cf61c5` + 主仓 `0f1348ec` |
 | M5 | R3 阴影视锥剔除 + per-pass 遥测 | ✅ 2026-08-16：`a74ca942` |
 | M6 | R5 后处理链路 | 待实施 |
-| M7 | T1b 分块流式上传 | 待实施 |
+| M7 | T1b 分块流式上传 | ✅ 2026-08-16：`e5cad5c8` |
 | M8 | B1→B3 控制平面 + RG 事件浏览器 | 待实施 |
 | M9 | IBL | 待实施 |
 | M10 | CSM | 待实施 |
