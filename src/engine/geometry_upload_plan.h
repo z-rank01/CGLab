@@ -39,6 +39,45 @@ namespace engine
         std::uint64_t cursor = 0;                            // 计划末尾 arena 游标（成功时）
     };
 
+    // 分块流式上传的片规划（T1b/M7）：在 [first_mesh, first_mesh + mesh_count) 内按
+    // 字节预算切出一片。整 mesh 边界（mesh 是上传事务原子单位）；单片超预算的
+    // mesh 独立成片（帧时间上界 = 单 mesh 大小，属设计取舍）。纯函数，可单测；
+    // 调用方以 next_mesh += mesh_count 跨帧续传（M2 arena 池游标天然支持）。
+    struct upload_chunk_plan
+    {
+        std::uint32_t mesh_count = 0;    // 本片 mesh 数（调用方保证范围非空，恒 ≥1）
+        std::uint64_t payload_bytes = 0; // 本片 vertex+index 字节数（进度遥测用）
+    };
+
+    [[nodiscard]] inline upload_chunk_plan plan_upload_chunk(const asset_database& asset,
+                                                             std::uint32_t first_mesh,
+                                                             std::uint32_t mesh_count,
+                                                             std::uint64_t budget)
+    {
+        upload_chunk_plan chunk;
+        std::uint64_t bytes = 0;
+        for (std::uint32_t m = 0; m < mesh_count; ++m)
+        {
+            const auto& mesh = asset.meshes[first_mesh + m];
+            std::uint64_t mesh_bytes = 0;
+            for (std::uint32_t r = 0; r < mesh.primitive_count; ++r)
+            {
+                const auto& primitive = asset.primitives[mesh.first_primitive + r];
+                mesh_bytes += static_cast<std::uint64_t>(primitive.vertex_count) * sizeof(vertex) +
+                              static_cast<std::uint64_t>(primitive.index_count) * sizeof(std::uint32_t);
+            }
+            // 恒取至少一个 mesh（空 mesh 计 0 字节，照常推进）
+            if (chunk.mesh_count != 0 && bytes + mesh_bytes > budget)
+            {
+                break;
+            }
+            bytes += mesh_bytes;
+            ++chunk.mesh_count;
+        }
+        chunk.payload_bytes = bytes;
+        return chunk;
+    }
+
     // 为 [first_mesh, first_mesh + mesh_count) 的 mesh 行段生成布局计划。
     // material_base 由材质上传结果传入；capacity 为 arena 容量，cursor 为当前游标。
     [[nodiscard]] inline engine::result<geometry_upload_plan> plan_geometry_uploads(

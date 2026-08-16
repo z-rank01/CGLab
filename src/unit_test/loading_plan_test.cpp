@@ -108,6 +108,34 @@ namespace
         check(plan.value.primitive_plan_rows[0].vertex_byte_offset % sizeof(engine::vertex) == 0, "cursor alignment respected");
         check(plan.value.mesh_primitive_counts[0] == 1, "single mesh count");
     }
+
+    void test_upload_chunk_plan()
+    {
+        // make_asset：mesh0 = 3v/3i + 2v/4i，mesh1 = 4v/6i。dcl::vertex = 72 字节。
+        // 字节：mesh0 = 5*72 + 7*4 = 388，mesh1 = 4*72 + 6*4 = 312。
+        auto asset = make_asset();
+        const auto whole = engine::plan_upload_chunk(asset, 0, 2, 1ull << 30);
+        check(whole.mesh_count == 2 && whole.payload_bytes == 700, "budget larger than asset takes all meshes");
+
+        // 预算恰在 mesh0 之后：两片（mesh0 | mesh1）
+        const auto first = engine::plan_upload_chunk(asset, 0, 2, 388);
+        check(first.mesh_count == 1 && first.payload_bytes == 388, "chunk boundary between meshes");
+        const auto second = engine::plan_upload_chunk(asset, 1, 1, 388);
+        check(second.mesh_count == 1 && second.payload_bytes == 312, "continuation chunk takes the remaining mesh");
+
+        // 预算小于首个 mesh：仍取一片（mesh 是事务原子单位，帧上界 = 单 mesh）
+        const auto oversize = engine::plan_upload_chunk(asset, 0, 2, 16);
+        check(oversize.mesh_count == 1 && oversize.payload_bytes == 388, "mesh larger than budget forms its own chunk");
+
+        // 空 mesh（0 字节）不阻塞推进：预算 0 也至少取一个 mesh
+        auto with_empty = make_asset();
+        with_empty.meshes.push_back({.name = "empty", .first_primitive = 3, .primitive_count = 0});
+        const auto empty_chunk = engine::plan_upload_chunk(with_empty, 2, 1, 0);
+        check(empty_chunk.mesh_count == 1 && empty_chunk.payload_bytes == 0, "empty mesh advances chunk");
+
+        // 跨片续传：next_mesh 语义（mesh_count 累加 = 全量）
+        check(first.mesh_count + second.mesh_count == 2, "chunk mesh counts sum to the range");
+    }
 } // namespace
 
 int main()
@@ -116,6 +144,7 @@ int main()
     test_material_mapping();
     test_range_errors();
     test_cursor_respect();
+    test_upload_chunk_plan();
 
     if (failures != 0)
     {

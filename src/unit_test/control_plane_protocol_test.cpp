@@ -321,6 +321,7 @@ namespace
         check(has_cap("scene.list"), "capabilities include scene.list");
         check(has_cap("telemetry.scene"), "capabilities include telemetry.scene");
         check(has_cap("telemetry.load"), "capabilities include telemetry.load");
+        check(has_cap("telemetry.load_progress"), "capabilities include telemetry.load_progress");
         check(has_cap("camera.set_culling"), "capabilities include camera.set_culling");
     }
 } // namespace

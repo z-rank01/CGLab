@@ -84,6 +84,24 @@ private:
         nlohmann::json rpc_id;
         bool respond = false;
     };
+    // T1b/M7 分块流式上传：大资产按每帧字节预算分片 apply（M2 arena 池游标跨帧
+    // 续传），完成前资产由主线程持有；进度经 A0 协议（telemetry.load_progress）
+    // 逐片上报，完成后统一注册场景（对象渐进可见的语义由注册时机决定）。
+    struct streamed_upload
+    {
+        engine::asset_database asset;
+        std::string client_id;
+        nlohmann::json rpc_id;
+        bool respond = false;
+        std::uint32_t material_base = 0;
+        bool materials_uploaded = false;
+        std::uint32_t next_mesh = 0;              // 下一片起点（mesh 句柄边界）
+        std::vector<engine::geometry_handle> mesh_handles;
+        std::uint64_t uploaded_bytes = 0;         // 进度：已上传 vertex+index 字节
+        std::uint64_t total_bytes = 0;
+        engine::load_report report;               // 完成时回填（worker 段 + 分片合计）
+        std::chrono::steady_clock::time_point upload_begin{};
+    };
     struct frame_loads
     {
         std::unique_ptr<asset_service> asset_loader;
@@ -91,6 +109,7 @@ private:
         std::unordered_map<engine::geometry_handle, std::uint32_t> geometry_ref_counts;
         std::vector<completed_asset_request> completed_asset_rows;
         std::vector<geometry_retire_row> pending_geometry_retires;
+        std::vector<streamed_upload> streamed_uploads;
         std::optional<engine::asset_database> initial_geometry;
         std::optional<engine::asset_database> initial_asset;
         std::optional<std::filesystem::path> required_startup_asset;
@@ -149,6 +168,26 @@ private:
     void enqueue_load(std::string path, std::string client_id, nlohmann::json rpc_id);
     void collect_completed_loads();
     void apply_completed_loads();
+    // T1b/M7 分块流式上传：运行时资产按片上传（每帧一片），完成前不注册场景。
+    void begin_streamed_upload(completed_asset_request& completed, pending_load response);
+    void drain_streamed_uploads();
+    void finalize_streamed_upload(streamed_upload& upload);
+    void publish_load_progress(const streamed_upload& upload) const;
+    // 上传（一次性或分片）与场景注册拆开：启动路径两者紧邻（行为不变），
+    // 运行时路径上传分片、注册在全部片完成后一次完成。
+    [[nodiscard]] engine::result<std::uint32_t> upload_asset_materials(const engine::asset_database& asset,
+                                                                       engine::load_report* report);
+    [[nodiscard]] engine::result<engine::resource_change_result> upload_asset_geometry(
+        const engine::asset_database& asset,
+        std::uint32_t material_base,
+        std::uint32_t first_mesh,
+        std::uint32_t mesh_count,
+        engine::load_report* report);
+    [[nodiscard]] std::vector<scene::object_id> register_asset_scene(
+        const engine::asset_database& asset,
+        std::span<const engine::geometry_handle> mesh_handles,
+        bool read_only,
+        engine::load_report* report);
     [[nodiscard]] std::vector<scene::object_id> merge_asset_database(engine::asset_database asset, bool read_only,
                                                                      engine::load_report* report = nullptr);
 

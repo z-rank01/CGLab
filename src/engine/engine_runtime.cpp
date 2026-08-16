@@ -6,12 +6,16 @@
 #include <utility>
 
 #include "asset/asset_service.h"
+#include "engine/geometry_upload_plan.h"
 #include "utility/logger.h"
 
 namespace
 {
     // 遥测推送间隔（秒）：10 Hz，避免每帧全量推 JSON
     constexpr float telemetry_interval_seconds = 0.1F;
+    // T1b/M7 分块流式上传：每帧字节预算（8 MB ≈ 亚毫秒 memcpy，帧时间有界；
+    // 单片超预算的 mesh 独立成片，帧上界 = 单 mesh 大小，设计取舍）
+    constexpr std::uint64_t upload_chunk_budget_bytes = 8ull * 1024ull * 1024ull;
 
     std::string geometry_arena_summary(const engine::load_report& report)
     {
@@ -202,93 +206,216 @@ void engine_runtime::apply_completed_loads()
             continue;
         }
 
-        const std::string asset_name = completed.result.value.name;
-        const std::size_t primitive_count = completed.result.value.primitives.size();
-        const auto ids = merge_asset_database(std::move(completed.result.value), false, &completed.report);
-        if (ids.empty()) continue;
-        Logger::LogInfo("Loaded runtime asset \"" + asset_name + "\" with " + std::to_string(ids.size()) + " mesh instance(s)" +
-                        " in " + std::to_string(completed.report.load_us) + "us (merge " +
-                        std::to_string(completed.report.merge_us) + "us, upload " +
-                        std::to_string(completed.report.upload_us) + "us, " +
-                        std::to_string(completed.report.vertex_bytes + completed.report.index_bytes) + " bytes" +
-                        geometry_arena_summary(completed.report) + ")");
-        if (control_plane)
-        {
-            publish_load_telemetry(completed.report);
-        }
-        if (control_plane && response.respond)
-        {
-            control_plane->post_response(response.client_id,
-                                         control_plane::make_result(response.rpc_id,
-                                                                    {{"id", ids.front()},
-                                                                     {"instances", ids},
-                                                                     {"name", asset_name},
-                                                                     {"primitives", primitive_count}}));
-        }
+        // T1b/M7：运行时资产一律分块流式上传（小资产单片完成，语义与一次性一致；
+        // 大资产跨帧续传，帧时间有界，进度经 A0 协议上报）。完成/失败在
+        // drain_streamed_uploads 统一收尾（响应、遥测、场景注册）。
+        begin_streamed_upload(completed, std::move(response));
     }
     loads.completed_asset_rows.clear();
 }
 
-std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset_database asset, bool read_only,
+void engine_runtime::begin_streamed_upload(completed_asset_request& completed, pending_load response)
+{
+    streamed_upload upload;
+    upload.asset = std::move(completed.result.value);
+    upload.client_id = std::move(response.client_id);
+    upload.rpc_id = std::move(response.rpc_id);
+    upload.respond = response.respond;
+    upload.report = std::move(completed.report);
+    upload.total_bytes = upload.asset.vertex_blob.size() * sizeof(engine::vertex) +
+                         upload.asset.index_blob.size() * sizeof(std::uint32_t);
+    upload.upload_begin = std::chrono::steady_clock::now();
+    loads.streamed_uploads.push_back(std::move(upload));
+}
+
+void engine_runtime::drain_streamed_uploads()
+{
+    if (loads.streamed_uploads.empty())
+    {
+        return;
+    }
+    // 每帧推进一个流的一片（顺序加载；worker 侧多资产并行解析不受影响）
+    streamed_upload& upload = loads.streamed_uploads.front();
+    if (!upload.materials_uploaded)
+    {
+        const auto material_base = upload_asset_materials(upload.asset, &upload.report);
+        if (!material_base)
+        {
+            if (control_plane && upload.respond)
+            {
+                control_plane->post_response(upload.client_id,
+                                             control_plane::make_error(upload.rpc_id, -32000, material_base.error));
+            }
+            loads.streamed_uploads.erase(loads.streamed_uploads.begin());
+            return;
+        }
+        upload.material_base = material_base.value;
+        upload.materials_uploaded = true;
+        upload.mesh_handles.resize(upload.asset.meshes.size(), engine::invalid_geometry_handle);
+    }
+    if (upload.next_mesh < upload.asset.meshes.size())
+    {
+        const auto chunk = engine::plan_upload_chunk(upload.asset, upload.next_mesh,
+                                                     static_cast<std::uint32_t>(upload.asset.meshes.size() - upload.next_mesh),
+                                                     upload_chunk_budget_bytes);
+        const auto geometry_changes = upload_asset_geometry(upload.asset, upload.material_base, upload.next_mesh,
+                                                            chunk.mesh_count, &upload.report);
+        if (!geometry_changes)
+        {
+            if (control_plane && upload.respond)
+            {
+                control_plane->post_response(upload.client_id,
+                                             control_plane::make_error(upload.rpc_id, -32000, geometry_changes.error));
+            }
+            loads.streamed_uploads.erase(loads.streamed_uploads.begin());
+            return;
+        }
+        for (std::uint32_t i = 0; i < chunk.mesh_count; ++i)
+        {
+            upload.mesh_handles[upload.next_mesh + i] = geometry_changes.value.geometry_handles[i];
+        }
+        upload.uploaded_bytes += chunk.payload_bytes;
+        upload.next_mesh += chunk.mesh_count;
+        if (control_plane)
+        {
+            publish_load_progress(upload);
+        }
+    }
+    if (upload.next_mesh >= upload.asset.meshes.size())
+    {
+        finalize_streamed_upload(upload);
+        loads.streamed_uploads.erase(loads.streamed_uploads.begin());
+    }
+}
+
+void engine_runtime::finalize_streamed_upload(streamed_upload& upload)
+{
+    const std::string asset_name = upload.asset.name;
+    const std::size_t primitive_count = upload.asset.primitives.size();
+    const auto ids = register_asset_scene(upload.asset, upload.mesh_handles, false, &upload.report);
+    if (ids.empty())
+    {
+        return; // 注册失败（如循环层级）：与一次性路径同语义，不回应、不上报
+    }
+    Logger::LogInfo("Loaded runtime asset \"" + asset_name + "\" with " + std::to_string(ids.size()) + " mesh instance(s)" +
+                    " in " + std::to_string(upload.report.load_us) + "us (merge " +
+                    std::to_string(upload.report.merge_us) + "us, upload " +
+                    std::to_string(upload.report.upload_us) + "us, " +
+                    std::to_string(upload.report.vertex_bytes + upload.report.index_bytes) + " bytes" +
+                    geometry_arena_summary(upload.report) + ")");
+    if (control_plane)
+    {
+        publish_load_telemetry(upload.report);
+    }
+    if (control_plane && upload.respond)
+    {
+        control_plane->post_response(upload.client_id,
+                                     control_plane::make_result(upload.rpc_id,
+                                                                {{"id", ids.front()},
+                                                                 {"instances", ids},
+                                                                 {"name", asset_name},
+                                                                 {"primitives", primitive_count}}));
+    }
+}
+
+void engine_runtime::publish_load_progress(const streamed_upload& upload) const
+{
+    const std::uint32_t mesh_total = static_cast<std::uint32_t>(upload.asset.meshes.size());
+    control_plane->publish(control_plane::make_notification("telemetry.load_progress",
+                                                            {
+                                                                {"path", upload.report.path},
+                                                                {"uploaded_bytes", upload.uploaded_bytes},
+                                                                {"total_bytes", upload.total_bytes},
+                                                                {"fraction",
+                                                                 upload.total_bytes != 0
+                                                                     ? static_cast<double>(upload.uploaded_bytes) /
+                                                                           static_cast<double>(upload.total_bytes)
+                                                                     : 1.0},
+                                                                {"meshes",
+                                                                 {{"done", upload.next_mesh},
+                                                                  {"total", mesh_total}}},
+                                                            }));
+}
+
+engine::result<std::uint32_t> engine_runtime::upload_asset_materials(const engine::asset_database& asset,
+                                                                     engine::load_report* report)
+{
+    engine::result<std::uint32_t> output;
+    const auto upload_begin = std::chrono::steady_clock::now();
+    const material_upload_row material_row{&asset};
+    const auto material_changes = renderer->apply_resource_changes({.material_uploads = std::span(&material_row, 1)});
+    if (report)
+    {
+        report->upload_us += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - upload_begin).count());
+    }
+    if (!material_changes || material_changes.value.material_bases.size() != 1)
+    {
+        output.error = "Failed to upload glTF materials: " + material_changes.error;
+        return output;
+    }
+    output.value = material_changes.value.material_bases.front();
+    return output;
+}
+
+engine::result<engine::resource_change_result> engine_runtime::upload_asset_geometry(
+    const engine::asset_database& asset,
+    std::uint32_t material_base,
+    std::uint32_t first_mesh,
+    std::uint32_t mesh_count,
+    engine::load_report* report)
+{
+    engine::result<engine::resource_change_result> output;
+    if (mesh_count == 0)
+    {
+        return output;
+    }
+    const auto upload_begin = std::chrono::steady_clock::now();
+    const geometry_upload_row geometry_row{&asset, first_mesh, mesh_count, material_base};
+    const auto geometry_changes = renderer->apply_resource_changes({.geometry_uploads = std::span(&geometry_row, 1)});
+    if (report)
+    {
+        report->upload_us += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - upload_begin).count());
+    }
+    if (!geometry_changes || geometry_changes.value.geometry_handles.size() != mesh_count)
+    {
+        output.error = "Failed to upload glTF geometry: " + geometry_changes.error;
+        return output;
+    }
+    if (report)
+    {
+        report->geometry_arena_count = geometry_changes.value.geometry_arena_count;
+        report->geometry_arenas_created = geometry_changes.value.geometry_arenas_created;
+        report->geometry_arena_reserved_bytes = geometry_changes.value.geometry_arena_reserved_bytes;
+        report->geometry_arena_used_bytes = geometry_changes.value.geometry_arena_used_bytes;
+        report->geometry_arena_allocation_us += geometry_changes.value.geometry_arena_allocation_us;
+        report->geometry_plan_us += geometry_changes.value.geometry_plan_us;
+        report->geometry_transfer_us += geometry_changes.value.geometry_transfer_us;
+    }
+    output.value = std::move(geometry_changes.value);
+    return output;
+}
+
+std::vector<scene::object_id> engine_runtime::register_asset_scene(const engine::asset_database& asset,
+                                                                   std::span<const engine::geometry_handle> mesh_handles,
+                                                                   bool read_only,
                                                                    engine::load_report* report)
 {
     const auto merge_begin = std::chrono::steady_clock::now();
-    std::uint64_t upload_us = 0;
-    const auto track_upload = [&upload_us](const auto& begin)
+    for (std::uint32_t mesh_index = 0; mesh_index < asset.meshes.size(); mesh_index++)
     {
-        upload_us += static_cast<std::uint64_t>(
-            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count());
-    };
-
-    const material_upload_row material_row{&asset};
-    const auto upload_begin = std::chrono::steady_clock::now();
-    const auto material_changes = renderer->apply_resource_changes({.material_uploads = std::span(&material_row, 1)});
-    track_upload(upload_begin);
-    if (!material_changes || material_changes.value.material_bases.size() != 1)
-    {
-        Logger::LogError("Failed to upload glTF materials: " + material_changes.error);
-        return {};
-    }
-    const std::uint32_t material_base = material_changes.value.material_bases.front();
-    std::vector<engine::geometry_handle> mesh_handles(asset.meshes.size(), engine::invalid_geometry_handle);
-    if (!asset.meshes.empty())
-    {
-        // 整资产单事务——单条批量行覆盖全部 mesh，零拷贝（recipe 直接引用共享 blob span）。
-        // 单事务原子性：全成或全败，无逐 mesh 回滚。
-        const geometry_upload_row geometry_row{&asset, 0, static_cast<std::uint32_t>(asset.meshes.size()), material_base};
-        const auto geometry_upload_begin = std::chrono::steady_clock::now();
-        const auto geometry_changes = renderer->apply_resource_changes({.geometry_uploads = std::span(&geometry_row, 1)});
-        track_upload(geometry_upload_begin);
-        if (!geometry_changes || geometry_changes.value.geometry_handles.size() != asset.meshes.size())
+        const auto handle = mesh_handles[mesh_index];
+        // 维护按 geometry_handle 索引的 mesh bounds 表（extract 剔除消费）
+        if (handle != engine::invalid_geometry_handle)
         {
-            Logger::LogError("Failed to upload glTF geometry: " + geometry_changes.error);
-            return {};
-        }
-        if (report)
-        {
-            report->geometry_arena_count = geometry_changes.value.geometry_arena_count;
-            report->geometry_arenas_created = geometry_changes.value.geometry_arenas_created;
-            report->geometry_arena_reserved_bytes = geometry_changes.value.geometry_arena_reserved_bytes;
-            report->geometry_arena_used_bytes = geometry_changes.value.geometry_arena_used_bytes;
-            report->geometry_arena_allocation_us = geometry_changes.value.geometry_arena_allocation_us;
-            report->geometry_plan_us = geometry_changes.value.geometry_plan_us;
-            report->geometry_transfer_us = geometry_changes.value.geometry_transfer_us;
-        }
-        for (std::uint32_t mesh_index = 0; mesh_index < asset.meshes.size(); mesh_index++)
-        {
-            const auto handle = geometry_changes.value.geometry_handles[mesh_index];
-            mesh_handles[mesh_index] = handle;
-            // 维护按 geometry_handle 索引的 mesh bounds 表（extract 剔除消费）
-            if (handle != engine::invalid_geometry_handle)
+            if (extract.mesh_bounds_min.size() <= handle)
             {
-                if (extract.mesh_bounds_min.size() <= handle)
-                {
-                    extract.mesh_bounds_min.resize(handle + 1, glm::vec3(0.0F));
-                    extract.mesh_bounds_max.resize(handle + 1, glm::vec3(0.0F));
-                }
-                extract.mesh_bounds_min[handle] = asset.meshes[mesh_index].bounds_min;
-                extract.mesh_bounds_max[handle] = asset.meshes[mesh_index].bounds_max;
+                extract.mesh_bounds_min.resize(handle + 1, glm::vec3(0.0F));
+                extract.mesh_bounds_max.resize(handle + 1, glm::vec3(0.0F));
             }
+            extract.mesh_bounds_min[handle] = asset.meshes[mesh_index].bounds_min;
+            extract.mesh_bounds_max[handle] = asset.meshes[mesh_index].bounds_max;
         }
     }
 
@@ -348,9 +475,35 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
         report->image_count = static_cast<std::uint32_t>(asset.images.size());
         report->merge_us = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - merge_begin).count());
-        report->upload_us = upload_us;
     }
     return ids;
+}
+
+std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset_database asset, bool read_only,
+                                                                   engine::load_report* report)
+{
+    // 启动路径：材质 + 几何一次事务 + 场景注册紧邻（行为与分片前一致）。
+    const auto material_base = upload_asset_materials(asset, report);
+    if (!material_base)
+    {
+        Logger::LogError(material_base.error);
+        return {};
+    }
+    std::vector<engine::geometry_handle> mesh_handles(asset.meshes.size(), engine::invalid_geometry_handle);
+    if (!asset.meshes.empty())
+    {
+        // 整资产单事务——单条批量行覆盖全部 mesh，零拷贝（recipe 直接引用共享 blob span）。
+        // 单事务原子性：全成或全败，无逐 mesh 回滚。
+        const auto geometry_changes =
+            upload_asset_geometry(asset, material_base.value, 0, static_cast<std::uint32_t>(asset.meshes.size()), report);
+        if (!geometry_changes)
+        {
+            Logger::LogError(geometry_changes.error);
+            return {};
+        }
+        mesh_handles = std::move(geometry_changes.value.geometry_handles);
+    }
+    return register_asset_scene(asset, mesh_handles, read_only, report);
 }
 
 // --- 场景命令 ---
@@ -975,6 +1128,8 @@ void engine_runtime::apply_resource_changes(frame_phase_context& context)
 {
     if (context.stop == frame_stop_reason::user_requested) return;
     apply_completed_loads();
+    // T1b/M7：分块流式上传逐帧排空（每帧一片；先 retire 再上传，句柄语义一致）
+    drain_streamed_uploads();
     if (loads.pending_geometry_retires.empty()) return;
     const auto changed = renderer->apply_resource_changes({.geometry_retires = loads.pending_geometry_retires});
     if (!changed)
