@@ -220,8 +220,9 @@ smoke 契约改 `main+resolve+debug==draw_commands`；steady descriptor 基线�
 渲染后捕获（半分辨率 RT 首帧 bindless 发布不再计入稳态）。
 **验证**：42/42 ctest + 10 组 smoke（--validation 零错误）+ DamagedHelmet 屏幕
 捕获（默认 resolve 上屏、hdr/resolved/shadow 调试视图均正常；hdr-vs-resolved
-inset diff 确认 tonemap 生效）。验证方法论教训：`PrintWindow` 对 Vulkan 交换链
-窗口返回黑帧假象（曾误判渲染回归），改 `CopyFromScreen` 真实屏幕捕获。
+inset diff 确认 tonemap 生效——注意当前是 LDR 曲线重映射：UNORM RT 输入已被
+钳到 [0,1]，真 HDR 压缩需 RG 先增浮点 color 格式）。验证方法论教训：`PrintWindow`
+对 Vulkan 交换链窗口返回黑帧假象（曾误判渲染回归），改 `CopyFromScreen` 真实屏幕捕获。
 **性能观察**：半分辨率渲染（主 pass 面积 1/4）+ resolve 全屏 quad 替代原全屏
 主 pass，像素着色总量约减半；稳态帧 descriptor updates 仍为 0（bindless
 复用，M6 验收项达成）。
@@ -250,8 +251,9 @@ register_asset_scene：启动路径三者紧邻（行为不变），运行时路
 全部片完成后一次完成。A0 协议新增 `telemetry.load_progress`（path/uploaded_bytes/
 total_bytes/fraction/meshes），capabilities 同步（protocol 测试断言）。
 **验证**：42/42 ctest + 6 组 smoke 全过；91.2MB 合成 glb（100 mesh，build/
-stream_test.glb 由 build/gen_stream_glb.ps1 生成）经 scene.load_asset 运行时加载
-13 片，进度 0.09→1.0 线性，**流式期间帧时间 p50/p99/max≈7ms 有界**（消除
+stream_test.glb 由 scripts/gen_stream_glb.ps1 生成）经 scene.load_asset 运行时加载
+12 片（8MiB 预算 ÷ 912KB/mesh = 9 mesh/片，ceil(100/9)=12，经 plan_upload_chunk
+实测复核），进度 0.09→1.0 线性，**流式期间帧时间 p50/p99/max≈7ms 有界**（消除
 1–3 s/GB 单事务挂帧）；T1/T2/T3（压缩/GPU 解压/DMA）仍按上传路径规划 §六
 分级回退待后续（触发式）。
 

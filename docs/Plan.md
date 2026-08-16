@@ -27,7 +27,7 @@
 | 5 | **M6** | R5 后处理链路（半分辨率 + tonemap + resolve；`--debug-view` 扩 hdr/resolved） | `EngineRoadmapPlan.md` §M6 | 画面完成度最高杠杆；R0b 的 per-pass area 已铺路 |
 | 6 | **M8** | B1→B3：控制平面收尾 + Web UI + RG 事件浏览器 | `EngineRoadmapPlan.md` §M8 + `InterfaceRedesign.md` I1–I3 | 消费 M5 遥测 + M3 调试状态；Frame Debugger 形态 |
 | 7 | **M9** | IBL：环境贴图 + 预过滤 | `EngineRoadmapPlan.md` §M9 | 材质正确性；lights_table 的第一个真实消费者方向 |
-| 8 | **M10** | CSM 分阶阴影 | `EngineRoadmapPlan.md` §M10 | 大场景阴影；依赖 M4/M5 全部就绪 |
+| 8 | **M10** | CSM 分阶阴影 | `EngineRoadmapPlan.md` §M10 | 大场景阴影；依赖 M4/M5 全部就绪；**前置约束：M5 的光剔除在相机可见集上游（视锥外遮光体不投影），CSM 立项前需解耦两路剔除** |
 
 与原 `EngineRoadmapPlan.md` 的两处调整：
 
@@ -136,7 +136,7 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 | M4 | R2 compare sampler + 硬件 PCF | ✅ 2026-08-16：`0f1348ec`（子仓 `6cf61c5`；reversed-Z 评审结论=不做，见 RenderLayerPlan §不做） |
 | M5 | R3 阴影视锥剔除 + per-pass 遥测 | ✅ 2026-08-16：`a74ca942`（recipe 侧光视图剔除 + per-pass draw 计数；42/42 ctest + 7 组 smoke + two_triangles/DamagedHelmet 实机验证） |
 | H1 | 录制路径 DoD 还债 | ✅ 2026-08-16：子仓 `42f8091` + `b01fa91`、主仓 `4716944c` |
-| M7 | T1b 分块流式上传 | ✅ 2026-08-16：`e5cad5c8`（子仓 docs `7c8aff0`；engine 逐帧分片 + A0 进度上报；91.2MB 13 片加载帧时间≈7ms 有界） |
+| M7 | T1b 分块流式上传 | ✅ 2026-08-16：`e5cad5c8`（子仓 docs `7c8aff0`；engine 逐帧分片 + A0 进度上报；91.2MB 12 片加载帧时间≈7ms 有界，资产生成脚本见 scripts/gen_stream_glb.ps1） |
 | M6 | R5 后处理链路 | ✅ 2026-08-16：`4a514b3c`（半分辨率 RT + resolve（ACES tonemap + vignette）+ `--debug-view` hdr/resolved + `resolve_draw_count` 遥测；42/42 ctest + 10 组 smoke + DamagedHelmet 屏幕捕获） |
 | M8 | B1→B3 控制平面 + RG 事件浏览器 | 待实施 |
 | M9 | IBL | 待实施 |
