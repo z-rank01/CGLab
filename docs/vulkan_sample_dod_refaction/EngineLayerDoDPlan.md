@@ -8,6 +8,9 @@
 > 依据：`Architecture.md`（架构与还债清单、行表命名约定）、`PerformancePlan.md`（A0 测量设施）、
 > RG 子仓 `docs/计划.md`（P0–P7 DoD 重构，本计划的风格参照）。
 >
+> **2026-08-16 起待办排序以 [Plan.md](Plan.md) 为准**；本文"不做"清单中的开放项
+> （DI 统一、阶段纯化等）由 Plan.md §3/§6 承接。
+>
 > 术语表（拟并入 `Architecture.md` 行表命名约定一节）：
 > - **component（组件）**：挂在实体上的那份数据的类型（光源组件、probe 组件、相机组件）。与 EnTT/flecs/Bevy 的 component 语义一致。
 > - **component table（组件表）**：某类组件的全量 SoA 表，即 `*_table`（未来 `lights_table`、`probe_table`）。packet 传递的从来不是单个 component，而是整张表。

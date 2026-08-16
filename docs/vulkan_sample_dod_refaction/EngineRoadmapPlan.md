@@ -6,6 +6,9 @@
 > 依据：`RenderLayerPlan.md`（R2/R3）、`PerformancePlan.md`（B/C 系列）、
 > `上传路径与大场景规划.md`（T 系列）、`Architecture.md`（设计约束与还债清单）、
 > `EngineLayerDoDPlan.md`（D/F 系列纪律）、RG 子仓 `docs/计划.md`（DoD 准则）。
+>
+> **2026-08-16 起待办排序以 [Plan.md](Plan.md) 为准**；本文保留 M1–M10 的动机与改动点
+> 细节，不再单独维护顺序（两处调整：M7 提前至 M6 前、新增 H1 还债段，见 Plan.md §1）。
 
 ## 0. 排序总览与理由
 

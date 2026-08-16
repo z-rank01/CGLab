@@ -5,6 +5,9 @@
 > `EngineLayerDoDPlan.md`（D/F 系列推进纪律与文档风格）、render-graph 子仓
 > `docs/ArchitectureAndInternals.md`（pass 模型、同步两遍法）与 `docs/计划.md`。
 >
+> **2026-08-16 起待办排序以 [Plan.md](Plan.md) 为准**（R2/R3 由 Plan.md M4/M5 承接）；
+> 本文保留 R 系列设计稿与阶段记录。
+>
 > 背景：引擎层 D/F 系列已收尾（帧通道插件化 + F3 lights_table 端到端验证），
 > glTF/GLB 静态 Core 2.0 PBR 可加载。渲染层目前**单 pass、无阴影、无后处理**，
 > 是四层中与"像引擎"差距最大的一层。R 系列第一个真实消费者 = 阴影 pass，
@@ -183,13 +186,13 @@ R1 后评估阴影 pass 的 CPU 成本再立项。
 | 阶段 | 内容 | 提交 |
 |------|------|------|
 | 规划 | 本笔记 | — |
-| R0a | depth-only pipeline 放宽 + depth 采样视图（✅ 2026-08-15：pipeline 校验允许"无 color 有 depth"；bindless sampled view 按格式选 DEPTH aspect；子仓 25/25 绿） | 待提交 |
-| R0b | per-pass render_area + viewport 跟随（✅ 2026-08-15：`frame_pass_row.area`（0×0 回退帧 extent）；`vk_indexed_scene_record`/`vk_indexed_indirect_record` 的 extent → render_area；recorder 按 pass area 设 viewport/scissor；`compiler_contract_test` 增 `raster_pass` 的 area 断言） | 待提交 |
-| R0c | capabilities 设备实测（✅ 2026-08-15：`capabilities()` 改实例方法查 `vkGetPhysicalDeviceProperties`/`FormatProperties`；`backend_capabilities` 加 `supports_depth_sampled`；`validate_image_desc` 消费） | 待提交 |
-| R1a | sun_light 通道（✅ 2026-08-15：`apps::sun_light` 状态通道（direction/intensity/color/view_proj/ortho_box），sample 发布，引擎零改动） | 待提交 |
-| R1b | recipe shadow pass（✅ 2026-08-15：persistent 2048² shadow image（DEPTH\|SAMPLED）+ nearest/clamp sampler + per-frame light UBO 进 bindless；depth-only pipeline（复用 vertex layout 仅 location 0，front cull，shadow_push 8 字节）；`build_frame` 双 pass（ShadowPass area 2048² + 主 pass SAMPLED depth-aspect 读）+ push constant 扩 8 uint；shadow 只画不透明单面组） | 待提交 |
-| R1c | gltf_shadow.vert + frag 阴影采样（✅ 2026-08-15：glslc 编译通过；frag 平行光主光 + 3×3 手动 PCF + slope-scaled bias；点光保留无阴影） | 待提交 |
-| R1d | smoke 契约 + 全量验证（✅ 2026-08-15：契约默认值 4→5 / 1→2 且 `expected_draw_passes_per_frame=2`（triangle 覆盖 1/1/1）；43/43 ctest 绿 + Triangle/GltfSponza GPU smoke 6 帧（--validation）通过零警告） | 待提交 |
-| R1e | ShadowSample 小物件阴影展示（✅ 2026-08-15：接影地面 + 斜射太阳光 + 紧凑正交视锥 + 冷色补光；smoke 6 帧通过） | 待提交 |
+| R0a | depth-only pipeline 放宽 + depth 采样视图（✅ 2026-08-15：pipeline 校验允许"无 color 有 depth"；bindless sampled view 按格式选 DEPTH aspect；子仓 25/25 绿） | 子仓 `6fbaa97` |
+| R0b | per-pass render_area + viewport 跟随（✅ 2026-08-15：`frame_pass_row.area`（0×0 回退帧 extent）；`vk_indexed_scene_record`/`vk_indexed_indirect_record` 的 extent → render_area；recorder 按 pass area 设 viewport/scissor；`compiler_contract_test` 增 `raster_pass` 的 area 断言） | 子仓 `23158a6` |
+| R0c | capabilities 设备实测（✅ 2026-08-15：`capabilities()` 改实例方法查 `vkGetPhysicalDeviceProperties`/`FormatProperties`；`backend_capabilities` 加 `supports_depth_sampled`；`validate_image_desc` 消费） | 子仓 `3c994bc` |
+| R1a | sun_light 通道（✅ 2026-08-15：`apps::sun_light` 状态通道（direction/intensity/color/view_proj/ortho_box），sample 发布，引擎零改动） | `9baf0335` |
+| R1b | recipe shadow pass（✅ 2026-08-15：persistent 2048² shadow image（DEPTH\|SAMPLED）+ nearest/clamp sampler + per-frame light UBO 进 bindless；depth-only pipeline（复用 vertex layout 仅 location 0，front cull，shadow_push 8 字节）；`build_frame` 双 pass（ShadowPass area 2048² + 主 pass SAMPLED depth-aspect 读）+ push constant 扩 8 uint；shadow 只画不透明单面组） | `9baf0335` |
+| R1c | gltf_shadow.vert + frag 阴影采样（✅ 2026-08-15：glslc 编译通过；frag 平行光主光 + 3×3 手动 PCF + slope-scaled bias；点光保留无阴影） | `9baf0335` |
+| R1d | smoke 契约 + 全量验证（✅ 2026-08-15：契约默认值 4→5 / 1→2 且 `expected_draw_passes_per_frame=2`（triangle 覆盖 1/1/1）；43/43 ctest 绿 + Triangle/GltfSponza GPU smoke 6 帧（--validation）通过零警告） | `b2d1ac72` |
+| R1e | ShadowSample 小物件阴影展示（✅ 2026-08-15：接影地面 + 斜射太阳光 + 紧凑正交视锥 + 冷色补光；smoke 6 帧通过） | `f68bed06` |
 | R2 | compare sampler + 硬件 PCF | 后置 |
 | R3 | 阴影视锥剔除 + per-pass 遥测 | 可选后置 |

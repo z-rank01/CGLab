@@ -3,6 +3,8 @@
 > 地位：`Architecture.md` 四层模型中的**基础设施层**（最下层）。
 > 与渲染/引擎完全解耦，未来可抽为独立仓库/submodule（与 render-graph、DCL 同级）。
 > 本文与 `InterfaceRedesign.md` 分离：UI/交互不关心本层实现，只通过业务层间接受益。
+>
+> **2026-08-16 起待办排序以 [Plan.md](Plan.md) 为准**（I0–I3 为触发式后置，见 Plan.md §3 C1）。
 
 ## 1. 目标与非目标
 

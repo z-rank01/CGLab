@@ -7,6 +7,9 @@
 > 依据：`Architecture.md`（架构与还债清单）、`InfrastructureDesign.md`（基础设施 I0–I3 与触发条款）、
 > `InterfaceRedesign.md`（I1–I5 路线）、`RenderGraphAndRHI.md`（资源与内存模型）。
 >
+> **2026-08-16 起待办排序以 [Plan.md](Plan.md) 为准**；本文保留 A 系列设计稿与 B/C 路线记录，
+> 不再单独维护顺序（B1–B3 由 Plan.md M8 承接，C 系列触发条款见 Plan.md §3）。
+>
 > 本文所有 A 步骤遵守仓库既有准则：DoD（SoA / CSR / 存在性代替布尔 / 两遍法）、
 > Component + Manager 数据模型、函数式阶段（副作用集中在帧边界出口）、单向依赖。
 
