@@ -137,7 +137,7 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 | M5 | R3 阴影视锥剔除 + per-pass 遥测 | ✅ 2026-08-16：`a74ca942`（recipe 侧光视图剔除 + per-pass draw 计数；42/42 ctest + 7 组 smoke + two_triangles/DamagedHelmet 实机验证） |
 | H1 | 录制路径 DoD 还债 | ✅ 2026-08-16：子仓 `42f8091` + `b01fa91`、主仓 `4716944c` |
 | M7 | T1b 分块流式上传 | ✅ 2026-08-16：`e5cad5c8`（子仓 docs `7c8aff0`；engine 逐帧分片 + A0 进度上报；91.2MB 13 片加载帧时间≈7ms 有界） |
-| M6 | R5 后处理链路 | 待实施 |
+| M6 | R5 后处理链路 | ✅ 2026-08-16：`4a514b3c`（半分辨率 RT + resolve（ACES tonemap + vignette）+ `--debug-view` hdr/resolved + `resolve_draw_count` 遥测；42/42 ctest + 10 组 smoke + DamagedHelmet 屏幕捕获） |
 | M8 | B1→B3 控制平面 + RG 事件浏览器 | 待实施 |
 | M9 | IBL | 待实施 |
 | M10 | CSM | 待实施 |

@@ -214,6 +214,50 @@ frame_counters 加 per-pass draw 计数（measure 槽 6–15 空闲，协议不�
   x≈6 但相机可见）→ ShadowSample 遥测 `shadow_draws=2 / main_draws=3`
   （光外实例只进主 pass）；smoke（--validation）零错误。
 
+## R5 — 半分辨率后处理链路（✅ 已实施 2026-08-16，提交见 §阶段记录）
+
+**动机**：画面完成度最高杠杆；R0b 的 per-pass render_area 就是为它铺的路。
+
+**实施细节（2026-08-16）**：
+
+- **半分辨率 RT**：persistent `R8G8B8A8_UNORM` image（COLOR_ATTACHMENT|SAMPLED、
+  aliasing forbidden），首帧或 swapchain 缩放时在 `build_frame` 内重建
+  （`apply_resource_changes` image_creates + bindless_publishes），旧 image 与
+  bindless 槽经 `resource_retire_row` 延迟销毁（RG 事务三阶段 + deferred
+  destroy 保证 in-flight 安全，无泄漏）；主 pass 深度改半分辨率 transient
+  `D32_SFLOAT`（store=dont_care）。主材质管线 `color_formats` 改
+  `R8G8B8A8_UNORM`（半分辨率 RT 匹配——UNDEFINED 会与 swapchain
+  B8G8R8A8 不匹配导致管线创建失败）。
+- **resolve pass**：全屏 quad（复用 debug_quad 几何 + `debug_view.vert`）+ 新增
+  linear/clamp 普通采样器（无比较）采样半分辨率 RT，`resolve.frag` 做 ACES
+  tonemap（Narkowicz 2015）+ vignette 写 swapchain；swapchain 附件
+  load=dont_care（quad 覆盖整帧）。
+- **统一 push blob 三段切片**：主 push `[0,32)` / debug_push `[32,52)` /
+  resolve_push `[52,64)`；raster 录制器恒在 layout offset 0 push，pass 行的
+  `push_constant_offset` 只负责从 blob 选切片（管线 push range 必须无 offset——
+  教训：resolve 管线最初配 offset 52 的 push range 导致录制器把主 push 切片
+  当 resolve push 用，画面全黑，改无 offset 后正常）。
+- **`--debug-view` 扩 `hdr|resolved`**（mode 3/4，复用 M3 机制看半分辨率 RT）：
+  debug push `image_slot` 按 mode≥3 选半分辨率 RT 槽、`sampler_slot` 选 resolve
+  采样器；hdr=raw RT、resolved=ACES tonemap 后（`debug_view.frag` 复制一份
+  ACES）。mode 折叠进 plan cache key（切换触发重编译，同模式帧间命中）。
+- **per-pass 遥测**：`frame_counters` 新增 `resolve_draw_count`（恒 1，quad）；
+  telemetry JSON `counters.resolve_draws`；measure 槽 9。smoke 契约改为
+  `main+resolve+debug == draw_commands`、`resolve_draw_count == (passes>=3 ? 1 : 0)`、
+  `debug == (passes==4 ? 1 : 0)`；默认路径（debug off）每帧 3 个 raster pass
+  （shadow/main/resolve）。
+- **steady descriptor 基线修复**：`render_graph_driver` 的 steady 基线改为首帧
+  渲染**后**捕获——半分辨率 RT 首帧 bindless 发布原本计入稳态
+  （steady_desc_updates=1 误报），修复后稳态为 0（bindless 复用成立）。
+- **验证方法论教训**：`PrintWindow(PW_RENDERFULLCONTENT)` 对 Vulkan 交换链窗口
+  返回 DWM 快照不可靠（画面全黑假象，曾误判为渲染回归，二分到 H1/M7 排除）；
+  改用置顶 + 延时 + `CopyFromScreen`（真实屏幕）后全部视图正常。
+- **验证**：42/42 ctest + 10 组 smoke（--validation 零错误）+ DamagedHelmet
+  屏幕捕获——resolve 上屏（mean 12.7 / bright 4678）、hdr inset
+  （mean 35.8 / nonblack 14375）、resolved inset（35.4 / 14369）、shadow 视图
+  （25.6 / 3156）、triangle 场景（11.9 / 3115）；hdr-vs-resolved inset 逐像素
+  diff（mean 6.62 / max 109）确认 tonemap 生效。
+
 ## 推进纪律
 
 - 每阶段：实现 → 构建（vcvars64 环境）→ 子仓 ctest / 主仓 cglab ctest 全绿 →
@@ -230,8 +274,7 @@ frame_counters 加 per-pass draw 计数（measure 槽 6–15 空闲，协议不�
   D32 精度充足；主 pass 当前无 z-fighting 症状。若 M10 CSM 近阶小视锥或大场景
   实机数据（Plan.md §4 欠债）出现精度问题再评估——届时翻转需同步改 depth
   clear/比较方向、采样器比较方向与 bias 符号，并重审 `0ef2da49` 的深度约定）。
-- compare sampler（R2）、transient→bindless 槽位协议（缺口 D）、后处理
-  （per-pass area 已铺路）、GI、IBL。
+- compare sampler（R2）、transient→bindless 槽位协议（缺口 D）、GI、IBL。
 - 大场景上传路径 / job system / DI 风格统一：维持各自触发条款，不在本轮。
 
 ## 阶段与提交记录
@@ -249,3 +292,4 @@ frame_counters 加 per-pass draw 计数（measure 槽 6–15 空闲，协议不�
 | R1e | ShadowSample 小物件阴影展示（✅ 2026-08-15：接影地面 + 斜射太阳光 + 紧凑正交视锥 + 冷色补光；smoke 6 帧通过） | `f68bed06` |
 | R2 | compare sampler + 硬件 PCF（✅ 2026-08-16：子仓 `6cf61c5`（sampler_desc.compare_op + 三后端契约）；主仓 `0f1348ec`（comparison sampler + dref 硬件 PCF + debug raw sampler）；42/42 ctest + 7 组 GPU smoke 全过；reversed-Z 评审结论=不做） | ✅ 2026-08-16：子仓 `6cf61c5`、主仓 `0f1348ec` |
 | R3 | 阴影视锥剔除 + per-pass 遥测（✅ 2026-08-16：recipe 侧光视图剔除（光视锥 × 世界 AABB 掩码）+ 独立阴影命令区 + `frame_counters` per-pass draw 计数（measure 槽 6–8）+ smoke per-pass 不变式；`transform_aabb` 进 `_interface/culling.h`；42/42 ctest + 7 组 smoke 全过 + two_triangles 资产端到端验证（shadow 2 / main 3）+ DamagedHelmet 实机目检） | ✅ 2026-08-16：`a74ca942` |
+| R5 | 半分辨率后处理链路（✅ 2026-08-16：半分辨率 persistent RT（随 extent 重建 + retire 延迟销毁）+ 主 pass 半分辨率 + resolve pass（ACES tonemap + vignette）+ `--debug-view` 扩 hdr/resolved + `resolve_draw_count` 遥测（槽 9）+ 统一 push blob 三段切片 + steady 基线首帧后捕获；42/42 ctest + 10 组 smoke 全过 + DamagedHelmet 屏幕捕获（CopyFromScreen，PrintWindow 对 Vulkan 交换链不可靠）） | ✅ 2026-08-16：`4a514b3c` |

@@ -206,6 +206,26 @@ debug_draws}`，measure 槽 6–8）；smoke 契约新增 per-pass 不变式（�
 **验收**：smoke 6 帧 + 人工目检（无 banding、tonemap 生效）；稳态帧 descriptor
 updates 仍为 0（bindless 复用）。
 
+**结果（2026-08-16）**：✅ 已提交 `4a514b3c`（主仓，无子仓改动——半分辨率
+RT 用既有 persistent image + transient + `resource_retire_row` 机制，R0 的
+per-pass area 已铺路）。半分辨率 `R8G8B8A8_UNORM` persistent RT 首帧/缩放时在
+`build_frame` 内重建（旧 image + bindless 槽经 retire 延迟销毁，无泄漏）；主
+pass 输出半分辨率（深度改半分辨率 transient），resolve pass（全屏 quad +
+linear/clamp 采样器）ACES tonemap（Narkowicz 2015）+ vignette 写 swapchain；
+统一 push blob 三段切片（主 [0,32) / debug [32,52) / resolve [52,64)），raster
+录制器恒 layout offset 0 push（管线 push range 必须无 offset）；`--debug-view`
+扩 `hdr|resolved`（inset 采样半分辨率 RT：raw / tonemapped）；`frame_counters`
+增 `resolve_draw_count`（measure 槽 9 + telemetry `counters.resolve_draws`）；
+smoke 契约改 `main+resolve+debug==draw_commands`；steady descriptor 基线改首帧
+渲染后捕获（半分辨率 RT 首帧 bindless 发布不再计入稳态）。
+**验证**：42/42 ctest + 10 组 smoke（--validation 零错误）+ DamagedHelmet 屏幕
+捕获（默认 resolve 上屏、hdr/resolved/shadow 调试视图均正常；hdr-vs-resolved
+inset diff 确认 tonemap 生效）。验证方法论教训：`PrintWindow` 对 Vulkan 交换链
+窗口返回黑帧假象（曾误判渲染回归），改 `CopyFromScreen` 真实屏幕捕获。
+**性能观察**：半分辨率渲染（主 pass 面积 1/4）+ resolve 全屏 quad 替代原全屏
+主 pass，像素着色总量约减半；稳态帧 descriptor updates 仍为 0（bindless
+复用，M6 验收项达成）。
+
 ---
 
 ## M7 — T1b 分块流式上传
@@ -309,7 +329,7 @@ sampler）与 M5（每阶视锥剔除）全部就绪。
 | M3 | R4 调试可视化（阴影图/深度查看器） | ✅ 2026-08-16：`ef1a1687`（子仓修复 `4d7a4b5`） |
 | M4 | R2 compare sampler + 硬件 PCF | ✅ 2026-08-16：子仓 `6cf61c5` + 主仓 `0f1348ec` |
 | M5 | R3 阴影视锥剔除 + per-pass 遥测 | ✅ 2026-08-16：`a74ca942` |
-| M6 | R5 后处理链路 | 待实施 |
+| M6 | R5 后处理链路 | ✅ 2026-08-16：`4a514b3c` |
 | M7 | T1b 分块流式上传 | ✅ 2026-08-16：`e5cad5c8` |
 | M8 | B1→B3 控制平面 + RG 事件浏览器 | 待实施 |
 | M9 | IBL | 待实施 |
