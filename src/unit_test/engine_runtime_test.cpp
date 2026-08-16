@@ -174,7 +174,7 @@ int main()
         make_fake_driver(state),
         std::make_unique<fake_window>());
     runtime.set_initial_geometry(triangle());
-    runtime.initialize();
+    CHECK(static_cast<bool>(runtime.initialize()));
     CHECK(runtime.tick(2));
     CHECK(state->initialize_calls == 1);
     CHECK(state->upload_calls == 1);
@@ -190,7 +190,7 @@ int main()
         config,
         make_fake_driver(failing_state),
         std::make_unique<fake_window>());
-    failing.initialize();
+    CHECK(static_cast<bool>(failing.initialize()));
     CHECK(!failing.tick(1));
     failing.shutdown();
 
@@ -213,7 +213,7 @@ int main()
             }
         },
     });
-    boundary_runtime.initialize();
+    CHECK(static_cast<bool>(boundary_runtime.initialize()));
     CHECK(boundary_runtime.tick(3));
     boundary_runtime.shutdown();
     CHECK(boundary_asset_state->start_calls == 1);

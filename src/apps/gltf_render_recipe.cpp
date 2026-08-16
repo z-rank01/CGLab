@@ -96,6 +96,13 @@ namespace apps
             std::uint32_t arena = 0; // 几何所在 arena 池下标（draw 行按 (组, arena) 分段）
             std::uint8_t light_visible = 1; // 光视图可见掩码（R3/M5；0 = 阴影 pass 跳过）
         };
+        // (组, arena) 命令分段（H1：移出 build_frame 局部，作 recipe_state scratch）
+        struct arena_segment
+        {
+            std::uint32_t arena = 0;
+            std::uint64_t indirect_offset = 0;
+            std::uint32_t draw_count = 0;
+        };
 
         struct recipe_state
         {
@@ -156,6 +163,12 @@ namespace apps
             std::vector<render_graph::draw_indexed_indirect_row> draws;
             // 每帧分组 scratch（帧间复用，clear 后重建，稳态零分配）
             std::array<std::vector<draw_candidate>, 4> group_scratch;
+            // (组, arena) 命令分段 scratch（H1：帧间复用，clear 后重建）
+            std::array<std::vector<arena_segment>, 4> group_segments;
+            // 光源表 GPU 三列 scratch（H1：帧间复用，clear 后填充）
+            std::vector<glm::vec4> gpu_positions;
+            std::vector<glm::vec4> gpu_colors;
+            std::vector<float> gpu_intensities;
             push_constants push;
             // frame_plan 只保存 span，数据必须活到 backend 完成本帧录制；不能使用
             // build_frame 局部数组，否则返回后主/shadow/debug pass 都会读悬空 push 数据。
@@ -717,13 +730,8 @@ namespace apps
             // 命令按 (组, arena) 分段：组内候选按 arena 分桶（每段保持原距离序），
             // 每段一条 draw 行引用对应 arena 的 vertex/index 缓冲。单 arena 时每组
             // 恰一段，命令布局与单缓冲时代逐字节一致（多 arena 仅在几何 >256MB 时出现）。
-            struct arena_segment
-            {
-                std::uint32_t arena = 0;
-                std::uint64_t indirect_offset = 0;
-                std::uint32_t draw_count = 0;
-            };
-            std::array<std::vector<arena_segment>, 4> group_segments;
+            // H1：分段 scratch 帧间复用（clear 后重建，稳态零分配）。
+            std::array<std::vector<arena_segment>, 4>& group_segments = state.group_segments;
             for (auto& segments : group_segments)
                 segments.clear();
             for (uint32_t group = 0; group < groups.size(); ++group)
@@ -841,19 +849,20 @@ namespace apps
             const std::uint32_t light_count = (lights != nullptr && lights->count() <= max_lights)
                                                   ? static_cast<std::uint32_t>(lights->count())
                                                   : 0U;
-            std::vector<glm::vec4> gpu_positions;
-            std::vector<glm::vec4> gpu_colors;
-            std::vector<float> gpu_intensities;
+            // H1：光源 GPU 三列 scratch 帧间复用（clear 后填充，稳态零分配）
+            state.gpu_positions.clear();
+            state.gpu_colors.clear();
+            state.gpu_intensities.clear();
             if (light_count > 0)
             {
-                gpu_positions.reserve(light_count);
-                gpu_colors.reserve(light_count);
-                gpu_intensities.reserve(light_count);
+                state.gpu_positions.reserve(light_count);
+                state.gpu_colors.reserve(light_count);
+                state.gpu_intensities.reserve(light_count);
                 for (std::uint32_t i = 0; i < light_count; ++i)
                 {
-                    gpu_positions.push_back(glm::vec4(lights->positions[i], 0.0F));
-                    gpu_colors.push_back(glm::vec4(lights->colors[i], 1.0F));
-                    gpu_intensities.push_back(lights->intensities[i]);
+                    state.gpu_positions.push_back(glm::vec4(lights->positions[i], 0.0F));
+                    state.gpu_colors.push_back(glm::vec4(lights->colors[i], 1.0F));
+                    state.gpu_intensities.push_back(lights->intensities[i]);
                 }
             }
             // 帧通道消费平行光（缺失 → intensity=0，frag 跳过阴影采样——编写者责任）。
@@ -876,11 +885,11 @@ namespace apps
                 render_graph::buffer_upload_row{state.indirect, 0,
                                                 std::as_bytes(std::span(state.commands))},
                 render_graph::buffer_upload_row{state.lights, 0,
-                                                std::as_bytes(std::span(gpu_positions))},
+                                                std::as_bytes(std::span(state.gpu_positions))},
                 render_graph::buffer_upload_row{state.lights, sizeof(glm::vec4) * max_lights,
-                                                std::as_bytes(std::span(gpu_colors))},
+                                                std::as_bytes(std::span(state.gpu_colors))},
                 render_graph::buffer_upload_row{state.lights, sizeof(glm::vec4) * max_lights * 2,
-                                                std::as_bytes(std::span(gpu_intensities))},
+                                                std::as_bytes(std::span(state.gpu_intensities))},
             };
             std::uint32_t upload_count = light_count > 0 ? 7U : 4U;
             // R3/M5：阴影 pass 独立命令区（主命令区之后）

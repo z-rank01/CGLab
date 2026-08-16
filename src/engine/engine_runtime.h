@@ -31,7 +31,8 @@ public:
                    std::unique_ptr<asset_service> assets = {});
     ~engine_runtime();
     // core public function
-    void initialize();
+    // H1：启动路径错误经 result 返回（不再 throw；runner 已有 catch 边界兜底）
+    [[nodiscard]] engine::result<bool> initialize();
     [[nodiscard]] bool tick(std::optional<std::uint64_t> frame_limit = std::nullopt);
     void shutdown() noexcept;
     [[nodiscard]] std::uint32_t validation_error_count() const noexcept;

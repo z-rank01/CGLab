@@ -104,54 +104,65 @@ int main(int argc, char** argv)
             const std::uint64_t expected_indirect_groups = debug_on ? 3 : 2;
             const std::uint64_t expected_draw_passes = debug_on ? 3 : 2;
             // 平面贴地状态：首帧把平面移到物件包围盒最低点之下（对任意 glb 自适应）。
-            // 这是 sample 持久状态（不发布）；发布数据一律走 owned 变体（F4）——
-            // 每帧新造对象、所有权移交通道，帧尾统一释放，无需手工保活。
-            auto plane_fit = std::make_shared<bool>(false);
+            // H1 口径（2026-08-16 复盘）：帧间静态数据 = 持久持有 + 裸指针发布
+            // （零分配；发布点注释"持久对象，非局部变量"）；每帧新建数据 = owned
+            // 发布（机制防呆）。灯光/太阳数据帧间不变 → 持久持有；debug 请求语义
+            // 即每帧一个 → 保留 owned（F4 范例）。plane_fit 是 sample 持久状态
+            // （不发布），作普通成员而非 shared_ptr。
+            struct sample_persistent_state
+            {
+                std::unique_ptr<apps::lights_table> lights = std::make_unique<apps::lights_table>();
+                std::unique_ptr<apps::sun_light> sun = std::make_unique<apps::sun_light>();
+                bool plane_fit = false;
+            };
+            sample_persistent_state persistent;
+            // 冷色补光：照亮物件背光面（无阴影，避免与主光阴影打架）
+            persistent.lights->positions = {{2.5F, 2.5F, 3.5F}};
+            persistent.lights->colors = {{0.45F, 0.55F, 0.7F}};
+            persistent.lights->intensities = {1.4F};
+            // 斜射平行光：右上前方入射（受光面朝默认相机），影子向左后铺开。
+            // 正交视锥 ±4 覆盖地面与影子落点；Y 翻转与主相机一致。
+            persistent.sun->direction = glm::normalize(glm::vec3(-0.5F, -0.8F, -0.35F));
+            persistent.sun->intensity = 3.5F;
+            persistent.sun->color = {1.0F, 0.96F, 0.9F};
+            const float extent = 4.0F;       // 光正交视锥半宽（覆盖 6×6 地面 + 影子）
+            const float distance = 15.0F;     // 光眼位距场景中心
+            const glm::vec3 center{0.0F, 0.3F, 0.0F};
+            const glm::vec3 eye = center - persistent.sun->direction * distance;
+            const glm::mat4 light_view = glm::lookAt(eye, center, glm::vec3(0.0F, 1.0F, 0.0F));
+            glm::mat4 light_proj = glm::ortho(-extent, extent, -extent, extent, 0.1F, distance * 2.0F);
+            // Vulkan 的 framebuffer Y 翻转属于投影变换。若在 view_proj
+            // 合成后只改 [1][1]，旋转过的 light_view 会被剪切，导致沿
+            // sun.direction 的点在阴影图 XY 上发生漂移，影子方向便与光照不一致。
+            light_proj[1][1] *= -1.0F;
+            persistent.sun->view_proj = light_proj * light_view;
+            persistent.sun->ortho_box = {-extent, extent, -extent, extent};
+            persistent.sun->ortho_near = 0.1F;
+            persistent.sun->ortho_far = distance * 2.0F;
+            // shared_ptr 捕获：std::function 要求 lambda 可拷贝（H1 持久状态
+            // 本身 unique_ptr 持有，捕获层只拷指针）。
+            auto persistent_holder = std::make_shared<sample_persistent_state>(std::move(persistent));
             engine::sample sample{
                 .name = "ShadowSample",
                 .startup_geometry = make_ground_plane(),
                 .required_startup_asset = asset_path.string(),
-                .update = [plane_fit, debug_mode](engine::runtime_services& services, float)
+                .update = [debug_mode, persistent = std::move(persistent_holder)](engine::runtime_services& services, float)
                 {
                     if (debug_mode != apps::debug_view_mode::off)
                     {
+                        // owned 发布（每帧一个请求，机制防呆）
                         auto debug = std::make_unique<apps::debug_view_request>();
                         debug->mode = static_cast<std::uint32_t>(debug_mode);
                         services.channels.publish_state_owned<apps::debug_view_request>(std::move(debug));
                     }
-                    // 冷色补光：照亮物件背光面（无阴影，避免与主光阴影打架）
-                    auto lights = std::make_unique<apps::lights_table>();
-                    lights->positions = {{2.5F, 2.5F, 3.5F}};
-                    lights->colors = {{0.45F, 0.55F, 0.7F}};
-                    lights->intensities = {1.4F};
-                    services.channels.publish_state_owned<apps::lights_table>(std::move(lights));
-
-                    // 斜射平行光：右上前方入射（受光面朝默认相机），影子向左后铺开。
-                    // 正交视锥 ±4 覆盖地面与影子落点；Y 翻转与主相机一致。
-                    auto sun = std::make_unique<apps::sun_light>();
-                    sun->direction = glm::normalize(glm::vec3(-0.5F, -0.8F, -0.35F));
-                    sun->intensity = 3.5F;
-                    sun->color = {1.0F, 0.96F, 0.9F};
-                    const float extent = 4.0F;       // 光正交视锥半宽（覆盖 6×6 地面 + 影子）
-                    const float distance = 15.0F;     // 光眼位距场景中心
-                    const glm::vec3 center{0.0F, 0.3F, 0.0F};
-                    const glm::vec3 eye = center - sun->direction * distance;
-                    const glm::mat4 light_view = glm::lookAt(eye, center, glm::vec3(0.0F, 1.0F, 0.0F));
-                    glm::mat4 light_proj = glm::ortho(-extent, extent, -extent, extent, 0.1F, distance * 2.0F);
-                    // Vulkan 的 framebuffer Y 翻转属于投影变换。若在 view_proj
-                    // 合成后只改 [1][1]，旋转过的 light_view 会被剪切，导致沿
-                    // sun.direction 的点在阴影图 XY 上发生漂移，影子方向便与光照不一致。
-                    light_proj[1][1] *= -1.0F;
-                    sun->view_proj = light_proj * light_view;
-                    sun->ortho_box = {-extent, extent, -extent, extent};
-                    sun->ortho_near = 0.1F;
-                    sun->ortho_far = distance * 2.0F;
-                    services.channels.publish_state_owned<apps::sun_light>(std::move(sun));
+                    // 持久对象，非局部变量：裸指针发布，帧间零分配（H1）
+                    services.channels.publish_state<apps::lights_table>(persistent->lights.get());
+                    services.channels.publish_state<apps::sun_light>(persistent->sun.get());
 
                     // 平面贴地（一次性）：物件原点常在包围盒中心（如 helmet），平面
                     // 需移到物件最低点之下，否则下半截插进地里。扫描除平面外的
                     // 存活对象世界 AABB 取最低点。
-                    if (*plane_fit)
+                    if (persistent->plane_fit)
                     {
                         return;
                     }
@@ -173,7 +184,7 @@ int main(int argc, char** argv)
                         scene::object_transform transform{};
                         transform.position = {0.0F, asset_min_y - 0.02F, 0.0F};
                         (void)services.scene.set_transform(plane_id, transform);
-                        *plane_fit = true;
+                        persistent->plane_fit = true;
                     }
                 },
             };

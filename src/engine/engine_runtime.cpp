@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <stdexcept>
 #include <thread>
 #include <utility>
 
@@ -38,10 +37,7 @@ engine_runtime::engine_runtime(runtime_config runtime_config,
                                std::unique_ptr<asset_service> assets)
     : window(std::move(platform_window)), renderer(std::move(render_backend)), config(std::move(runtime_config))
 {
-    if (!renderer)
-    {
-        throw std::invalid_argument("engine_runtime requires a render backend");
-    }
+    // H1：renderer 校验移入 initialize（构造不抛异常，错误经 result 返回）
     loads.asset_loader = std::move(assets);
 }
 
@@ -50,18 +46,23 @@ engine_runtime::~engine_runtime()
     shutdown();
 }
 
-void engine_runtime::initialize()
+engine::result<bool> engine_runtime::initialize()
 {
+    // H1：启动路径错误经 result<bool> 返回（替换 8 处 throw；runner catch 边界兜底）
+    if (!renderer)
+    {
+        return {.error = "engine_runtime requires a render backend"};
+    }
     // The composition point (application runner) injects the platform window.
     if (!window)
     {
-        throw std::invalid_argument("engine_runtime requires a platform window");
+        return {.error = "engine_runtime requires a platform window"};
     }
     interface::window_config win_config;
     win_config = config.window;
     if (!window->open(win_config))
     {
-        throw std::runtime_error("Failed to open window.");
+        return {.error = "Failed to open window"};
     }
 
     // initialize camera
@@ -94,7 +95,7 @@ void engine_runtime::initialize()
         const auto requested = loads.asset_loader->request(*loads.required_startup_asset);
         if (!requested)
         {
-            throw std::runtime_error("Failed to queue startup asset: " + requested.error);
+            return {.error = "Failed to queue startup asset: " + requested.error};
         }
         for (;;)
         {
@@ -103,7 +104,7 @@ void engine_runtime::initialize()
             {
                 if (!completed.front().result)
                 {
-                    throw std::runtime_error("Failed to load startup asset: " + completed.front().result.error);
+                    return {.error = "Failed to load startup asset: " + completed.front().result.error};
                 }
                 startup_report = std::move(completed.front().report);
                 loads.initial_asset = std::move(completed.front().result.value);
@@ -123,14 +124,14 @@ void engine_runtime::initialize()
     const auto initialized = renderer->initialize(*window, backend_config);
     if (!initialized)
     {
-        throw std::runtime_error("Failed to initialize render backend: " + initialized.error);
+        return {.error = "Failed to initialize render backend: " + initialized.error};
     }
 
     if (loads.initial_geometry)
     {
         engine::load_report report;
         const auto ids = merge_asset_database(std::move(*loads.initial_geometry), true, &report);
-        if (ids.empty()) throw std::runtime_error("Startup geometry contains no mesh instances");
+        if (ids.empty()) return {.error = "Startup geometry contains no mesh instances"};
         Logger::LogInfo("Loaded startup geometry in " + std::to_string(report.merge_us) + "us (upload " +
                         std::to_string(report.upload_us) + "us, " +
                         std::to_string(report.vertex_bytes + report.index_bytes) + " bytes" +
@@ -140,7 +141,7 @@ void engine_runtime::initialize()
     if (loads.initial_asset)
     {
         const auto ids = merge_asset_database(std::move(*loads.initial_asset), true, &startup_report);
-        if (ids.empty()) throw std::runtime_error("Startup asset contains no mesh instances");
+        if (ids.empty()) return {.error = "Startup asset contains no mesh instances"};
         Logger::LogInfo("Loaded startup asset \"" + startup_report.path + "\" in " +
                         std::to_string(startup_report.load_us) + "us (merge " +
                         std::to_string(startup_report.merge_us) + "us, upload " +
@@ -153,6 +154,7 @@ void engine_runtime::initialize()
     input_events.reserve(32);
     telemetry.metrics_ring = std::make_unique<measure::metrics_ring>();
     last_frame_time = std::chrono::high_resolution_clock::now();
+    return {.value = true};
 }
 
 // --- 异步加载管线 ---

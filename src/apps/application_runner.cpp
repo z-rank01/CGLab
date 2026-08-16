@@ -25,7 +25,13 @@ namespace apps
             }
             engine::engine_runtime runtime(std::move(request.runtime), std::move(request.renderer), std::move(request.window));
             runtime.configure_sample(std::move(request.sample));
-            runtime.initialize();
+            // H1：初始化错误经 result 返回（不再 throw；本边界仍保留 catch 兜底）
+            const auto initialized = runtime.initialize();
+            if (!initialized)
+            {
+                Logger::LogError("Engine initialization failed: " + initialized.error);
+                return EXIT_FAILURE;
+            }
             if (request.culling_enabled)
             {
                 runtime.set_camera_culling(true);
