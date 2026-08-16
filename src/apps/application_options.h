@@ -9,13 +9,15 @@
 
 namespace apps
 {
-    // 调试视图模式（R4/M3）：recipe 按模式追加 debug pass，把中间 RT
-    // （阴影图）渲染到屏幕角落 inset。off = 不加 pass（默认，零开销）。
+    // 调试视图模式（R4/M3 + M6/R5）：recipe 按模式追加 debug pass，把中间 RT
+    // （阴影图/半分辨率 RT）渲染到屏幕角落 inset。off = 不加 pass（默认，零开销）。
     enum class debug_view_mode : std::uint32_t
     {
         off = 0,
-        shadow = 1, // 阴影图原始深度（近=白）
-        depth = 2,  // 线性化距离热力图（近=蓝，远=红）
+        shadow = 1,  // 阴影图原始深度（近=白）
+        depth = 2,   // 线性化距离热力图（近=蓝，远=红）
+        hdr = 3,     // 半分辨率 RT 原始（M6/R5，tonemap 前）
+        resolved = 4, // 半分辨率 RT + ACES tonemap（M6/R5，与 resolve pass 同款）
     };
 
     struct application_cli

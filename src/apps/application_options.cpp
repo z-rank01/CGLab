@@ -108,13 +108,21 @@ namespace apps
                 {
                     result.options.debug_view = apps::debug_view_mode::depth;
                 }
+                else if (*value == "hdr")
+                {
+                    result.options.debug_view = apps::debug_view_mode::hdr;
+                }
+                else if (*value == "resolved")
+                {
+                    result.options.debug_view = apps::debug_view_mode::resolved;
+                }
                 else if (*value == "off")
                 {
                     result.options.debug_view = apps::debug_view_mode::off;
                 }
                 else
                 {
-                    return error_result("--debug-view requires one of: shadow, depth, off");
+                    return error_result("--debug-view requires one of: shadow, depth, hdr, resolved, off");
                 }
                 continue;
             }
@@ -157,14 +165,15 @@ namespace apps
             usage += " [--asset <path>]";
         }
         usage += "\n           [--no-ui] [--ui-port <port>] [--ui-open-browser] [--culling]\n";
-        usage += "           [--debug-view <shadow|depth|off>]\n";
+        usage += "           [--debug-view <shadow|depth|hdr|resolved|off>]\n";
         usage += "  --no-ui            Disable the control plane WebSocket server (Web UI backend).\n";
         usage += "  --ui-port <port>   Control plane port in [1024, 65535] (default 17381); explicit port\n";
         usage += "                     also enables the control plane under --smoke-test for protocol tests.\n";
         usage += "  --ui-open-browser  Reserved (P3): open the Web UI in the default browser on start.\n";
         usage += "  --culling          Enable per-instance frustum culling on the active camera (A1).\n";
-        usage += "  --debug-view       Draw a debug view of an intermediate render target (shadow map\n";
-        usage += "                     raw depth / linearized depth) into a screen-corner inset (R4).\n";
+        usage += "  --debug-view       Draw a debug view of an intermediate render target into a screen-corner\n";
+        usage += "                     inset: shadow/depth = shadow map (R4), hdr/resolved = half-resolution\n";
+        usage += "                     RT pre/post tonemap (M6).\n";
         if (cli.accepts_asset)
         {
             usage += "  --asset <path>     Startup geometry asset (.gltf or .glb).\n";

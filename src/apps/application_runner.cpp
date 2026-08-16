@@ -70,21 +70,27 @@ namespace apps
                     return EXIT_FAILURE;
                 }
                 // R3/M5 per-pass draw 契约（末帧 frame_counters）：
-                // 主 pass = 全量 draw（debug quad 归属 debug pass）；
+                // 主 pass = 全量 draw（resolve/debug quad 归属各自 pass）；
                 // 光视图剔除后阴影 pass 不可能多于主 pass；
-                // debug pass 仅在 debug 模式画 quad（1 条）。
+                // resolve pass（≥3 raster pass 的 recipe）恒画全屏 quad（1 条）；
+                // debug pass 仅在 debug 模式画 quad。
                 const auto& counters = runtime.last_frame_counters();
-                const std::uint64_t expected_debug_draws = request.expected_draw_passes_per_frame == 3 ? 1u : 0u;
-                if (counters.main_draw_count + counters.debug_draw_count != counters.draw_commands ||
+                const std::uint64_t expected_debug_draws = request.expected_draw_passes_per_frame == 4 ? 1u : 0u;
+                const std::uint64_t expected_resolve_draws = request.expected_draw_passes_per_frame >= 3 ? 1u : 0u;
+                if (counters.main_draw_count + counters.resolve_draw_count + counters.debug_draw_count !=
+                        counters.draw_commands ||
                     counters.shadow_draw_count > counters.main_draw_count ||
+                    counters.resolve_draw_count != expected_resolve_draws ||
                     counters.debug_draw_count != expected_debug_draws)
                 {
                     Logger::LogError("GPU smoke per-pass counters did not match: "
                                      "shadow_draws=" + std::to_string(counters.shadow_draw_count) +
                                      " main_draws=" + std::to_string(counters.main_draw_count) +
+                                     " resolve_draws=" + std::to_string(counters.resolve_draw_count) +
                                      " debug_draws=" + std::to_string(counters.debug_draw_count) +
                                      " draw_commands=" + std::to_string(counters.draw_commands) +
-                                     " (expected debug_draws=" + std::to_string(expected_debug_draws) + ")");
+                                     " (expected resolve_draws=" + std::to_string(expected_resolve_draws) +
+                                     " debug_draws=" + std::to_string(expected_debug_draws) + ")");
                     return EXIT_FAILURE;
                 }
             }

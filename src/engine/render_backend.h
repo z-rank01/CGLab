@@ -62,6 +62,8 @@ namespace engine
         std::uint64_t shadow_draw_count = 0;
         std::uint64_t main_draw_count = 0;
         std::uint64_t debug_draw_count = 0;
+        // M6/R5：resolve pass draw 计数（全屏 quad 恒 1；协议 pass 维度随 recipe 演进）
+        std::uint64_t resolve_draw_count = 0;
     };
 
     // 加载分段报告：worker 填 load_us（dcl::load_gltf 全程，单次黑盒调用），

@@ -922,7 +922,9 @@ void engine_runtime::publish_frame_telemetry()
                                                                   // R3/M5 per-pass draw 计数（M8 pass 瀑布数据源）
                                                                   {"shadow_draws", telemetry.frame_counters.shadow_draw_count},
                                                                   {"main_draws", telemetry.frame_counters.main_draw_count},
-                                                                  {"debug_draws", telemetry.frame_counters.debug_draw_count}}},
+                                                                  {"debug_draws", telemetry.frame_counters.debug_draw_count},
+                                                                  // M6/R5 resolve pass draw 计数
+                                                                  {"resolve_draws", telemetry.frame_counters.resolve_draw_count}}},
                                                             }));
 
     publish_scene_telemetry_if_changed();
@@ -997,6 +999,8 @@ bool engine_runtime::tick(std::optional<std::uint64_t> frame_limit)
             counter_slots[6] = telemetry.frame_counters.shadow_draw_count;
             counter_slots[7] = telemetry.frame_counters.main_draw_count;
             counter_slots[8] = telemetry.frame_counters.debug_draw_count;
+            // M6/R5 resolve pass draw 计数（槽 9）
+            counter_slots[9] = telemetry.frame_counters.resolve_draw_count;
             measure::push(*telemetry.metrics_ring,
                           static_cast<std::uint64_t>(
                               std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() -

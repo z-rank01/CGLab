@@ -60,14 +60,14 @@ int main(int argc, char** argv)
             // 调试视图（R4/M3）：--debug-view 开启时经帧通道发布请求（owned 发布），
             // recipe 追加 debug pass——引擎零改动；契约计数随 debug pass 增加。
             // 注意：debug 管线在 recipe initialize 无条件创建（pass 才是条件性的），
-            // 故 pipeline 计数恒为 6；indirect groups / raster pass 计数随 debug pass
+            // 故 pipeline 计数恒为 7（M6 增 resolve）；indirect groups / raster pass 计数随 debug pass
             // 增加。MSVC 的 designated initializer 内不能直接放三元表达式（解析 bug），
             // 期望计数先算成局部常量。
             const auto debug_mode = options.debug_view;
             const bool debug_on = debug_mode != apps::debug_view_mode::off;
-            const std::uint64_t expected_pipeline_creations = 6;
-            const std::uint64_t expected_indirect_groups = debug_on ? 3 : 2;
-            const std::uint64_t expected_draw_passes = debug_on ? 3 : 2;
+            const std::uint64_t expected_pipeline_creations = 7;
+            const std::uint64_t expected_indirect_groups = debug_on ? 4 : 3;
+            const std::uint64_t expected_draw_passes = debug_on ? 4 : 3;
             // 插件侧发布光源表（每帧两盏灯：暖色主光 + 冷色补光）与平行光：
             // sample 经 services.channels 发布组件表通道，gltf recipe 在 build_frame 经 find_state 消费。
             // H1 口径（2026-08-16 复盘）：帧间静态数据 = 持久持有 + 裸指针发布

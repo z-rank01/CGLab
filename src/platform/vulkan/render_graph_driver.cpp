@@ -62,14 +62,17 @@ namespace platform::vulkan
             .render = [](void* value, const engine::render_frame_packet& packet)
             {
                 auto& state = driver(value);
-                if (!state.render_started)
-                {
-                    state.steady_descriptor_baseline = state.device.statistics().descriptor_updates;
-                    state.render_started = true;
-                }
                 state.packet = &packet;
                 const auto result = state.device.render({.state = &state, .build = &build_recipe});
                 state.packet = nullptr;
+                if (!state.render_started)
+                {
+                    // 稳态基线：首帧渲染完成后捕获——首帧的一次性资源建立
+                    // （如 M6 半分辨率 RT 的 bindless 发布）计入基线；
+                    // 稳态帧（第 2 帧起）必须零 descriptor 更新（bindless 复用）。
+                    state.steady_descriptor_baseline = state.device.statistics().descriptor_updates;
+                    state.render_started = true;
+                }
                 if (result.status == render_graph::frame_status::rendered) return engine::frame_status::rendered;
                 if (result.status == render_graph::frame_status::skipped) return engine::frame_status::skipped;
                 if (!result.error.empty()) std::cerr << "[RenderGraph] " << result.error << '\n';

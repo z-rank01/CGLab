@@ -25,9 +25,9 @@ namespace apps
         std::optional<std::uint64_t> frame_limit;
         bool require_validation_clean = false;
         bool enforce_smoke_contract = false;
-        std::uint64_t expected_pipeline_creations = 6; // gltf: 4 材质组 + 1 shadow + 1 debug（M3 恒建）；triangle 覆盖为 1
-        std::uint64_t expected_indirect_groups_per_frame = 2; // shadow pass + 主 pass 各一组（debug 开启时为 3）
-        std::uint64_t expected_draw_passes_per_frame = 2;     // 每帧 raster pass 数（gltf 双 pass；debug 开启时为 3；triangle 覆盖为 1）
+        std::uint64_t expected_pipeline_creations = 7; // gltf: 4 材质组 + 1 shadow + 1 debug + 1 resolve（M6 恒建）；triangle 覆盖为 1
+        std::uint64_t expected_indirect_groups_per_frame = 3; // shadow + 主 pass + resolve（debug 开启时为 4）
+        std::uint64_t expected_draw_passes_per_frame = 3;     // 每帧 raster pass 数（gltf 三 pass；debug 开启时为 4；triangle 覆盖为 1）
         // 启动即给活动相机挂载视锥剔除组件（CullingSample 恒开）。
         bool culling_enabled = false;
     };
