@@ -117,7 +117,7 @@
 | M2 | T1a 可增长 arena 池 | ✅ 2026-08-16：`22e4521d` |
 | M3 | R4 调试可视化（阴影图/深度查看器） | ✅ 2026-08-16：`ef1a1687`（子仓 `4d7a4b5`；修复 `acdf5467`/`fcb9b403`） |
 | M4 | R2 compare sampler + 硬件 PCF | ✅ 2026-08-16：`0f1348ec`（子仓 `6cf61c5`；reversed-Z 评审结论=不做，见 RenderLayerPlan §不做） |
-| M5 | R3 阴影视锥剔除 + per-pass 遥测 | 待实施 |
+| M5 | R3 阴影视锥剔除 + per-pass 遥测 | ✅ 2026-08-16：`a74ca942`（recipe 侧光视图剔除 + per-pass draw 计数；42/42 ctest + 7 组 smoke + two_triangles/DamagedHelmet 实机验证） |
 | H1 | 录制路径 DoD 还债 | 待实施 |
 | M7 | T1b 分块流式上传 | 待实施 |
 | M6 | R5 后处理链路 | 待实施 |

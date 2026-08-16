@@ -1,6 +1,6 @@
 # 渲染层 R 系列计划：阴影 pass 与 render-graph 能力扩展
 
-> 状态：**R0a–R0c + R1a–R1e + R2 已实施完成（2026-08-16，提交见 §阶段记录）；R3 后置待立项**。
+> 状态：**R0a–R0c + R1a–R1e + R2 + R3 已实施完成（2026-08-16，提交见 §阶段记录）**。
 > 依据：`Architecture.md`（四层模型、还债清单、帧通道术语表）、
 > `EngineLayerDoDPlan.md`（D/F 系列推进纪律与文档风格）、render-graph 子仓
 > `docs/ArchitectureAndInternals.md`（pass 模型、同步两遍法）与 `docs/计划.md`。
@@ -178,11 +178,41 @@ DX12/Metal 契约测试同步）→ 主仓 shadow sampler 换 comparison sampler
   M3 的 `--debug-view shadow|depth` 语义与输出逐字不变。
 - reversed-Z 评审结论：**不做**（见 §不做）。
 
-## R3 — 可选后置：阴影视锥剔除 + per-pass draw 遥测
+## R3 — 阴影视锥剔除 + per-pass draw 遥测（✅ 已实施 2026-08-16，提交见 §阶段记录）
 
 culling_manager 多视图输出（每视图掩码列或双 scratch——注意契约禁嵌套 vector）；
-frame_counters 加 per-pass draw 计数（measure 槽 6–15 空闲，协议不动）。触发：
-R1 后评估阴影 pass 的 CPU 成本再立项。
+frame_counters 加 per-pass draw 计数（measure 槽 6–15 空闲，协议不动）。
+
+**实施细节（2026-08-16）**：
+
+- **形态取舍**：原设计"culling_manager 多视图输出"按架构现状收敛为——
+  engine `culling_manager` 保持相机单视图（引擎 API 中立，不感知光视图）；
+  **光视图剔除在 recipe 侧完成**（光视图是 apps 层概念：`sun_light` 通道 →
+  recipe 消费，与 R1a 同款边界）。双视图共用 `_interface/culling.h` 纯函数
+  （`make_frustum`/`test_aabb`/新增 `transform_aabb`），各自单写者掩码，
+  无嵌套 vector。
+- **recipe 侧光视图剔除**：`recipe_state` 新增每 geometry handle 的 mesh 局部
+  bounds 列（上传时随句柄维护）；`build_frame` 用 `sun_light.view_proj` 建光
+  视锥（sun 缺失 = 无平行光 = 保守全画），逐实例世界 AABB × 光视锥得
+  `light_visible` 掩码（mesh 越界保守判可见；光近侧取 -w<=z<=w 松约束，
+  宁多画不丢影）；阴影 pass 只画光视锥内 group 0 候选。
+- **独立阴影命令区**：光剔除后阴影 pass 无法引用主命令区的连续 span——
+  `shadow_commands` 只含可见候选（draw_index 与 transform 行同序），上传到
+  indirect buffer 主命令区之后；阴影 draw 行按 (arena) 分段引用该区。
+  单 arena 全可见时与旧布局逐字节一致（契约不变）。
+- **per-pass 遥测**：`frame_counters` 新增 `shadow_draw_count` /
+  `main_draw_count` / `debug_draw_count`（recipe 填；主 pass = 全量候选、
+  阴影 = 光内 group 0 候选、调试 = quad 1 条）；telemetry JSON
+  `counters.{shadow_draws,main_draws,debug_draws}`（M8 B3 pass 瀑布数据源，
+  协议即 pass 维度扩展）；measure 槽 6–8（槽 6–15 预留区间内）。
+- **smoke 契约**：新增 per-pass 不变式——主 pass + 调试 pass = 全量 draw、
+  阴影 ≤ 主（光剔除只减不增）、调试 pass 仅调试模式画 quad。
+- `_interface/culling.h` 新增 `transform_aabb`（闭式解，`scene::transform_bounds`
+  委托同一实现）；`culling_test` 增正交光视锥边界（光盒中心可见 / 侧向剔除 /
+  far 外剔除 / 近侧保守保留）与 `transform_aabb` 平移缩放旋转用例。
+- **剔除生效端到端验证**：`assets/two_triangles.gltf`（第二三角置于光盒外
+  x≈6 但相机可见）→ ShadowSample 遥测 `shadow_draws=2 / main_draws=3`
+  （光外实例只进主 pass）；smoke（--validation）零错误。
 
 ## 推进纪律
 
@@ -218,4 +248,4 @@ R1 后评估阴影 pass 的 CPU 成本再立项。
 | R1d | smoke 契约 + 全量验证（✅ 2026-08-15：契约默认值 4→5 / 1→2 且 `expected_draw_passes_per_frame=2`（triangle 覆盖 1/1/1）；43/43 ctest 绿 + Triangle/GltfSponza GPU smoke 6 帧（--validation）通过零警告） | `b2d1ac72` |
 | R1e | ShadowSample 小物件阴影展示（✅ 2026-08-15：接影地面 + 斜射太阳光 + 紧凑正交视锥 + 冷色补光；smoke 6 帧通过） | `f68bed06` |
 | R2 | compare sampler + 硬件 PCF（✅ 2026-08-16：子仓 `6cf61c5`（sampler_desc.compare_op + 三后端契约）；主仓 `0f1348ec`（comparison sampler + dref 硬件 PCF + debug raw sampler）；42/42 ctest + 7 组 GPU smoke 全过；reversed-Z 评审结论=不做） | ✅ 2026-08-16：子仓 `6cf61c5`、主仓 `0f1348ec` |
-| R3 | 阴影视锥剔除 + per-pass 遥测 | 可选后置 |
+| R3 | 阴影视锥剔除 + per-pass 遥测（✅ 2026-08-16：recipe 侧光视图剔除（光视锥 × 世界 AABB 掩码）+ 独立阴影命令区 + `frame_counters` per-pass draw 计数（measure 槽 6–8）+ smoke per-pass 不变式；`transform_aabb` 进 `_interface/culling.h`；42/42 ctest + 7 组 smoke 全过 + two_triangles 资产端到端验证（shadow 2 / main 3）+ DamagedHelmet 实机目检） | ✅ 2026-08-16：`a74ca942` |

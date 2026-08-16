@@ -173,6 +173,22 @@ depth clear/比较方向、采样器比较方向与 bias 符号）。
 注意契约禁嵌套 vector；`frame_counters` per-pass draw 计数，measure 槽 6–15）。
 **验收补充**：遥测字段同时是 M8 B3 的 pass 瀑布数据源，协议扩展预留 pass 维度。
 
+**结果（2026-08-16）**：✅ 已提交 `a74ca942`。形态取舍：engine `culling_manager`
+保持相机单视图（API 中立），**光视图剔除在 recipe 侧**（`sun_light` 是 apps 通道，
+与 R1a 同款边界；双视图共用 `_interface/culling.h` 纯函数）。recipe 新增每
+geometry handle 的 mesh bounds 列 → `build_frame` 光视锥 × 世界 AABB 得
+`light_visible` 掩码 → 阴影 pass 独立命令区（只含光内 group 0 候选，按 (arena)
+分段）——单 arena 全可见时与旧布局逐字节一致。`frame_counters` 新增
+`shadow/main/debug_draw_count`（telemetry JSON `counters.{shadow_draws,main_draws,
+debug_draws}`，measure 槽 6–8）；smoke 契约新增 per-pass 不变式（主+调试=全量、
+阴影 ≤ 主、调试仅 debug 模式）。`transform_aabb` 进 `_interface/culling.h`
+（`scene::transform_bounds` 委托），`culling_test` 增正交光视锥边界用例。
+42/42 ctest 绿 + 7 组 smoke 全过（--validation 零错误）；`assets/two_triangles.gltf`
+端到端验证剔除生效（光外实例 shadow_draws=2 / main_draws=3）；DamagedHelmet
+（3.6MB，1233456 字节几何）ShadowSample smoke 零错误 + 目检阴影清晰
+（截帧 `build/helmet_hw_pcf.png`）。Sponza 实机"剔除前后帧时对比"仍待有资产的
+机器（Plan.md §4 欠债登记）。
+
 ---
 
 ## M6 — R5 后处理链路
@@ -277,7 +293,7 @@ sampler）与 M5（每阶视锥剔除）全部就绪。
 | M2 | T1a 可增长 arena 池 | ✅ 2026-08-16：`22e4521d` |
 | M3 | R4 调试可视化（阴影图/深度查看器） | ✅ 2026-08-16：`ef1a1687`（子仓修复 `4d7a4b5`） |
 | M4 | R2 compare sampler + 硬件 PCF | ✅ 2026-08-16：子仓 `6cf61c5` + 主仓 `0f1348ec` |
-| M5 | R3 阴影视锥剔除 + per-pass 遥测 | 待实施 |
+| M5 | R3 阴影视锥剔除 + per-pass 遥测 | ✅ 2026-08-16：`a74ca942` |
 | M6 | R5 后处理链路 | 待实施 |
 | M7 | T1b 分块流式上传 | 待实施 |
 | M8 | B1→B3 控制平面 + RG 事件浏览器 | 待实施 |
