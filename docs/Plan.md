@@ -67,6 +67,23 @@
 - `engine_runtime.cpp:43/58/64/97/106/126/133/143` 启动路径 8 处 `throw` → `result<T>` 初始化错误
   （`application_runner.cpp:69/112` 已有 catch 边界，平滑替换；健壮性项，无热路径影响）。
 
+**结果（2026-08-16）**：✅ 已提交子仓 `42f8091` + `b01fa91`（view cache 修正）+ 主仓 `4716944c`。子仓：`emit_barriers`
+成员 scratch（batch 本有 clear 接口）+ `begin_raster_pass` color_info scratch；`view_cache`
+AoS `find_if` → handle 直寻址**每 image 固定容量视图槽**（`std::array<image_view_entry,4>` +
+count；首版扁平行 CSR 的 retire 压实存在"create-at-tail 后段序反转 → begins 失配"缺陷，
+`b01fa91` 改为无位移的按槽实现）；`pending_imported_images/buffers` unordered_map →
+稠密索引列（VK_NULL_HANDLE 哨兵，barrier lowering 每 buffer op 直寻址）；
+`vector<bool>` 成员列 → uint8（owned_images/owned_buffers、swapchain_initialized）；
+plan 重建 block 复用 O(n²) 双循环 → `index_old_blocks`/`claim_old_block`
+（unordered_multimap 等值键索引，image/buffer 两侧共用实现）。主仓：
+`group_segments` + 光源 GPU 三列 → recipe_state scratch（帧间复用）；两个 sample
+灯光/太阳数据 → 持久持有 + 裸指针发布（发布点注释"持久对象，非局部变量"；
+shared_ptr 捕获层因 std::function 可拷贝要求）；`plane_fit` shared_ptr → 持久状态
+普通成员；`debug_view_request` 保留 owned（F4 范例）；`engine_runtime::initialize`
+8 处 throw → `result<bool>`（构造不再抛，runner 检查结果，catch 边界保留兜底）。
+子仓 25/25 + 主仓 42/42 ctest 绿 + 9 组 GPU smoke（--validation，含 ShadowSample/
+DamagedHelmet/two_triangles 光剔除场景）全过。
+
 ## 3. 触发式后置（不主动排期）
 
 | 事项 | 触发条件 | 出处 |
@@ -118,7 +135,7 @@
 | M3 | R4 调试可视化（阴影图/深度查看器） | ✅ 2026-08-16：`ef1a1687`（子仓 `4d7a4b5`；修复 `acdf5467`/`fcb9b403`） |
 | M4 | R2 compare sampler + 硬件 PCF | ✅ 2026-08-16：`0f1348ec`（子仓 `6cf61c5`；reversed-Z 评审结论=不做，见 RenderLayerPlan §不做） |
 | M5 | R3 阴影视锥剔除 + per-pass 遥测 | ✅ 2026-08-16：`a74ca942`（recipe 侧光视图剔除 + per-pass draw 计数；42/42 ctest + 7 组 smoke + two_triangles/DamagedHelmet 实机验证） |
-| H1 | 录制路径 DoD 还债 | 待实施 |
+| H1 | 录制路径 DoD 还债 | ✅ 2026-08-16：子仓 `42f8091` + `b01fa91`、主仓 `4716944c` |
 | M7 | T1b 分块流式上传 | 待实施 |
 | M6 | R5 后处理链路 | 待实施 |
 | M8 | B1→B3 控制平面 + RG 事件浏览器 | 待实施 |
