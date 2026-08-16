@@ -83,6 +83,18 @@ int main()
         CHECK(result.options.debug_view == apps::debug_view_mode::off);
     }
     {
+        const std::array arguments{std::string_view{"--debug-view"}, std::string_view{"hdr"}};
+        const auto result = apps::parse_application_options(arguments);
+        CHECK(result.succeeded());
+        CHECK(result.options.debug_view == apps::debug_view_mode::hdr);
+    }
+    {
+        const std::array arguments{std::string_view{"--debug-view"}, std::string_view{"resolved"}};
+        const auto result = apps::parse_application_options(arguments);
+        CHECK(result.succeeded());
+        CHECK(result.options.debug_view == apps::debug_view_mode::resolved);
+    }
+    {
         const std::array arguments{std::string_view{"--debug-view"}, std::string_view{"bogus"}};
         const auto result = apps::parse_application_options(arguments);
         CHECK(result.status == apps::application_options_status::error);
