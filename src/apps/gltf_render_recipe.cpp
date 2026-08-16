@@ -53,9 +53,9 @@ namespace apps
             glm::vec4 direction{0.0F};        // 光入射方向（光源 → 场景）
             glm::vec4 color{1.0F};
             float intensity = 0.0F;           // 0 = 无平行光（frag 跳过阴影采样）
-            float shadow_texel_size = 1.0F / static_cast<float>(shadow_map_size);
-            float pad0 = 0.0F;
+            float pad0 = 0.0F;                // R2 后 PCF 由硬件完成，texel size 字段已删
             float pad1 = 0.0F;
+            float pad2 = 0.0F;
         };
         // 统一 push constant（32 字节 = 8 uint）。字段顺序即内存布局，shadow
         // pass 推前 8 字节（light_uniform_slot + transform_buffer_slot），
@@ -109,6 +109,9 @@ namespace apps
             render_graph::device_buffer_handle lights; // 光源表（positions | colors | intensities 三列连续）
             render_graph::device_image_handle shadow_map;
             render_graph::device_sampler_handle shadow_sampler;
+            // 调试视图 raw 采样器（R2 新增）：comparison sampler 禁止非比较读取，
+            // debug shader 读原始深度必须用独立普通采样器。
+            render_graph::device_sampler_handle debug_sampler;
             // 调试视图（R4/M3）：NDC quad 几何 + 专用管线（采样阴影图到角落 inset）
             render_graph::device_buffer_handle debug_quad;
             render_graph::device_pipeline_handle debug_pipeline;
@@ -121,6 +124,7 @@ namespace apps
             uint32_t lights_slot = 0;
             uint32_t shadow_map_slot = 0;
             uint32_t shadow_sampler_slot = 0;
+            uint32_t debug_sampler_slot = 0;
             std::vector<uint32_t> frame_slots;
             std::vector<uint32_t> light_uniform_slots;
             // geometry 列（CSR，与 scene_registry 同款模式）：扁平 draw 列 + 每 mesh
@@ -266,8 +270,17 @@ namespace apps
                   .aliasing = render_graph::aliasing_policy::forbidden,
                   .lifetime = render_graph::resource_lifetime_class::persistent}},
             };
-            // 阴影采样器（nearest + clamp_to_edge，手动 PCF 用）
+            // 阴影采样器（R2）：comparison sampler（LESS_OR_EQUAL）+ linear 滤波，
+            // shader 单次 dref 采样即硬件 2×2 PCF；clamp_to_edge 让 uv 越界采样落
+            // 在视锥边缘而不是环绕。
+            // 调试视图 raw 采样器：nearest + clamp、无比较——debug shader 用
+            // 普通 texture() 读原始深度，comparison sampler 禁止非比较读取。
             std::vector<render_graph::sampler_create_row> samplers{
+                {{.min_filter = render_graph::sampler_filter::linear,
+                  .mag_filter = render_graph::sampler_filter::linear,
+                  .address_u = render_graph::sampler_address_mode::clamp_to_edge,
+                  .address_v = render_graph::sampler_address_mode::clamp_to_edge,
+                  .compare_op = render_graph::sampler_compare_op::less_or_equal}},
                 {{.min_filter = render_graph::sampler_filter::nearest,
                   .mag_filter = render_graph::sampler_filter::nearest,
                   .address_u = render_graph::sampler_address_mode::clamp_to_edge,
@@ -368,6 +381,7 @@ namespace apps
                                         created.buffers.end());
             state.shadow_map = created.images[0];
             state.shadow_sampler = created.samplers[0];
+            state.debug_sampler = created.samplers[1];
             std::copy_n(created.graphics_pipelines.begin(), 4, state.pipelines.begin());
             state.shadow_pipeline = created.graphics_pipelines[4];
             state.debug_pipeline = created.graphics_pipelines[5];
@@ -381,6 +395,7 @@ namespace apps
                  .buffer = state.lights, .size = sizeof(glm::vec4) * max_lights * 2 + sizeof(float) * max_lights},
                 {.table = render_graph::bindless_table_kind::sampled_images, .image = state.shadow_map},
                 {.table = render_graph::bindless_table_kind::samplers, .sampler = state.shadow_sampler},
+                {.table = render_graph::bindless_table_kind::samplers, .sampler = state.debug_sampler},
             };
             for (const auto buffer : state.frame_uniforms)
                 publishes.push_back({.table = render_graph::bindless_table_kind::uniform_buffers,
@@ -409,7 +424,8 @@ namespace apps
             state.lights_slot = bound.bindless_slots[2];
             state.shadow_map_slot = bound.bindless_slots[3];
             state.shadow_sampler_slot = bound.bindless_slots[4];
-            const std::size_t frame_slot_begin = 5;
+            state.debug_sampler_slot = bound.bindless_slots[5];
+            const std::size_t frame_slot_begin = 6;
             state.frame_slots.assign(bound.bindless_slots.begin() + frame_slot_begin,
                                      bound.bindless_slots.begin() + frame_slot_begin + config.frames_in_flight);
             state.light_uniform_slots.assign(bound.bindless_slots.begin() + frame_slot_begin + config.frames_in_flight,
@@ -819,7 +835,8 @@ namespace apps
             std::memcpy(state.push_blob.data(), &state.push, sizeof(state.push));
             const debug_push debug_state{
                 .image_slot = state.shadow_map_slot,
-                .sampler_slot = state.shadow_sampler_slot,
+                // 原始深度读取必须用独立普通采样器（R2：comparison sampler 禁非比较读取）
+                .sampler_slot = state.debug_sampler_slot,
                 .mode = debug_mode == 0U ? 0U : debug_mode - 1U,
                 .near_plane = sun != nullptr ? sun->ortho_near : 0.1F,
                 .far_plane = sun != nullptr ? sun->ortho_far : 240.0F,

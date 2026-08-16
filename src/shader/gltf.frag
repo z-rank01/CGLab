@@ -40,8 +40,9 @@ layout(set = 0, binding = 3) uniform LightUniform {
     vec4 direction;
     vec4 color;
     float intensity;
-    float shadow_texel_size;
-    vec2 pad;
+    float pad0;
+    float pad1;
+    float pad2;
 } light_uniforms[];
 
 layout(push_constant) uniform ObjectPush {
@@ -62,8 +63,9 @@ vec2 material_uv(uint set_index)
     return set_index == 1 ? texcoord1 : texcoord0;
 }
 
-// 3×3 手动 PCF 阴影（nearest sampler + 深度比较；slope-scaled bias 抗自阴影）
-float sample_shadow(vec3 world_pos, vec3 normal, vec3 light_dir, float texel)
+// 硬件 PCF 阴影（R2）：comparison sampler（LESS_OR_EQUAL）+ linear 滤波，
+// 单次 dref 采样 = 硬件 2×2 比较平均；slope-scaled bias 进 reference 深度。
+float sample_shadow(vec3 world_pos, vec3 normal, vec3 light_dir)
 {
     uint light_slot = nonuniformEXT(object_push.light_uniform_slot);
     uint map_slot = nonuniformEXT(object_push.shadow_map_slot);
@@ -75,15 +77,8 @@ float sample_shadow(vec3 world_pos, vec3 normal, vec3 light_dir, float texel)
     // GLM_FORCE_DEPTH_ZERO_TO_ONE：NDC z 与 Vulkan 深度缓冲同刻度，直接比较
     float shadow_depth = ndc.z;
     float bias = max(0.001, 0.002 * (1.0 - max(dot(normal, light_dir), 0.0)));
-    float occluded = 0.0;
-    for (int y = -1; y <= 1; ++y)
-        for (int x = -1; x <= 1; ++x)
-        {
-            vec2 sample_uv = uv + vec2(x, y) * texel;
-            float reference = texture(sampler2D(sampled_images[map_slot], samplers[smp_slot]), sample_uv).r;
-            occluded += (shadow_depth - bias) > reference ? 1.0 : 0.0;
-        }
-    return 1.0 - occluded / 9.0;
+    return texture(sampler2DShadow(sampled_images[map_slot], samplers[smp_slot]),
+                   vec3(uv, shadow_depth - bias));
 }
 
 void main()
@@ -155,8 +150,7 @@ void main()
     vec3 ambient_color = mix(ground_tint, sky_tint, 0.5 + 0.5 * normal.y);
     vec3 ambient = base_color.rgb * ambient_color * 0.35 * occlusion;
     // 阴影只调制平行光贡献（点光保持无阴影，避免双重遮挡）
-    float shadow = sample_shadow(world_position, normal, sun_direction,
-                                 light_uniforms[light_slot].shadow_texel_size);
+    float shadow = sample_shadow(world_position, normal, sun_direction);
     vec3 sun_light = (diffuse + specular) * ndotl * sun_intensity * shadow;
     vec3 point_light = vec3(0.0);
     if (object_push.light_count > 0)

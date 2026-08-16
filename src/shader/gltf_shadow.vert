@@ -9,8 +9,9 @@ layout(set = 0, binding = 3) uniform LightUniform {
     vec4 direction;
     vec4 color;
     float intensity;
-    float shadow_texel_size;
-    vec2 pad;
+    float pad0;
+    float pad1;
+    float pad2;
 } light_uniforms[];
 
 struct TransformRow {
