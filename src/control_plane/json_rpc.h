@@ -73,6 +73,7 @@ namespace control_plane
         scene_set_transform,  // scene.set_transform {id: uint, position?/rotation?/scale?: [x,y,z]}
         scene_select,         // scene.select {id: uint|null}
         scene_list,           // scene.list
+        debug_set_view,       // debug.set_view {view: "off"|"shadow"|"depth"|"hdr"|"resolved"}（M8/B2，转发 sample 通道）
     };
 
     struct engine_command

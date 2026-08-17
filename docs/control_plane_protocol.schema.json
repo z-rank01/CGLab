@@ -5,6 +5,7 @@
     "telemetry.load",
     "telemetry.load_progress",
     "debug.echo",
+    "debug.set_view",
     "frame.pause",
     "frame.resume",
     "frame.step",
@@ -421,6 +422,30 @@
         "type": "object"
       },
       "result": "场景状态对象，同 telemetry.scene 负载"
+    },
+    {
+      "kind": "command",
+      "name": "debug.set_view",
+      "params": {
+        "additionalProperties": true,
+        "properties": {
+          "view": {
+            "enum": [
+              "off",
+              "shadow",
+              "depth",
+              "hdr",
+              "resolved"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "view"
+        ],
+        "type": "object"
+      },
+      "result": "{mode: uint（枚举下标，0=off…4=resolved）}"
     }
   ],
   "notifications": [

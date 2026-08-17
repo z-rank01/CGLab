@@ -120,6 +120,9 @@ namespace control_plane
             std::string_view choices;     // string_enum：'|' 分隔的合法值
             double default_value = 0.0;   // has_default 时，缺省写入 validated
             bool has_default = false;
+            // string_enum 专用：validated 写合法值下标（uint）而非字符串——
+            // 调用方按枚举序消费（如 debug.set_view 对齐 apps::debug_view_mode）。
+            bool enum_as_index = false;
         };
 
         struct method_entry
@@ -179,6 +182,11 @@ namespace control_plane
         inline constexpr param_rule rules_scene_select[]{
             {.name = "id", .kind = param_kind::uint_or_null, .required = true},
         };
+        inline constexpr param_rule rules_debug_set_view[]{
+            // 枚举序对齐 apps::debug_view_mode（0=off…4=resolved），引擎只搬运下标
+            {.name = "view", .kind = param_kind::string_enum, .required = true,
+             .choices = "off|shadow|depth|hdr|resolved", .enum_as_index = true},
+        };
 
         inline constexpr method_entry method_table[]{
             {.name = "debug.echo", .kind = command_kind::echo, .rules = rules_echo,
@@ -215,12 +223,14 @@ namespace control_plane
              .result_hint = "{selected: uint|null}"},
             {.name = "scene.list", .kind = command_kind::scene_list, .rules = {},
              .result_hint = "场景状态对象，同 telemetry.scene 负载"},
+            {.name = "debug.set_view", .kind = command_kind::debug_set_view, .rules = rules_debug_set_view,
+             .result_hint = "{mode: uint（枚举下标，0=off…4=resolved）}"},
         };
 
         // capabilities 列表：session.init 响应与 schema 共用。
         inline constexpr std::string_view capability_names[]{
             "telemetry.frame", "telemetry.scene", "telemetry.load", "telemetry.load_progress",
-            "debug.echo",
+            "debug.echo", "debug.set_view",
             "frame.pause", "frame.resume", "frame.step",
             "camera.set_mode", "camera.set_params", "camera.get_state", "camera.set_culling",
             "camera.bookmark.save", "camera.bookmark.goto",
@@ -228,8 +238,10 @@ namespace control_plane
             "scene.set_transform", "scene.select", "scene.list",
         };
 
-        bool choices_contains(std::string_view choices, const std::string& value)
+        // 合法值下标（'|' 分隔序），未命中返回 -1。enum_as_index 的参数以此值入 validated。
+        int choices_index(std::string_view choices, const std::string& value)
         {
+            int index = 0;
             std::size_t begin = 0;
             while (begin <= choices.size())
             {
@@ -238,15 +250,21 @@ namespace control_plane
                     choices.substr(begin, sep == std::string_view::npos ? sep : sep - begin);
                 if (item == value)
                 {
-                    return true;
+                    return index;
                 }
                 if (sep == std::string_view::npos)
                 {
                     break;
                 }
                 begin = sep + 1;
+                ++index;
             }
-            return false;
+            return -1;
+        }
+
+        bool choices_contains(std::string_view choices, const std::string& value)
+        {
+            return choices_index(choices, value) >= 0;
         }
 
         // 按规则表校验 params；通过时填充 validated（只含表中字段），失败时写 error。
@@ -312,7 +330,15 @@ namespace control_plane
                     return false;
                 }
 
-                validated[std::string(rule.name)] = value;
+                if (rule.kind == param_kind::string_enum && rule.enum_as_index)
+                {
+                    validated[std::string(rule.name)] =
+                        static_cast<std::uint32_t>(choices_index(rule.choices, value.get<std::string>()));
+                }
+                else
+                {
+                    validated[std::string(rule.name)] = value;
+                }
                 if (!rule.required)
                 {
                     ++optional_present;

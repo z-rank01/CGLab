@@ -13,6 +13,17 @@
 
 namespace engine
 {
+    // 调试视图覆盖（M8/B2）：control plane 的 debug.set_view 命令写入，
+    // 引擎每帧以持久成员裸指针发布进 channels；sample 读取并翻译为自身的
+    // debug_view_request 发布（引擎只搬运 mode 数值，模式语义归 apps 层，
+    // 取值序与 apps::debug_view_mode 一致：0=off…4=resolved）。
+    // active=false = 无 web 覆盖，sample 回退 CLI 的 --debug-view 选项。
+    struct debug_view_override
+    {
+        std::uint32_t mode = 0;
+        bool active = false;
+    };
+
     struct runtime_services
     {
         scene::scene_registry& scene;

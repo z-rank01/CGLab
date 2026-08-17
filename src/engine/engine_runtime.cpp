@@ -76,13 +76,18 @@ engine::result<bool> engine_runtime::initialize()
     if (config.control_plane.enabled)
     {
         control_plane = std::make_unique<control_plane::control_plane_server>();
+        // I1：HTTP 静态托管与 WS 同端口。B2 起优先托管正式 UI 构建产物
+        // （<工作目录>/ui/dist），未构建时回退单文件 dev console（<工作目录>/web）。
+        const std::string dist_root = config.working_directory + "/ui/dist";
+        const std::string web_root  = std::filesystem::is_directory(dist_root)
+                                          ? dist_root
+                                          : config.working_directory + "/web";
         if (!control_plane->start(control_plane::control_plane_config{
                 .enabled = config.control_plane.enabled,
                 .port = config.control_plane.port,
                 .open_browser = config.control_plane.open_browser,
                 .server_name = config.window.title,
-                // I1：HTTP 静态托管与 WS 同端口，dev console 由 <工作目录>/web 提供
-                .web_root = config.working_directory + "/web",
+                .web_root = web_root,
             }))
         {
             Logger::LogWarning("Control plane unavailable; continuing without Web UI backend.");
@@ -627,6 +632,16 @@ void engine_runtime::handle_scene_command(const control_plane::engine_command& c
         control_plane->post_response(command.client_id, control_plane::make_result(command.id, current_scene_state()));
         break;
     }
+    case command_kind::debug_set_view:
+    {
+        // M8/B2：协议层已把枚举名映射为下标（对齐 apps::debug_view_mode），
+        // 引擎只搬运数值；sample 每帧从帧通道读取并翻译发布。
+        debug_override.mode   = command.params["view"].get<std::uint32_t>();
+        debug_override.active = true;
+        control_plane->post_response(command.client_id,
+                                     control_plane::make_result(command.id, {{"mode", debug_override.mode}}));
+        break;
+    }
     default:
         break;
     }
@@ -1068,6 +1083,9 @@ void engine_runtime::update_cameras(frame_phase_context& context)
 void engine_runtime::run_sample_systems(frame_phase_context& context)
 {
     if (context.stop == frame_stop_reason::user_requested || !sample_definition.update) return;
+    // 引擎侧通道发布（sample update 前）：debug 视图覆盖，持久成员裸指针（H1）。
+    // 引擎是该通道唯一写者；sample 是 debug_view_request 的唯一写者，互不冲突。
+    extract.channels.publish_state<engine::debug_view_override>(&debug_override);
     runtime_services services{
         .scene = scene_registry,
         .cameras = camera_container,

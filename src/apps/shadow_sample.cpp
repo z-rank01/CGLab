@@ -148,11 +148,16 @@ int main(int argc, char** argv)
                 .required_startup_asset = asset_path.string(),
                 .update = [debug_mode, persistent = std::move(persistent_holder)](engine::runtime_services& services, float)
                 {
-                    if (debug_mode != apps::debug_view_mode::off)
+                    // debug 视图：web 覆盖（debug.set_view → override 通道，M8/B2）优先于 CLI
+                    const auto* override_state = services.channels.find_state<engine::debug_view_override>();
+                    const std::uint32_t view_mode = (override_state != nullptr && override_state->active)
+                                                        ? override_state->mode
+                                                        : static_cast<std::uint32_t>(debug_mode);
+                    if (view_mode != static_cast<std::uint32_t>(apps::debug_view_mode::off))
                     {
                         // owned 发布（每帧一个请求，机制防呆）
                         auto debug = std::make_unique<apps::debug_view_request>();
-                        debug->mode = static_cast<std::uint32_t>(debug_mode);
+                        debug->mode = view_mode;
                         services.channels.publish_state_owned<apps::debug_view_request>(std::move(debug));
                     }
                     // 持久对象，非局部变量：裸指针发布，帧间零分配（H1）

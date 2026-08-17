@@ -71,6 +71,9 @@ private:
     std::unique_ptr<control_plane::control_plane_server> control_plane;
     bool frame_paused = false;
     std::uint32_t pending_frame_steps = 0;
+    // debug.set_view 覆盖状态（M8/B2）：持久成员，每帧裸指针发布进帧通道（H1 口径），
+    // sample 侧翻译为 apps::debug_view_request。active=false 时 sample 回退 CLI。
+    engine::debug_view_override debug_override{};
 
     // --- scene system ---
     scene::scene_registry scene_registry;

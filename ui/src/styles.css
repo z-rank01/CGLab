@@ -1,0 +1,211 @@
+:root {
+  --bg: #16181d;
+  --panel: #1e222a;
+  --border: #2c313c;
+  --fg: #d6dae2;
+  --dim: #8a919e;
+  --accent: #4fa3ff;
+  --danger: #e5533f;
+  --ok: #4caf50;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.5 'Segoe UI', system-ui, sans-serif;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.app-header h1 {
+  font-size: 14px;
+  margin: 0;
+  font-weight: 600;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #555;
+  flex: none;
+}
+.dot.on {
+  background: var(--ok);
+}
+.dot.off {
+  background: var(--danger);
+}
+
+.dock-host {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- 面板通用 ---- */
+
+.panel {
+  height: 100%;
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--bg);
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 4px 0;
+}
+
+.muted {
+  color: var(--dim);
+}
+
+button {
+  background: #2a303c;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+button:hover {
+  border-color: var(--accent);
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button.active {
+  border-color: var(--accent);
+  background: #26314a;
+}
+
+input[type='text'],
+input[type='number'] {
+  background: #12141a;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font: inherit;
+}
+input[type='number'] {
+  width: 80px;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+}
+.kv b {
+  font-weight: 500;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.kv span {
+  font-variant-numeric: tabular-nums;
+}
+
+.bar {
+  height: 5px;
+  background: #2a303c;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 2px;
+  flex: 1;
+}
+.bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+th,
+td {
+  text-align: left;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+th {
+  color: var(--dim);
+  font-weight: 500;
+}
+tr.sel {
+  background: #26314a;
+}
+tbody tr:hover {
+  background: #232936;
+  cursor: pointer;
+}
+
+.log-box {
+  height: 100%;
+  overflow-y: auto;
+  background: #12141a;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font: 11px/1.5 Consolas, monospace;
+  white-space: pre-wrap;
+}
+
+.vec3-inputs {
+  display: inline-flex;
+  gap: 4px;
+}
+.vec3-inputs input {
+  width: 64px;
+}
+
+.section-title {
+  margin: 10px 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+}
+.section-title:first-child {
+  margin-top: 0;
+}
+
+/* dockview 主题微调，贴合引擎工具配色 */
+.dockview-theme-dark {
+  --dv-background-color: var(--bg);
+  --dv-group-view-background-color: var(--bg);
+  --dv-tabs-and-actions-container-background-color: var(--panel);
+}

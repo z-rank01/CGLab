@@ -430,6 +430,43 @@ namespace
         check(buffer.str() == expected,
               "schema golden up to date (run cglab_control_plane_protocol_tests --write after intended protocol changes)");
     }
+    void test_dispatch_debug_set_view()
+    {
+        // M8/B2：枚举名映射为下标（对齐 apps::debug_view_mode），引擎只搬运数值
+        const auto shadow = control_plane::parse_request(R"({"id":60,"method":"debug.set_view","params":{"view":"shadow"}})");
+        const auto shadow_cmd = control_plane::dispatch_request("c", shadow.request);
+        check(shadow_cmd.outcome == control_plane::dispatch_outcome::queue_command, "set_view queued");
+        check(shadow_cmd.command.kind == control_plane::command_kind::debug_set_view, "set_view kind");
+        check(shadow_cmd.command.params["view"] == 1, "set_view shadow maps to 1");
+
+        const auto resolved = control_plane::parse_request(R"({"id":61,"method":"debug.set_view","params":{"view":"resolved"}})");
+        check(control_plane::dispatch_request("c", resolved.request).command.params["view"] == 4,
+              "set_view resolved maps to 4");
+
+        const auto bad = control_plane::parse_request(R"({"id":62,"method":"debug.set_view","params":{"view":"wireframe"}})");
+        check(control_plane::dispatch_request("c", bad.request).response["error"]["code"] ==
+                  control_plane::error_invalid_params,
+              "set_view unknown view rejected");
+
+        const auto missing = control_plane::parse_request(R"({"id":63,"method":"debug.set_view","params":{}})");
+        check(control_plane::dispatch_request("c", missing.request).response["error"]["code"] ==
+                  control_plane::error_invalid_params,
+              "set_view missing view rejected");
+
+        const auto init = control_plane::parse_request(
+            R"({"id":64,"method":"session.init","params":{"protocol_version":1}})");
+        const auto resp = control_plane::dispatch_request("c", init.request);
+        const auto& caps = resp.response["result"]["capabilities"];
+        bool found = false;
+        for (const auto& cap : caps)
+        {
+            if (cap == "debug.set_view")
+            {
+                found = true;
+            }
+        }
+        check(found, "capabilities include debug.set_view");
+    }
 } // namespace
 
 int main(int argc, char** argv)
@@ -459,6 +496,7 @@ int main(int argc, char** argv)
     test_schema_consistency();
     test_web_static();
     test_schema_golden();
+    test_dispatch_debug_set_view();
 
     if (failures != 0)
     {

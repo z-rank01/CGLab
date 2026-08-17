@@ -27,3 +27,8 @@
 *.suo
 *.log
 *.DS_Store
+
+# Web UI（M8/B2）：npm 依赖与构建产物
+/ui/node_modules/
+/ui/dist/
+/ui/*.tsbuildinfo
