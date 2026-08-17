@@ -1,0 +1,2 @@
+# golden 文件由 cglab_control_plane_protocol_tests 逐字节生成/比较，必须 LF 往返
+docs/control_plane_protocol.schema.json text eol=lf

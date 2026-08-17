@@ -53,6 +53,9 @@ target_include_directories(cglab_control_plane_protocol_tests
     PRIVATE ${PROJECT_SOURCE_DIR}/src/control_plane
 )
 target_link_libraries(cglab_control_plane_protocol_tests PRIVATE nlohmann_json::nlohmann_json)
+target_compile_definitions(cglab_control_plane_protocol_tests
+    PRIVATE CGLAB_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
 cglab_register_test(cglab_control_plane_protocol_tests cglab.control_plane_protocol)
 
 add_executable(cglab_engine_runtime_tests engine_runtime_test.cpp)

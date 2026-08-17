@@ -2,10 +2,16 @@
 // 覆盖：编解码、请求解析、方法分派、参数校验、版本协商、未知方法。
 
 #include <cstdlib>
+#include <cstring>
+#include <fstream>
 #include <iostream>
+#include <set>
+#include <sstream>
+#include <string>
 #include <string_view>
 
 #include "json_rpc.h"
+#include "web_static.h"
 
 namespace
 {
@@ -324,10 +330,121 @@ namespace
         check(has_cap("telemetry.load_progress"), "capabilities include telemetry.load_progress");
         check(has_cap("camera.set_culling"), "capabilities include camera.set_culling");
     }
+
+    // I1：schema 与实现同源——方法表/capabilities/通知表互相咬合
+    void test_schema_consistency()
+    {
+        const auto schema = control_plane::build_protocol_schema();
+        check(schema["protocol_version"] == control_plane::protocol_version, "schema protocol version");
+
+        std::set<std::string> capabilities;
+        for (const auto& cap : schema["capabilities"])
+        {
+            capabilities.insert(cap.get<std::string>());
+        }
+
+        std::set<std::string> notification_names;
+        for (const auto& note : schema["notifications"])
+        {
+            notification_names.insert(note["name"].get<std::string>());
+        }
+
+        bool methods_ok = true;
+        bool telemetry_ok = true;
+        for (const auto& method : schema["methods"])
+        {
+            const std::string name = method["name"].get<std::string>();
+            if (name == "session.init")
+            {
+                continue; // 握手方法不进 capabilities（与现行行为一致）
+            }
+            // 每个 command 方法必须出现在 capabilities，反之亦然
+            if (capabilities.count(name) == 0)
+            {
+                methods_ok = false;
+            }
+            capabilities.erase(name);
+        }
+        // 剩余 capabilities 必须全部由通知表覆盖（telemetry.*）
+        for (const std::string& rest : capabilities)
+        {
+            if (notification_names.count(rest) == 0)
+            {
+                telemetry_ok = false;
+            }
+        }
+        check(methods_ok, "schema methods covered by capabilities");
+        check(telemetry_ok, "schema notifications cover remaining capabilities");
+
+        // session.init 响应的 capabilities 与 schema 一致
+        const auto init = control_plane::parse_request(
+            R"({"id":50,"method":"session.init","params":{"protocol_version":1}})");
+        const auto resp = control_plane::dispatch_request("c", init.request);
+        check(resp.response["result"]["capabilities"] == schema["capabilities"],
+              "session.init capabilities match schema");
+    }
+
+    void test_web_static()
+    {
+        using control_plane::content_type_for;
+        using control_plane::resolve_web_path;
+        const std::filesystem::path root = std::filesystem::path("srv").lexically_normal();
+
+        const auto index = resolve_web_path(root, "/");
+        check(index.has_value(), "resolve root to index.html");
+        check(index && *index == (root / "index.html").lexically_normal(), "resolve root path value");
+
+        const auto nested = resolve_web_path(root, "/a/b.js?ver=2");
+        check(nested && *nested == (root / "a" / "b.js").lexically_normal(), "resolve nested with query");
+
+        check(!resolve_web_path(root, "/../secret").has_value(), "reject dot-dot");
+        check(!resolve_web_path(root, "/a/../../secret").has_value(), "reject nested dot-dot");
+        check(!resolve_web_path(root, "/%2e%2e/secret").has_value(), "reject percent encoding");
+        check(!resolve_web_path(root, "/a\\..\\secret").has_value(), "reject backslash");
+        check(!resolve_web_path(root, "no-leading-slash").has_value(), "reject relative url");
+        check(!resolve_web_path(root, "/c:/windows").has_value(), "reject drive segment");
+
+        check(content_type_for("index.html") == "text/html; charset=utf-8", "content type html");
+        check(content_type_for("app.js") == "text/javascript; charset=utf-8", "content type js");
+        check(content_type_for("logo.png") == "image/png", "content type png");
+        check(content_type_for("data.bin") == "application/octet-stream", "content type fallback");
+    }
+
+    // I1 golden：docs/control_plane_protocol.schema.json 必须等于 build_protocol_schema() 输出。
+    // 有意改协议时以 --write 重新生成：`cglab_control_plane_protocol_tests --write`。
+    constexpr std::string_view schema_relative_path = "docs/control_plane_protocol.schema.json";
+
+    void test_schema_golden()
+    {
+        const std::string expected = control_plane::build_protocol_schema().dump(2) + "\n";
+        const std::filesystem::path path =
+            std::filesystem::path(CGLAB_SOURCE_DIR) / std::string(schema_relative_path);
+        std::ifstream stream(path, std::ios::binary);
+        if (!stream)
+        {
+            check(false, "schema golden file readable (run with --write to generate)");
+            return;
+        }
+        std::stringstream buffer;
+        buffer << stream.rdbuf();
+        check(buffer.str() == expected,
+              "schema golden up to date (run cglab_control_plane_protocol_tests --write after intended protocol changes)");
+    }
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc > 1 && std::strcmp(argv[1], "--write") == 0)
+    {
+        // 重新生成 golden（协议有意变更后执行一次并随提交入库）
+        const std::filesystem::path path =
+            std::filesystem::path(CGLAB_SOURCE_DIR) / std::string(schema_relative_path);
+        std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+        stream << control_plane::build_protocol_schema().dump(2) << "\n";
+        std::cout << "Wrote " << path << '\n';
+        return stream ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
     test_make_result_error_notification();
     test_parse_valid();
     test_parse_notification();
@@ -339,6 +456,9 @@ int main()
     test_dispatch_camera_methods();
     test_hello_notification();
     test_dispatch_scene_methods();
+    test_schema_consistency();
+    test_web_static();
+    test_schema_golden();
 
     if (failures != 0)
     {

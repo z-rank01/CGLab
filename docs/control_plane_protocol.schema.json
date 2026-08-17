@@ -1,0 +1,611 @@
+{
+  "capabilities": [
+    "telemetry.frame",
+    "telemetry.scene",
+    "telemetry.load",
+    "telemetry.load_progress",
+    "debug.echo",
+    "frame.pause",
+    "frame.resume",
+    "frame.step",
+    "camera.set_mode",
+    "camera.set_params",
+    "camera.get_state",
+    "camera.set_culling",
+    "camera.bookmark.save",
+    "camera.bookmark.goto",
+    "scene.load_asset",
+    "scene.unload",
+    "scene.set_visibility",
+    "scene.set_transform",
+    "scene.select",
+    "scene.list"
+  ],
+  "convention": "命令全部帧边界生效；UI 永不直接触碰引擎内存；错误码遵循 JSON-RPC 2.0 标准；HTTP 静态服务与 WS 同端口（GET / 提供 dev console）",
+  "endpoint": "ws://127.0.0.1:17381（默认；--ui-port 可改）",
+  "methods": [
+    {
+      "kind": "immediate",
+      "name": "session.init",
+      "params": {
+        "additionalProperties": true,
+        "properties": {
+          "protocol_version": {
+            "maximum": 1,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "protocol_version"
+        ],
+        "type": "object"
+      },
+      "result": "{protocol_version, server, capabilities: string[]}"
+    },
+    {
+      "kind": "command",
+      "name": "debug.echo",
+      "params": {
+        "additionalProperties": true,
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "result": "{message: string}"
+    },
+    {
+      "kind": "command",
+      "name": "frame.pause",
+      "params": {
+        "additionalProperties": true,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "result": "{paused: true}"
+    },
+    {
+      "kind": "command",
+      "name": "frame.resume",
+      "params": {
+        "additionalProperties": true,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "result": "{paused: false}"
+    },
+    {
+      "kind": "command",
+      "name": "frame.step",
+      "params": {
+        "additionalProperties": true,
+        "properties": {
+          "count": {
+            "maximum": 64,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "result": "{stepped: count}"
+    },
+    {
+      "kind": "command",
+      "name": "camera.set_mode",
+      "params": {
+        "additionalProperties": true,
+        "properties": {
+          "mode": {
+            "enum": [
+              "fly",
+              "orbit"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
+      "result": "{mode: string}"
+    },
+    {
+      "kind": "command",
+      "name": "camera.set_params",
+      "params": {
+        "additionalProperties": true,
+        "anyOf": [
+          {
+            "required": [
+              "fov"
+            ]
+          },
+          {
+            "required": [
+              "movement_speed"
+            ]
+          },
+          {
+            "required": [
+              "mouse_sensitivity"
+            ]
+          },
+          {
+            "required": [
+              "zoom_speed"
+            ]
+          },
+          {
+            "required": [
+              "orbit_distance"
+            ]
+          },
+          {
+            "required": [
+              "near_plane"
+            ]
+          },
+          {
+            "required": [
+              "far_plane"
+            ]
+          }
+        ],
+        "properties": {
+          "far_plane": {
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "type": "number"
+          },
+          "fov": {
+            "maximum": 175.0,
+            "minimum": 1.0,
+            "type": "number"
+          },
+          "mouse_sensitivity": {
+            "maximum": 10.0,
+            "minimum": 0.001,
+            "type": "number"
+          },
+          "movement_speed": {
+            "maximum": 1000.0,
+            "minimum": 0.01,
+            "type": "number"
+          },
+          "near_plane": {
+            "maximum": 1000.0,
+            "minimum": 0.0001,
+            "type": "number"
+          },
+          "orbit_distance": {
+            "maximum": 10000.0,
+            "minimum": 0.1,
+            "type": "number"
+          },
+          "zoom_speed": {
+            "maximum": 100.0,
+            "minimum": 0.01,
+            "type": "number"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "result": "{applied: string[]（本帧生效的字段名）}"
+    },
+    {
+      "kind": "command",
+      "name": "camera.get_state",
+      "params": {
+        "additionalProperties": true,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "result": "相机状态对象，字段同 telemetry.frame.camera"
+    },
+    {
+      "kind": "command",
+      "name": "camera.set_culling",
+      "params": {
+        "additionalProperties": true,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "result": "{culling: bool}"
+    },
+    {
+      "kind": "command",
+      "name": "camera.bookmark.save",
+      "params": {
+        "additionalProperties": true,
+        "properties": {
+          "slot": {
+            "maximum": 7,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slot"
+        ],
+        "type": "object"
+      },
+      "result": "{saved: bool, slot: uint}"
+    },
+    {
+      "kind": "command",
+      "name": "camera.bookmark.goto",
+      "params": {
+        "additionalProperties": true,
+        "properties": {
+          "slot": {
+            "maximum": 7,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slot"
+        ],
+        "type": "object"
+      },
+      "result": "{goto: true, slot: uint}；空槽位回 error"
+    },
+    {
+      "kind": "command",
+      "name": "scene.load_asset",
+      "params": {
+        "additionalProperties": true,
+        "properties": {
+          "path": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "result": "异步加载；完成时回 {loaded: id, ...} 或 error，进度见 telemetry.load_progress"
+    },
+    {
+      "kind": "command",
+      "name": "scene.unload",
+      "params": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "result": "{unloaded: id}"
+    },
+    {
+      "kind": "command",
+      "name": "scene.set_visibility",
+      "params": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "visible"
+        ],
+        "type": "object"
+      },
+      "result": "{id: uint, visible: bool}"
+    },
+    {
+      "kind": "command",
+      "name": "scene.set_transform",
+      "params": {
+        "additionalProperties": true,
+        "anyOf": [
+          {
+            "required": [
+              "position"
+            ]
+          },
+          {
+            "required": [
+              "rotation"
+            ]
+          },
+          {
+            "required": [
+              "scale"
+            ]
+          }
+        ],
+        "properties": {
+          "id": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "position": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          },
+          "rotation": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          },
+          "scale": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "result": "{id: uint, ...应用的字段}"
+    },
+    {
+      "kind": "command",
+      "name": "scene.select",
+      "params": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "result": "{selected: uint|null}"
+    },
+    {
+      "kind": "command",
+      "name": "scene.list",
+      "params": {
+        "additionalProperties": true,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "result": "场景状态对象，同 telemetry.scene 负载"
+    }
+  ],
+  "notifications": [
+    {
+      "description": "连接建立时服务端主动推送的握手",
+      "fields": [
+        {
+          "name": "protocol_version",
+          "type": "integer"
+        },
+        {
+          "name": "server",
+          "type": "string"
+        }
+      ],
+      "name": "session.hello"
+    },
+    {
+      "description": "10Hz 帧遥测（fps/阶段耗时/计数/相机状态）",
+      "fields": [
+        {
+          "name": "fps",
+          "type": "number"
+        },
+        {
+          "name": "frame_time_ms",
+          "type": "number"
+        },
+        {
+          "name": "presented_frames",
+          "type": "integer"
+        },
+        {
+          "name": "draw_pass_executions",
+          "type": "integer"
+        },
+        {
+          "name": "upload_pass_executions",
+          "type": "integer"
+        },
+        {
+          "name": "steady_frame_descriptor_updates",
+          "type": "integer"
+        },
+        {
+          "name": "pipeline_creations",
+          "type": "integer"
+        },
+        {
+          "name": "indirect_groups",
+          "type": "integer"
+        },
+        {
+          "name": "validation_errors",
+          "type": "integer"
+        },
+        {
+          "name": "paused",
+          "type": "boolean"
+        },
+        {
+          "members": "mode|position|yaw|pitch|fov|orbit_distance|focus_point|movement_speed|mouse_sensitivity|zoom_speed|near_plane|far_plane|bookmarks_valid|blending|culling",
+          "name": "camera",
+          "type": "object"
+        },
+        {
+          "members": "poll_events|consume_control_commands|merge_asset_results|update_scene_transforms|update_cameras|run_sample_systems|extract_render_packet|apply_resource_changes|submit_render_packet|publish_telemetry（各阶段 p50 微秒）",
+          "name": "phase_us",
+          "type": "object"
+        },
+        {
+          "members": "frame_p50_ms|frame_p95_ms|frame_p99_ms",
+          "name": "quantiles",
+          "type": "object"
+        },
+        {
+          "members": "instances|visible|culled|draws|buffer_uploads|image_uploads|shadow_draws|main_draws|debug_draws|resolve_draws",
+          "name": "counters",
+          "type": "object"
+        }
+      ],
+      "name": "telemetry.frame"
+    },
+    {
+      "description": "场景状态（修订号变化时推送）",
+      "fields": [
+        {
+          "members": "场景修订号，仅在变化时推送",
+          "name": "revision",
+          "type": "integer"
+        },
+        {
+          "members": "当前选中对象 id",
+          "name": "selected",
+          "type": "integer|null"
+        },
+        {
+          "members": "元素 {id, name, visible, read_only, draw_count, bounds{min,max}, transform{position,rotation,scale}}",
+          "name": "objects",
+          "type": "array"
+        }
+      ],
+      "name": "telemetry.scene"
+    },
+    {
+      "description": "资产加载完成后的分段耗时与资源统计",
+      "fields": [
+        {
+          "name": "path",
+          "type": "string"
+        },
+        {
+          "name": "load_us",
+          "type": "integer"
+        },
+        {
+          "name": "merge_us",
+          "type": "integer"
+        },
+        {
+          "name": "upload_us",
+          "type": "integer"
+        },
+        {
+          "name": "parse_us",
+          "type": "integer"
+        },
+        {
+          "name": "convert_us",
+          "type": "integer"
+        },
+        {
+          "name": "decode_us",
+          "type": "integer"
+        },
+        {
+          "name": "vertex_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "index_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "images",
+          "type": "integer"
+        },
+        {
+          "members": "count|created|reserved_bytes|used_bytes|allocation_us|plan_us|transfer_us",
+          "name": "geometry_arena",
+          "type": "object"
+        }
+      ],
+      "name": "telemetry.load"
+    },
+    {
+      "description": "分块流式上传进度（M7）",
+      "fields": [
+        {
+          "name": "path",
+          "type": "string"
+        },
+        {
+          "name": "uploaded_bytes",
+          "type": "integer"
+        },
+        {
+          "name": "total_bytes",
+          "type": "integer"
+        },
+        {
+          "members": "0..1",
+          "name": "fraction",
+          "type": "number"
+        },
+        {
+          "members": "done|total",
+          "name": "meshes",
+          "type": "object"
+        }
+      ],
+      "name": "telemetry.load_progress"
+    }
+  ],
+  "protocol": "jsonrpc-2.0",
+  "protocol_version": 1,
+  "transport": "websocket"
+}

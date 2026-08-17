@@ -1,14 +1,26 @@
 #include "control_plane_server.h"
 
+#include <fstream>
 #include <unordered_map>
 #include <utility>
 
 #include <ixwebsocket/IXConnectionState.h>
+#include <ixwebsocket/IXHttpServer.h>
 #include <ixwebsocket/IXNetSystem.h>
 #include <ixwebsocket/IXWebSocket.h>
 #include <ixwebsocket/IXWebSocketServer.h>
 
 #include "utility/logger.h"
+#include "web_static.h"
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <shellapi.h>
+#include <windows.h>
+#pragma comment(lib, "shell32.lib")
+#endif
 
 namespace control_plane
 {
@@ -20,6 +32,11 @@ namespace control_plane
                                ix::WebSocket& web_socket,
                                const ix::WebSocketMessagePtr& message);
 
+        // HTTP 静态托管（I1）：与 WS 同端口（ix::HttpServer 同时是 WebSocketServer，
+        // Upgrade 请求走 WS 流程，普通 GET 走这里）。
+        ix::HttpResponsePtr on_http_request(ix::HttpRequestPtr request,
+                                            const std::shared_ptr<ix::ConnectionState>& connection_state);
+
         void track_client_open(const std::string& client_id, ix::WebSocket& web_socket);
         void track_client_close(const std::string& client_id, ix::WebSocket& web_socket);
 
@@ -28,7 +45,8 @@ namespace control_plane
         [[nodiscard]] std::shared_ptr<ix::WebSocket> find_client(const std::string& client_id) const;
 
         control_plane_server& owner;
-        std::unique_ptr<ix::WebSocketServer> ws_server;
+        std::unique_ptr<ix::HttpServer> ws_server;
+        std::string web_root; // 空 = 不托管静态文件
 
         mutable std::mutex clients_mutex;
         std::unordered_map<std::string, std::shared_ptr<ix::WebSocket>> clients;
@@ -50,6 +68,32 @@ namespace control_plane
             {
                 ++(*failure_counter);
             }
+        }
+
+        ix::HttpResponsePtr http_text_response(int status, std::string description,
+                                               std::string content_type, std::string body)
+        {
+            auto response = std::make_shared<ix::HttpResponse>(status, std::move(description),
+                                                               ix::HttpErrorCode::Ok);
+            response->headers["Content-Type"] = std::move(content_type);
+            response->body                    = std::move(body);
+            return response;
+        }
+
+        // Windows 下用系统默认浏览器打开 URL；其他平台暂无需求（样本均 Windows/MSVC）。
+        void open_url_in_browser(const std::string& url)
+        {
+#ifdef _WIN32
+            const auto result = reinterpret_cast<INT_PTR>(
+                ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+            if (result <= 32)
+            {
+                Logger::LogWarning("Failed to open browser for " + url + " (ShellExecute code " +
+                                   std::to_string(result) + ")");
+            }
+#else
+            (void)url;
+#endif
         }
     } // namespace
 
@@ -89,6 +133,36 @@ namespace control_plane
         default:
             break;
         }
+    }
+
+    ix::HttpResponsePtr control_plane_server::impl::on_http_request(
+        ix::HttpRequestPtr request, const std::shared_ptr<ix::ConnectionState>&)
+    {
+        if (!request || (request->method != "GET" && request->method != "HEAD"))
+        {
+            return http_text_response(405, "Method Not Allowed", "text/plain; charset=utf-8",
+                                      "Only GET/HEAD are served\n");
+        }
+        if (web_root.empty())
+        {
+            return http_text_response(404, "Not Found", "text/plain; charset=utf-8",
+                                      "No web root configured\n");
+        }
+        const auto file_path = resolve_web_path(web_root, request->uri);
+        if (!file_path || !std::filesystem::is_regular_file(*file_path))
+        {
+            return http_text_response(404, "Not Found", "text/plain; charset=utf-8",
+                                      "Not found: " + request->uri + "\n");
+        }
+
+        std::ifstream stream(*file_path, std::ios::binary);
+        std::string body((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+        if (stream.bad())
+        {
+            return http_text_response(500, "Internal Server Error", "text/plain; charset=utf-8",
+                                      "Failed to read file\n");
+        }
+        return http_text_response(200, "OK", std::string(content_type_for(*file_path)), std::move(body));
     }
 
     void control_plane_server::impl::track_client_open(const std::string& client_id, ix::WebSocket& web_socket)
@@ -153,8 +227,10 @@ namespace control_plane
         }
 
         server_impl              = std::make_unique<impl>(*this);
-        server_impl->ws_server   = std::make_unique<ix::WebSocketServer>(config.port, std::string("127.0.0.1"));
-        ix::WebSocketServer& ws  = *server_impl->ws_server;
+        server_impl->web_root    = config.web_root;
+        server_impl->ws_server   = std::make_unique<ix::HttpServer>(static_cast<int>(config.port),
+                                                                    std::string("127.0.0.1"));
+        ix::HttpServer& ws       = *server_impl->ws_server;
         ws.disablePerMessageDeflate(); // 本地小报文，关掉压缩降低时延抖动
         impl* impl_ptr = server_impl.get();
         ws.setOnClientMessageCallback(
@@ -162,6 +238,11 @@ namespace control_plane
                        const ix::WebSocketMessagePtr& message)
             {
                 impl_ptr->on_client_message(connection_state, web_socket, message);
+            });
+        ws.setOnConnectionCallback(
+            [impl_ptr](ix::HttpRequestPtr request, std::shared_ptr<ix::ConnectionState> connection_state)
+            {
+                return impl_ptr->on_http_request(std::move(request), connection_state);
             });
 
         const auto [listen_ok, error] = ws.listen();
@@ -173,6 +254,15 @@ namespace control_plane
         }
         ws.start(); // 后台线程 accept + 收发
         Logger::LogInfo("Control plane listening on ws://127.0.0.1:" + std::to_string(config.port));
+        if (!config.web_root.empty())
+        {
+            Logger::LogInfo("Control plane serving web root " + config.web_root +
+                            " at http://127.0.0.1:" + std::to_string(config.port) + "/");
+        }
+        if (config.open_browser)
+        {
+            open_url_in_browser("http://127.0.0.1:" + std::to_string(config.port) + "/");
+        }
         return true;
     }
 

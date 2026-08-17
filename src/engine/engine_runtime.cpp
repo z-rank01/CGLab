@@ -81,6 +81,8 @@ engine::result<bool> engine_runtime::initialize()
                 .port = config.control_plane.port,
                 .open_browser = config.control_plane.open_browser,
                 .server_name = config.window.title,
+                // I1：HTTP 静态托管与 WS 同端口，dev console 由 <工作目录>/web 提供
+                .web_root = config.working_directory + "/web",
             }))
         {
             Logger::LogWarning("Control plane unavailable; continuing without Web UI backend.");
