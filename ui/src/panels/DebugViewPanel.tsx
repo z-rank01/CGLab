@@ -1,15 +1,14 @@
-import { DebugView } from '../protocol';
+import { DEBUG_VIEW_NAMES } from '../protocol';
 import { actions, useUiState } from '../store';
 
-const VIEWS: DebugView[] = ['off', 'shadow', 'depth', 'hdr', 'resolved'];
-
-// 调试视图：debug.set_view，本地跟踪当前值
+// 调试视图：debug.set_view；展示值（选中态与"当前"）以 store 中
+// 经 telemetry.frame.debug_view 同步后的值为准，点击仅乐观更新
 export function DebugViewPanel() {
   const { debugView } = useUiState();
   return (
     <div className="panel">
       <div className="row" role="radiogroup">
-        {VIEWS.map((v) => (
+        {DEBUG_VIEW_NAMES.map((v) => (
           <label key={v}>
             <input
               type="radio"

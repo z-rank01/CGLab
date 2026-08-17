@@ -81,6 +81,9 @@ export interface FrameTelemetry {
   phase_us: PhaseUs;
   quantiles: FrameQuantiles;
   counters: FrameCounters;
+  // 引擎当前实际生效的调试视图（0=off 1=shadow 2=depth 3=hdr 4=resolved）；
+  // 老引擎不下发该字段，可选兜底
+  debug_view?: number;
 }
 
 export interface Vec3Bounds {
@@ -143,6 +146,15 @@ export interface LoadProgress {
 }
 
 export type DebugView = 'off' | 'shadow' | 'depth' | 'hdr' | 'resolved';
+
+// telemetry.frame.debug_view 下标 → 名称（顺序即引擎侧枚举值）
+export const DEBUG_VIEW_NAMES = [
+  'off',
+  'shadow',
+  'depth',
+  'hdr',
+  'resolved',
+] as const satisfies readonly DebugView[];
 
 export interface CameraParams {
   fov?: number;

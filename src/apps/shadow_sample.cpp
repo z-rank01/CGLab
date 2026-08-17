@@ -113,6 +113,7 @@ int main(int argc, char** argv)
             {
                 std::unique_ptr<apps::lights_table> lights = std::make_unique<apps::lights_table>();
                 std::unique_ptr<apps::sun_light> sun = std::make_unique<apps::sun_light>();
+                engine::debug_view_status debug_status{}; // 每帧回报实际生效的 debug 视图（M8/B2）
                 bool plane_fit = false;
             };
             sample_persistent_state persistent;
@@ -160,6 +161,9 @@ int main(int argc, char** argv)
                         debug->mode = view_mode;
                         services.channels.publish_state_owned<apps::debug_view_request>(std::move(debug));
                     }
+                    // 状态回报（持久成员裸指针，H1）：随 telemetry.frame 下发，UI 初值对齐 CLI
+                    persistent->debug_status.mode = view_mode;
+                    services.channels.publish_state<engine::debug_view_status>(&persistent->debug_status);
                     // 持久对象，非局部变量：裸指针发布，帧间零分配（H1）
                     services.channels.publish_state<apps::lights_table>(persistent->lights.get());
                     services.channels.publish_state<apps::sun_light>(persistent->sun.get());

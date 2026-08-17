@@ -6,6 +6,7 @@ import {
   CameraMode,
   CameraParams,
   ControlPlaneClient,
+  DEBUG_VIEW_NAMES,
   DebugView,
   FrameTelemetry,
   LoadProgress,
@@ -96,9 +97,16 @@ const client = new ControlPlaneClient({
   },
   onFrame: (t) => {
     const samples = [...state.samples, t];
+    // 调试视图以引擎实际生效值（debug_view）为准；老引擎无该字段时保持现状
+    const dv = t.debug_view;
+    const debugView =
+      dv !== undefined && DEBUG_VIEW_NAMES[dv] !== undefined
+        ? DEBUG_VIEW_NAMES[dv]
+        : state.debugView;
     setState({
       frame: t,
       samples: samples.length > MAX_SAMPLES ? samples.slice(-MAX_SAMPLES) : samples,
+      debugView,
     });
   },
   onScene: (s) => setState({ scene: s }),

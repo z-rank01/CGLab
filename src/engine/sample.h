@@ -24,6 +24,14 @@ namespace engine
         bool active = false;
     };
 
+    // 调试视图状态回报（M8/B2 修复）：sample → 引擎方向。sample 每帧发布
+    // 实际生效的 mode（override 优先、CLI 回退的合成结果），引擎随
+    // telemetry.frame 下发，让 UI 的初始状态与 CLI 选项对齐。
+    struct debug_view_status
+    {
+        std::uint32_t mode = 0;
+    };
+
     struct runtime_services
     {
         scene::scene_registry& scene;

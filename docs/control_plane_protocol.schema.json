@@ -507,6 +507,11 @@
           "type": "boolean"
         },
         {
+          "members": "当前生效的调试视图（0=off…4=resolved；sample 回报，M8/B2）",
+          "name": "debug_view",
+          "type": "integer"
+        },
+        {
           "members": "mode|position|yaw|pitch|fov|orbit_distance|focus_point|movement_speed|mouse_sensitivity|zoom_speed|near_plane|far_plane|bookmarks_valid|blending|culling",
           "name": "camera",
           "type": "object"

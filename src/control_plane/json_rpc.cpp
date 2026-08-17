@@ -473,6 +473,7 @@ namespace control_plane
             {"indirect_groups", "integer", ""},
             {"validation_errors", "integer", ""},
             {"paused", "boolean", ""},
+            {"debug_view", "integer", "当前生效的调试视图（0=off…4=resolved；sample 回报，M8/B2）"},
             {"camera", "object",
              "mode|position|yaw|pitch|fov|orbit_distance|focus_point|movement_speed|mouse_sensitivity|"
              "zoom_speed|near_plane|far_plane|bookmarks_valid|blending|culling"},

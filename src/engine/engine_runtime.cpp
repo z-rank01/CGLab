@@ -921,6 +921,11 @@ void engine_runtime::publish_frame_telemetry()
                      {"frame_p99_ms", frame_q.p99 / 1000.0}};
     }
 
+    // M8/B2：sample 回报的 debug 视图状态（帧通道；缺通道 = off）。
+    // publish_telemetry 在 run_sample_systems 之后执行，同帧通道可读。
+    const auto* debug_status = extract.channels.find_state<engine::debug_view_status>();
+    const std::uint32_t debug_view_mode = debug_status != nullptr ? debug_status->mode : 0U;
+
     control_plane->publish(control_plane::make_notification("telemetry.frame",
                                                             {
                                                                 {"fps", smoothed_fps},
@@ -933,6 +938,8 @@ void engine_runtime::publish_frame_telemetry()
                                                                 {"indirect_groups", stats.indirect_groups},
                                                                 {"validation_errors", validation_error_count()},
                                                                 {"paused", frame_paused},
+                                                                // M8/B2：sample 回报的实际生效 debug 视图（缺通道 = off）
+                                                                {"debug_view", debug_view_mode},
                                                                 {"camera", current_camera_state()},
                                                                 {"phase_us", std::move(phase_us)},
                                                                 {"quantiles", std::move(quantiles)},
