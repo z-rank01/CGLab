@@ -5,24 +5,29 @@
 #include <nlohmann/json.hpp>
 #include "logger.h"
 
-struct SGeneralConfig
+struct general_config
 {
     std::string app_name;
     std::string working_directory;
+    std::string asset_directory;
 };
 
-class ConfigReader
+class config_reader
 {
 private:
-    nlohmann::json config_json_;
+    nlohmann::json config_json;
 public:
-    ConfigReader(const std::string& config_file_path);
-    ~ConfigReader();
+    config_reader(const config_reader&)            = default;
+    config_reader(config_reader&&)                 = delete;
+    config_reader& operator=(const config_reader&) = default;
+    config_reader& operator=(config_reader&&)      = delete;
+    config_reader(const std::string& config_file_path);
+    ~config_reader();
 
-    bool TryParseGeneralConfig(SGeneralConfig& result);
+    bool try_parse_general_config(general_config& result);
 };
 
-inline ConfigReader::ConfigReader(const std::string& config_file_path)
+inline config_reader::config_reader(const std::string& config_file_path)
 {
     // Open the file
     std::ifstream config_file(config_file_path);
@@ -34,7 +39,7 @@ inline ConfigReader::ConfigReader(const std::string& config_file_path)
     // Read the json file
     try
     {
-        config_file >> config_json_;
+        config_file >> config_json;
     }
     catch (const nlohmann::json::parse_error& e)
     {
@@ -46,20 +51,21 @@ inline ConfigReader::ConfigReader(const std::string& config_file_path)
     config_file.close();
 }
 
-inline ConfigReader::~ConfigReader()
+inline config_reader::~config_reader()
 {
 }
 
 /// @brief 尝试获取配置文件中的一般配置项
 /// @param result 返回的配置项
 /// @return 解析成功返回true，失败返回false
-inline bool ConfigReader::TryParseGeneralConfig(SGeneralConfig& result)
+inline bool config_reader::try_parse_general_config(general_config& result)
 {
     try
     {
         // Example: Accessing a value from the JSON object
-        result.app_name = config_json_["general"]["string"]["app_name"];
-        result.working_directory = config_json_["general"]["string"]["working_directory"];
+        result.app_name = config_json["general"]["string"]["app_name"];
+        result.working_directory = config_json["general"]["string"]["working_directory"];
+        result.asset_directory = config_json["general"]["string"]["asset_directory"];
     }
     catch (const nlohmann::json::exception& e)
     {

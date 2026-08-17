@@ -4,73 +4,25 @@
     {
       "type": "cppvsdbg",
       "request": "launch",
-      "name": "MSVC Debug",
-      "program": "${workspaceFolder}/build/${input:buildType}/${input:executableName}.exe",
-      "args": [],
-      "cwd": "${workspaceFolder}/build",
-      "environment": [],
+      "name": "CGLab Windows: Launch executable with asset",
+      "program": "${workspaceFolder}/${input:debugExecutable}",
+      "cwd": "${workspaceFolder}",
+      "args": ["--asset", "${input:debugAsset}", "--validation"],
       "console": "integratedTerminal"
-    },
-    {
-      "type": "cppdbg",
-      "request": "launch",
-      "name": "GDB Debug",
-      "program": "${workspaceFolder}/build/${input:executableName}.exe",
-      "args": [],
-      "cwd": "${workspaceFolder}/build",
-      "setupCommands": [
-        {
-          "description": "Enable pretty-printing for gdb",
-          "text": "-enable-pretty-printing",
-          "ignoreFailures": false
-        }
-      ],
-      "windows": {
-        "MIMode": "gdb",
-        "miDebuggerPath": "${input:dbgPath}"
-      },
-      "linux": {
-        "MIMode": "gdb",
-        "miDebuggerPath": "${input:dbgPath}"
-      },
-      "osx": {
-        "MIMode": "gdb",
-        "miDebuggerPath": "${input:dbgPath}"
-      }
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "LLDB Debug",
-      "program": "${workspaceFolder}/build/${input:executableName}.exe",
-      "args": [],
-      "cwd": "${workspaceFolder}/build",
-      "stopOnEntry": false
     }
   ],
   "inputs": [
     {
       "type": "promptString",
-      "id": "executableName",
-      "description": "Enter executable name (without .exe)",
-      "default": "VulkanSample"
-    },
-    {
-      "type": "pickString",
-      "id": "buildType",
-      "description": "Select build type (for MSVC)",
-      "options": [
-        "Debug",
-        "Release", 
-        ""
-      ],
-      "default": "Debug"
+      "id": "debugExecutable",
+      "description": "输入相对于工作区的 .exe 路径",
+      "default": "build/windows-msvc-ninja/Debug/ShadowSample.exe"
     },
     {
       "type": "promptString",
-      "id": "dbgPath",
-      "description": "Enter GDB debugger path",
-      "default": "C:/Program Files/msys64/ucrt64/bin/gdb.exe"
+      "id": "debugAsset",
+      "description": "输入 glTF/GLB 资产路径",
+      "default": "assets/triangle.gltf"
     }
   ]
 }

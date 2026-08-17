@@ -1,113 +1,117 @@
 cmake_minimum_required(VERSION 3.20)
-project(VulkanSample LANGUAGES CXX)
 
-# 启用 C++23 标准
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)  # 避免使用编译器特定扩展
-
-# 设置 vcpkg 工具链文件（如果未通过命令行指定）
+# Use the repository's vcpkg toolchain unless the caller selected another one.
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-  set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
-      CACHE STRING "Vcpkg toolchain file")
+    set(_cglab_default_vcpkg_toolchain
+        "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+    )
+    if(NOT EXISTS "${_cglab_default_vcpkg_toolchain}")
+        message(FATAL_ERROR
+            "CGLab dependencies are not initialized. Run "
+            "scripts/cglab.ps1 setup on Windows or "
+            "scripts/cglab.sh setup on Linux before configuring."
+        )
+    endif()
+    set(CMAKE_TOOLCHAIN_FILE "${_cglab_default_vcpkg_toolchain}"
+        CACHE STRING "Vcpkg toolchain file"
+    )
 endif()
-
-# 设置 vcpkg 清单模式
 set(VCPKG_MANIFEST_MODE ON)
 
-# 查找依赖
-find_package(Vulkan REQUIRED)
-find_package(vk-bootstrap CONFIG REQUIRED)
-find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+project(CGLab LANGUAGES CXX)
+
+include(CTest)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Vulkan 裁剪空间 z ∈ [0,1]（非 OpenGL 的 [-1,1]）：所有 GLM 投影矩阵
+# （主相机 perspective / 光源 ortho）按 0..1 生成，深度缓冲值与 NDC z 一致，
+# 光源近平面不再裁掉朝光半壳；阴影采样端也无需 [-1,1]→[0,1] 重映射。
+add_compile_definitions(GLM_FORCE_DEPTH_ZERO_TO_ONE)
+
+# -----------------------------------------------------------------------------
+# Build options
+# -----------------------------------------------------------------------------
+
+option(CGLAB_BUILD_DCL_SAMPLES "Build digital-content-loader sample executables" OFF)
+option(CGLAB_BUILD_DCL_TESTS "Build digital-content-loader unit tests" ${BUILD_TESTING})
+option(CGLAB_BUILD_RENDER_GRAPH_SAMPLES "Build render-graph sample executables" OFF)
+option(CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS "Build render-graph CTest executable" ${BUILD_TESTING})
+option(CGLAB_RENDER_GRAPH_SHARED "Build render_graph as a shared library (DLL)" OFF)
+
+set(DCL_BUILD_SAMPLES ${CGLAB_BUILD_DCL_SAMPLES}
+    CACHE BOOL "Build sample/test executables (digital-content-loader)" FORCE
+)
+set(DCL_BUILD_TESTS ${CGLAB_BUILD_DCL_TESTS}
+    CACHE BOOL "Build digital-content-loader unit tests" FORCE
+)
+set(RENDER_GRAPH_BUILD_SAMPLES ${CGLAB_BUILD_RENDER_GRAPH_SAMPLES}
+    CACHE BOOL "Build render-graph sample executables" FORCE
+)
+set(RENDER_GRAPH_BUILD_UNIT_TESTS ${CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS}
+    CACHE BOOL "Build render-graph CTest executable" FORCE
+)
+set(RENDER_GRAPH_BUILD_SHARED ${CGLAB_RENDER_GRAPH_SHARED}
+    CACHE BOOL "Build render_graph as a shared library (DLL)" FORCE
+)
+
+# -----------------------------------------------------------------------------
+# External packages
+# -----------------------------------------------------------------------------
+
 find_package(SDL3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 
-
-# 添加子目录
-add_subdirectory(src/utility)
-add_subdirectory(src/_old)
-add_subdirectory(src/_callable)
-add_subdirectory(src/_vra)
-add_subdirectory(src/_gltf)
-add_subdirectory(src/_templates)
-
-# 设置源文件
-set(SOURCES
-    src/main.cpp
-    src/vulkan_sample.cpp
-)
-
-# 设置头文件
-set(HEADERS
-    src/vulkan_sample.h
-)
-
-# 添加可执行文件
-add_executable(VulkanSample ${SOURCES} ${HEADERS})
-
-# 链接库
-target_link_libraries(VulkanSample
-  PRIVATE
-    Vulkan::Vulkan
-    GPUOpen::VulkanMemoryAllocator
-    SDL3::SDL3
-    glm::glm
-    vk-bootstrap::vk-bootstrap
-    imgui::imgui
-    utility                         # 添加 utility 库
-    vulkan_resource_allocator       # 添加 vra 库
-    gltf_helper                     # 添加 gltf_helper 库
-    vulkan_old_class                # 添加旧的 Vulkan 类库
-    callable                        # 添加可调用库
-    template                        # 添加模板库
-)
-
-# 包含目录
-target_include_directories(VulkanSample
-  PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/build/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/include
-    ${Vulkan_INCLUDE_DIRS}
-)
-
-# 设置特定于编译器的警告选项
-if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    # Clang 可能的 ID 包括 "Clang", "AppleClang" 等
-    target_compile_options(VulkanSample PRIVATE -Wall)
-elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-    target_compile_options(VulkanSample PRIVATE /W4)
-endif()
-
-# 使用生成器表达式为 Debug 构建添加调试信息选项
-target_compile_options(VulkanSample PRIVATE
-    $<$<CONFIG:Debug>:$<$<CXX_COMPILER_ID:GNU,Clang>:-g -O0>>
-    $<$<CONFIG:Debug>:$<$<CXX_COMPILER_ID:MSVC>:/Zi /Od>>
-    $<$<CONFIG:Release>:$<$<CXX_COMPILER_ID:GNU,Clang>:-O3>>
-    $<$<CONFIG:Release>:$<$<CXX_COMPILER_ID:MSVC>:/O2>>
-)
-
-# 设置 IDE 中的源文件分组
-source_group(
-    TREE ${CMAKE_CURRENT_SOURCE_DIR}
-    PREFIX ""
-    FILES ${SOURCES} ${HEADERS}
-)
-
-# 查询 Vulkan SDK 路径
-if (Vulkan_FOUND)
-    message(STATUS "Vulkan SDK 位置: ${Vulkan_INCLUDE_DIRS}")
-    message(STATUS "Vulkan Libraries 位置: ${Vulkan_LIBRARIES}")
-    message(STATUS "Vulkan 版本: ${Vulkan_VERSION}")
+# digital-content-loader provides the format-agnostic asset row-table model
+# (dcl::core) that engine public headers alias, so it must be added before
+# src/engine. Third-party sample executables are excluded from the default ALL
+# target; test executables must join the default build so CTest can run them.
+if(CGLAB_BUILD_DCL_SAMPLES OR CGLAB_BUILD_DCL_TESTS)
+    add_subdirectory(third_party/digital-content-loader)
 else()
-    message(FATAL_ERROR "Vulkan SDK not found. Please install the Vulkan SDK.")
+    add_subdirectory(third_party/digital-content-loader EXCLUDE_FROM_ALL)
 endif()
 
-# 查询 CXX 版本信息
-message(STATUS "C++ 编译器: ${CMAKE_CXX_COMPILER}")
-message(STATUS "C++ 编译器 ID: ${CMAKE_CXX_COMPILER_ID}")
-message(STATUS "C++ 编译器版本: ${CMAKE_CXX_COMPILER_VERSION}")
-message(STATUS "C++ 标准: ${CMAKE_CXX_STANDARD}")
-message(STATUS "C++ 标准是否必需: ${CMAKE_CXX_STANDARD_REQUIRED}")
-message(STATUS "C++ 扩展是否启用: ${CMAKE_CXX_EXTENSIONS}")
+# -----------------------------------------------------------------------------
+# Foundation libraries
+# -----------------------------------------------------------------------------
+
+add_subdirectory(src/utility)
+add_subdirectory(src/measure)
+add_subdirectory(src/engine)
+add_subdirectory(src/_interface)
+add_subdirectory(src/control_plane)
+
+add_subdirectory(src/asset)
+
+if(CGLAB_BUILD_RENDER_GRAPH_SAMPLES OR CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS)
+    add_subdirectory(third_party/render-graph)
+else()
+    add_subdirectory(third_party/render-graph EXCLUDE_FROM_ALL)
+endif()
+
+add_subdirectory(src/platform/vulkan)
+
+# -----------------------------------------------------------------------------
+# CGLab runtime, applications, and tests
+# -----------------------------------------------------------------------------
+
+add_subdirectory(src/apps)
+
+if(BUILD_TESTING)
+    add_subdirectory(src/unit_test)
+endif()
+
+# -----------------------------------------------------------------------------
+# Configure summary
+# -----------------------------------------------------------------------------
+
+message(STATUS "C++ compiler: ${CMAKE_CXX_COMPILER}")
+message(STATUS "C++ compiler ID: ${CMAKE_CXX_COMPILER_ID}")
+message(STATUS "C++ compiler version: ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "C++ standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "Build CGLab tests: ${BUILD_TESTING}")

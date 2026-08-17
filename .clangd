@@ -1,23 +1,23 @@
 ---
-# 编译选项
+# CGLab 的源码由 CMake presets 配置。CMake 生成的 compile_commands.json
+# 会优先提供每个 preset 的真实编译器和系统 include；没有选中编译数据库时，
+# 下面这些最小默认值也要让 clangd 正确解析当前项目。
 CompileFlags:
-  # 将当前目录添加到包含路径
-  Add: 
+  # clangd 只会自动在源文件的父目录中查找 compile_commands.json；本项目的
+  # 编译数据库位于 preset 的 build 子目录，因此需要在这里明确指定。
+  CompilationDatabase: build/windows-msvc-ninja/Debug
+  Add:
+    - -std=c++20
+    - -fexceptions
+    # CMake 会给两个 app 注入真实仓库路径；无 compile_commands 时用当前目录
+    # 作为语法分析 fallback，避免编辑器把宏标成未声明。
+    - '-DCGLAB_SOURCE_DIR="."'
+  Remove:
     - -std:c++latest
-    - -std=c++23
-    - -Wall
-    - -Wno-c++98-compat
-    - -Wno-c++98-compat-pedantic
-    - -Ie:/Projects/ZRenderGraph/src
-    - -Ie:/Projects/ZRenderGraph/include
-  
-  # 忽略编译器特定警告
-  Remove: 
+    - -std:c++23
+    - -DCGLAB_SOURCE_DIR=*
     - -W*
     - -fsanitize=*
-  
-  # 移除编译器中不需要的参数
-  Compiler: cl
 
 # 诊断设置
 Diagnostics:
@@ -26,7 +26,6 @@ Diagnostics:
     Add: 
       - clang-diagnostic-*
       - clang-analyzer-*
-      - google-*
       - modernize-*
       - performance-*
       - readability-*
@@ -35,10 +34,6 @@ Diagnostics:
       - misc-*
     
     Remove:
-      - google-readability-todo
-      - google-readability-braces-around-statements
-      - google-readability-casting
-      - google-build-using-namespace
       - readability-braces-around-statements
       - readability-magic-numbers
       - readability-named-parameter
@@ -57,14 +52,17 @@ Diagnostics:
       - cppcoreguidelines-c-copy-assignment-signature
       - cppcoreguidelines-pro-bounds-constant-array-index
       - cppcoreguidelines-pro-type-vararg
+      - bugprone-easily-swappable-parameters
     
-    # Google C++ 命名规范设置
+    # C++ Core Guidelines 命名规范设置 (NL.10: 倾向于 snake_case)
     CheckOptions:
-      # 类和结构体：PascalCase
-      readability-identifier-naming.ClassCase: CamelCase
-      readability-identifier-naming.StructCase: CamelCase
+      # 类型 (类、结构体、枚举、联合)：snake_case (与标准库一致)
+      readability-identifier-naming.ClassCase: lower_case
+      readability-identifier-naming.StructCase: lower_case
+      readability-identifier-naming.EnumCase: lower_case
+      readability-identifier-naming.UnionCase: lower_case
       
-      # 函数和方法：snake_case (Google C++ 风格)
+      # 函数和方法：snake_case
       readability-identifier-naming.FunctionCase: lower_case
       readability-identifier-naming.MethodCase: lower_case
       
@@ -72,42 +70,43 @@ Diagnostics:
       readability-identifier-naming.VariableCase: lower_case
       readability-identifier-naming.ParameterCase: lower_case
       
-      # 成员变量：snake_case with trailing underscore
+      # 成员变量：snake_case (Core Guidelines 推荐与标准库一致，通常不强制后缀，但为了清晰可保留下划线)
+      # 这里我们遵循最纯粹的 Core Guidelines 风格：全小写，无强制后缀
       readability-identifier-naming.MemberCase: lower_case
-      readability-identifier-naming.MemberSuffix: '_'
       readability-identifier-naming.PrivateMemberCase: lower_case
-      readability-identifier-naming.PrivateMemberSuffix: '_'
       
-      # 常量：kCamelCase
-      readability-identifier-naming.ConstantCase: CamelCase
-      readability-identifier-naming.ConstantPrefix: 'k'
-      readability-identifier-naming.ConstantMemberCase: CamelCase
-      readability-identifier-naming.ConstantMemberPrefix: 'k'
+      # 常量 (包括全局、静态、成员)：snake_case (避免 ALL_CAPS，也不使用 k 前缀)
+      readability-identifier-naming.ConstantCase: lower_case
+      readability-identifier-naming.ConstantMemberCase: lower_case
+      readability-identifier-naming.GlobalConstantCase: lower_case
+      readability-identifier-naming.StaticConstantCase: lower_case
+      readability-identifier-naming.LocalConstantCase: lower_case
       
-      # 全局常量
-      readability-identifier-naming.GlobalConstantCase: CamelCase
-      readability-identifier-naming.GlobalConstantPrefix: 'k'
-      readability-identifier-naming.StaticConstantCase: CamelCase
-      readability-identifier-naming.StaticConstantPrefix: 'k'
+      # 枚举值：snake_case
+      readability-identifier-naming.EnumConstantCase: lower_case
       
-      # 枚举
-      readability-identifier-naming.EnumCase: CamelCase
-      readability-identifier-naming.EnumConstantCase: CamelCase
-      readability-identifier-naming.EnumConstantPrefix: 'k'
+      # 模板参数：CamelCase (通常 T, U, ValueType 等保持大写开头以区分)
+      readability-identifier-naming.TemplateParameterCase: CamelCase
       
-      # 宏定义
+      # 宏定义：UPPER_CASE (保持显眼)
       readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
       
-      # 命名空间
+      # 命名空间：lower_case
       readability-identifier-naming.NamespaceCase: lower_case
+
+      # 变量或参数长度限制
+      readability-identifier-length.MinimumVariableNameLength: 2
+      readability-identifier-length.MinimumParameterNameLength: 1
+      readability-identifier-length.MinimumLoopCounterNameLength: 1
+      readability-identifier-length.MinimumExceptionNameLength: 1
       
       # 函数长度限制
-      readability-function-size.LineThreshold: 200
-      readability-function-size.StatementThreshold: 800
-      readability-function-size.BranchThreshold: 50
-      readability-function-size.ParameterThreshold: 8
-      readability-function-size.NestingThreshold: 6
-      readability-function-size.VariableThreshold: 200
+      ; readability-function-size.LineThreshold: 200
+      ; readability-function-size.StatementThreshold: 800
+      ; readability-function-size.BranchThreshold: 50
+      ; readability-function-size.ParameterThreshold: 8
+      ; readability-function-size.NestingThreshold: 6
+      ; readability-function-size.VariableThreshold: 200
       
       # 行长度
       readability-line-length.LineLength: 100
@@ -124,71 +123,20 @@ Diagnostics:
       # Core Guidelines
       cppcoreguidelines-special-member-functions.AllowSoleDefaultDtor: true
       cppcoreguidelines-special-member-functions.AllowMissingMoveFunctions: true
-  
-  # 过滤掉第三方库和依赖的头文件
-  Suppressed:
-    - path: 'build|external|third_party|thirdparty|3rdparty|vendor|deps|dependencies'
-      regex: '.*'
-  
-  # 头文件未包含检测
-  MissingIncludes: Strict
 
 # 代码完成设定
 Completion:
   AllScopes: true
-  
-# 头文件包含路径
-InlayHints:
-  Enabled: true
-  ParameterNames: true
-  DeducedTypes: true
-  Designators: true
-
-# 启用代码操作功能
-CodeActions:
-  # 启用自动修复功能
-  Enabled: true
-  # 启用 include 建议
-  IncludeInsertion: true
+  HeaderInsertion: Never
 
 # 索引设置
 Index:
   Background: Build
   StandardLibrary: Yes
-  # 启用符号索引以改善 include 建议
-  EnableReferences: true
 
-# 启用自动修复和重构
-Features:
-  # 启用快速修复
-  QuickFix: true
-  # 启用重构操作
-  Refactor: true
-  # 启用代码操作
-  CodeAction: true
-
-# 语义高亮
-SemanticHighlighting: true
-
-# 符号搜索和索引
-SymbolIndex:
-  # 启用符号索引
-  Background: true
-  # 包含标准库符号
-  StandardLibrary: true
 
 # 悬停信息
 Hover:
   ShowAKA: true
   # 显示更多详细信息
-  ShowDocumentation: true
 
-# 自动补全设置
-Completion:
-  AllScopes: true
-  # 启用头文件补全
-  IncludeHeaders: true
-  # 启用符号补全
-  Symbols: true
-  # 限制补全结果数量以提高性能
-  Limit: 100

@@ -1,3 +1,9 @@
 [submodule "third_party/my-vcpkg-triplets"]
 	path = third_party/my-vcpkg-triplets
 	url = https://github.com/Neumann-A/my-vcpkg-triplets.git
+[submodule "third_party/digital-content-loader"]
+	path = third_party/digital-content-loader
+	url = https://github.com/z-rank01/digital-content-loader.git
+[submodule "third_party/render-graph"]
+	path = third_party/render-graph
+	url = https://github.com/z-rank01/render-graph.git

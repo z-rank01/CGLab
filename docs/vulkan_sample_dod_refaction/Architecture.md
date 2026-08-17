@@ -1,0 +1,132 @@
+# CGLab Engine 与 Render Graph 架构
+
+> as-built，2026-08。本文描述当前实现，不是迁移草图。
+
+## 依赖与所有权
+
+```text
+TriangleSample / GltfSponzaSample
+        |-- cglab_application_runner
+        |       `-- cglab_engine_runtime
+        |              |-- cglab_engine_core
+        |              |-- cglab_asset_runtime --> cglab_asset_gltf --> dcl::gltf (DCL)
+        |              `-- cglab_platform_sdl
+        |-- Sample-specific API-neutral recipe
+        `-- cglab_sdl_vulkan_surface
+                `-- render_graph::vulkan
+```
+
+Engine 公共头只表达资产、场景、帧数据和渲染驱动契约，不包含 Vulkan、SDL、glTF 或 Render Graph 类型。`src/platform/vulkan/` 只保存 SDL surface provider 与 Engine↔RG function-table bridge；Vulkan instance/device、swapchain、VMA 分配、bindless descriptor、pipeline cache、graph 执行和命令录制全部由 `third_party/render-graph/src/backend/vulkan/` 拥有。
+
+`src/renderer/` 已删除。旧 VRA 和 Vulkan helper 已退出构建，历史样例只保存在 `archive/legacy_vulkan/`。
+
+## Engine 数据模型
+
+Engine 使用 opaque state + function table 的 `render_driver`，不使用 renderer 继承体系。资源变更在帧边界以 `resource_change_batch` 行表提交；`render_frame_packet` 由 camera、instance、transform、material handle、mesh handle 等 SoA view 组成。
+
+runtime 的固定 phase table 为：
+
+```text
+poll_events
+consume_control_commands
+merge_asset_results
+update_scene_transforms
+update_cameras
+run_sample_systems
+extract_render_packet
+apply_resource_changes
+submit_render_packet
+publish_telemetry
+```
+
+phase 顺序显式固定。worker 只写私有值类型结果，主线程在帧边界合并；load、unload、resize、pause/step 都转换为 request rows。关闭流程可重复执行。
+
+CPU Asset Database 行表模型（node/parent/local transform、mesh、primitive、material、image、sampler 行和共享 vertex/index blobs）由子仓库 `third_party/digital-content-loader`（DCL）的 `dcl::core` 定义，格式无关，glTF 与未来的 FBX/OBJ loader 共用同一输出；glTF 加载实现（`dcl::gltf`）也在 DCL 内，主仓 `cglab_asset_gltf` 只做 DCL 结果到 Engine 契约的薄映射，Engine 公共头通过 `using` 别名复用 DCL 行类型而不引入 glTF 类型。节点变换不烘焙进顶点，同一 mesh 可由多个 node 实例化。当前支持 Core 2.0 静态 metallic-roughness PBR；动画、蒙皮、morph、KHR 材质扩展和 IBL 不在当前范围。
+
+## Render Graph 与 Vulkan
+
+RG Core 的 render device、buffer/image、pipeline、resource change、frame recipe 和 command 描述与 API 无关；
+资源 hash、range、compatibility 与同步编译只读取公共描述，backend-specific capability 校验通过显式
+function table 注入。Vulkan lowering 负责选择 Vk usage、memory flags 和格式兼容性。DX12/Metal 当前只有
+lowering contract 和 fake tests。
+
+Vulkan runtime 以集中表保存 device、queue、frame、swapchain image、resource、allocation、bindless slot、pipeline 和 retirement 状态，并显式执行：
+
+```text
+acquire -> realize_resources -> record_batches -> submit -> present -> collect_retired
+```
+
+持久几何、材质、纹理和 frame tables 由 RG 创建。upload arena 采用大 buffer 子分配和 free-span 复用；vertex/index 也使用大 device-local arena 的 slice，而非每个 primitive 一个 VkBuffer。staging slice 和 bindless slot 都在 completed submission gate 后复用。
+
+固定 bindless ABI 包含 sampled images、samplers、storage images、uniform buffers 和 storage buffers。slot 0 是默认资源；CPU handle 使用 index + generation。Vulkan 要求 runtime descriptor array、partially bound、update-after-bind 和 non-uniform indexing，不提供传统 descriptor fallback。
+
+Dynamic Rendering 保留，attachment format 进入 pipeline key。Triangle 与 glTF 分别拥有自己的 recipe；glTF recipe 按 opaque/mask、single/double-sided、blend 分组，透明行按相机距离排序，以 indexed indirect 批量录制。RG backend 不知道 shader 路径或 glTF/PBR 语义。稳定场景不会逐帧分配 descriptor，也不会因上传行数变化重新编译 graph。
+
+RG 的公共头唯一真源位于子仓库 `include/render_graph/`；该目录只包含稳定、可安装的 API 和
+compiled-plan rows。graph/compiler 的 `compiler_state`、DAG 与 free-function phases 位于 `src/core/`，
+`render_graph::core` 是实际编译库而非 header-only target。`render_graph::core` 与
+`render_graph::vulkan` 使用 BUILD/INSTALL interface，可通过安装后的 CMake package 在源码树外消费；库内诊断
+只返回结构化结果或写入宿主提供的 diagnostic sink，不直接写宿主日志。
+
+## 设计约束
+
+- 数据库行和 SoA 优先于对象继承与散落状态；真正的闭集 discriminant 才使用 enum。
+- manager/system 整体遍历表，副作用集中在 phase 末端或 RG Vulkan lowering/execute 边界。
+- Engine、资产和 graph recipe 保持 API 无关；特殊能力由 backend capabilities 和结构化诊断表达。
+- 新 GPU 资源、descriptor、pipeline 或 command side effect 只能进入 RG Vulkan backend。
+- 构建时的 `ArchitectureContract.cmake` 固化这些依赖和调用边界；DoD 风格检查（禁位打包代理容器与嵌套 vector）覆盖全 `src/`。
+
+**行表命名约定**（与 DCL "asset database"、RG 子仓 `*_rows → *_table` 卫生对齐；不采用 record/tuple——
+SoA 语义下 `row` 是"横跨并行列的逻辑切片"，`record` 暗示连续存储 blob，`tuple` 与 `std::tuple` 撞名）：
+
+- 多列 SoA 容器 → `*_table`（如 RG 的 `compiled_pass_table`）；
+- 同质 vector/span（元素 = 逻辑行）→ 复数 `*_rows`（如 `instance_rows`、`transform_rows`）；
+- 单个元素 → `*_row`（如 `instance_row`、`buffer_upload_row`）；
+- 标量计数 → `*_count`（如 `frame_counters.visible_count`），**禁止用 `*_rows` 命名计数**；
+- 组件 + 管理器文件以管理器命名（如 `culling_manager.h`），"system"一词只属于每帧系统函数
+  （如 `cull_instances`）；组件存储与系统执行上下文（transient scratch）同处 manager，
+  纯函数数学放 `_interface/`。
+
+**实体/帧数据术语**（F 系列帧通道，2026-08-14；详见 `EngineLayerDoDPlan.md` §1）：
+
+- **component（组件）**：挂在实体上的那份数据的类型（光源组件、probe 组件、相机组件），
+  与 EnTT/flecs/Bevy 的 component 语义一致。
+- **component table（组件表）**：某类组件的全量 SoA 表，即 `*_table`
+  （未来 `lights_table`、`probe_table`）。帧间传递的是整张表，不是单个 component。
+- **frame channel（帧通道）**：`frame_channels` 内的一次发布槽位——类型键控的
+  `{id, 行指针, 行数}` 行。命名避开 Bevy `Resource`（与 GPU 资源撞名）与 EnTT `ctx`
+  （与 `frame_phase_context` 撞名）。**引擎保证秩序**（帧首清零、发布窗口 = 阶段表顺序、
+  每通道单写者、生存期 = 单帧），**编写者保证语义**（缺通道/内容错误是编写者责任）。
+- **state（状态通道）**：非实体的帧级单例数据（view-projection、时间、配置），
+  复用通道机制，不单独造词。
+
+## 帧通道（F 系列）
+
+`render_frame_packet` 不再承载固定字段集合，而是携带一个 `frame_channels` 行表
+（`engine/frame_channels.h`）：生产者（engine 的 extract 阶段）在帧首 `clear()` 后按阶段表
+顺序发布类型键控通道，消费者（recipe 的 `build_frame`）经 `find_rows<T>()`/`find_state<T>()`
+按类型取用。内置三类行（camera / instance / transform）是 extract 发布的通道；光源表、
+probe 表等新组件表由 sample 侧发布、recipe 侧消费，engine 零改动。
+行表按三列 SoA 存储（`channel_ids`/`channel_data`/`channel_counts`），查找与去重只扫 id 列；
+每通道单写者（debug 构建重复发布 assert，release 保留首个发布）。
+查找为小表线性扫（通道数 ~10），数据只存指针不复制，生存期 = 单帧。
+
+## 还债清单（2026-08 准则审查）
+
+- ~~`update_scene_transforms` 当前是空 phase：矩阵在 merge/extract 时解析，该 phase 名存实亡，应承担 dirty transform 批量重算或调整固定表语义。~~ ✅ 已修复（2026-08-14，D2）：脏行批量重算矩阵缓存（`refresh_matrices`），静态场景零矩阵数学，见 `EngineLayerDoDPlan.md`。
+- ~~`poll_events` 内有两处提前副作用（resize 直接 `request_resize`、拾取命中后即时发布遥测），应改为请求行并归并到 `publish_telemetry` 出口。~~ ✅ 已修复（2026-08-14，D2）：resize 请求在 submit 前边界执行、拾取请求在 telemetry 出口执行（pick 命中高亮延后一帧），见 `EngineLayerDoDPlan.md`。
+- DI 风格不统一：`render_driver` 为 opaque state + function table，`asset_service`/`window` 为虚接口。
+- ~~`scene_registry` 为胖 AoS 行（内含 `std::string`/`std::vector`）且 `find` 为 O(n) 线性扫描，可改为 id→slot 索引。~~ ✅ 已修复（2026-08-14，D1/D2）：id→slot 直接寻址 O(1) 查找 + active_slots 紧凑索引 + 热列直读（extract -97.8%），见 `EngineLayerDoDPlan.md`。
+- ~~runtime 合并加载结果时把共享 blob 切片回拷为每 primitive 一份的 `geometry_asset` vectors（SoA→AoS 回退点）。~~ ✅ 已修复（2026-08，A2）：`geometry_upload_row` 改为引用共享 blob 的批量行，整资产单事务零拷贝上传；`geometry_asset` AoS 已删除，见 [PerformancePlan.md](PerformancePlan.md)。
+- ~~RG compiler 丢失了最初设计的 pass culling（无 output 根 → 全部 pass/资源都参与调度与物理分配），持久资源经 `apply_resource_changes` 急切物化；`culling_compile` 等测试名为占位。偏差分析与实施方案见子仓 `docs/ArchitectureAndInternals.md` §13。~~ ✅ 已修复（2026-08-12）：pass culling 已恢复（§6.4），transient 惰性分配已生效，持久资源急切物化保持原样。
+- RG Vulkan backend：`vk_graph_executor` 与 `vk_runtime` 双资源表中心并存；executor 侧 retirement 以 frame 命名但实际按 submission 序号驱动；bindless 默认资源内含 default normal map（PBR 语义下沉）；~~`backend_capabilities()` 返回硬编码默认值而非设备实测~~ ✅（R0c 已改设备实测，子仓 `3c994bc`）。录制路径每帧分配/指针追逐的还债排期见 [Plan.md](Plan.md) H1。
+- ~~两个 recipe 的 `geometry_row` 为 AoS 行且内含 `std::vector<draw_range>`（每 mesh 一次堆分配），`build_frame` 每帧逐实例指针追逐。~~ ✅ 已修复（2026-08-14）：geometry 列 CSR 化（扁平 `geometry_draws` + `geometry_draw_begins/counts` 切片 + `geometry_alive` uint8 列，与 scene_registry 同款模式）；glTF 分组 scratch 帧间复用，稳态零分配。
+- ~~`frame_channels` 通道表为 AoS `channel_row` 行，且"debug 重复发布 assert"注释未落实。~~ ✅ 已修复（2026-08-14）：三列 SoA（`channel_ids`/`channel_data`/`channel_counts`），查找/去重只扫 id 列；单写者 debug assert 落实（release 保留首个发布）。
+- ~~`swapchain_image_state` 用位打包代理容器存初始化标记。~~ ✅ 已修复（2026-08-14）：改 uint8 列；`ArchitectureContract.cmake` 的 DoD 检查覆盖从 engine/scene 扩至全 `src/`。
+- ~~geometry 上传布局计划 `primitive_plan` 行命名偏离行表约定且重复声明 draw 字段、自造 error 字符串。~~ ✅ 已修复（2026-08-14）：`primitive_plan_row`/`primitive_plan_rows` 命名 + 复用 `engine::draw_range` + 错误经 `engine::result` 返回 + 上界预留。
+
+> 性能相关实施计划（测量 / 视锥剔除 / 加载路径，含 B/C 路线记录）见 [PerformancePlan.md](PerformancePlan.md)。
+
+> 渲染层实施计划（阴影 pass / RG 子仓能力扩展 R0–R3）见 [RenderLayerPlan.md](RenderLayerPlan.md)。
+
+更多执行细节见 [RenderGraphAndRHI.md](RenderGraphAndRHI.md)，runtime 组合方式见 [ApplicationRuntime.md](ApplicationRuntime.md)。

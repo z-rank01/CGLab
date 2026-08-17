@@ -1,7 +1,11 @@
 # 构建产物
 /build/
+/build-*/
 /out/
 /bin/
+
+# config 文件夹
+/config/
 
 # visual studio 缓存
 /.vs/
@@ -15,6 +19,8 @@
 # vcpkg
 /vcpkg/
 /vcpkg_installed/
+/.cglab-vcpkg-bootstrap-baseline
+/CMakeUserPresets.json
 
 # 系统文件
 *.user

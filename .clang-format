@@ -14,7 +14,7 @@ UseTab: Never
 BreakBeforeBraces: Allman
 
 # 列限制
-ColumnLimit: 120
+ColumnLimit: 150
 
 # 访问修饰符缩进
 AccessModifierOffset: -4
@@ -68,7 +68,7 @@ DerivePointerAlignment: false
 # 命名空间处理
 CompactNamespaces: false
 FixNamespaceComments: true
-NamespaceIndentation: None
+NamespaceIndentation: All
 
 # Include 分类
 IncludeBlocks: Regroup

@@ -1,43 +1,92 @@
-# CG Lab
-面向不同图形 API、以函数式编程（Functional Programming）和数据驱动（Data Oriented）风格构建的实验框架。主要用于个人的 Computer Graphics 相关实验和学习。
+# CGLab
 
-# Usage（使用）
-## 配置 CMakePresets.json
-为了编译源码，需要修改 CMakePresets.json 中的多处路径。
-1. 选择一个构建链（build chain），例如名称为 `windows-msvc` 或 `linux-clang`
-2. 在 `cacheVariables` 部分修改编译器路径
-    - `CMAKE_C_COMPILER`
-    - `CMAKE_CXX_COMPILER`
-    - `CMAKE_RC_COMPILER`
-    - ...
+CGLab 是一个面向 Vulkan 的 C++20 图形框架实验项目。应用共享
+`engine_runtime`、asset runtime、Sample 专属 recipe 和 Render Graph Vulkan backend：
 
-## 配置 app_config.json
+- `TriangleSample`：最小三角形，用于验证窗口、runtime、Vulkan backend 和帧循环。
+- `GltfSponzaSample`：支持 `.gltf/.glb`，默认可使用仓库内的 `assets/triangle.gltf`。
 
-## Clangd 相关
-如果需要使用 clangd 作为（此处补充说明：例如语言服务器/代码补全等）
+## 首次初始化
 
-## Vulkan SDK
-要使用该框架，需要下载并安装 Vulkan SDK，并将其加入系统环境变量。
+正式支持 Windows MSVC/Ninja 和 Linux Clang/Ninja。系统工具由用户自行安装，初始化脚本只检测环境、下载项目依赖并配置构建，不执行提权或修改系统安装。
 
----
+Windows PowerShell：
 
-# CG Lab
-This a framework aims at helping to experiment and study computer graphics for personal usage, based on different gfx APIs in a style of **Functional Progamming** and **Data-Oriented**.
+```powershell
+.\scripts\cglab.ps1 setup
+```
 
-# Usage
-## Config CMakePresets.json
-In order to build source files, one need to modify multiple path inside CMakePresets.json. 
-1. Target one of the build chain, like name `windows-msvc` or `linux-clang`
-2. Modify the path to the compiler in the part of `cacheVariables`
-    - `CMAKE_C_COMPILER`
-    - `CMAKE_CXX_COMPILER`
-    - `CMAKE_RC_COMPILER`
-    - ...
+Linux：
 
-## Config app_config.json
+```bash
+bash scripts/cglab.sh setup
+```
 
-## Clangd Specified
-If one want to use clangd as 
+`setup` 会依次检查工具、初始化 HTTPS 子模块、从 `vcpkg.json` 读取固定 baseline、bootstrap vcpkg、安装 manifest 依赖，并配置 Debug preset。重复执行是安全的；如果 vcpkg 工作树存在本地修改，脚本会停止而不会覆盖它。
 
-## Vulkan SDK
-To use this framework, one need to download and install vulkan sdk with system variables added.
+环境诊断：
+
+```powershell
+.\scripts\cglab.ps1 doctor
+```
+
+```bash
+bash scripts/cglab.sh doctor
+```
+
+编译项目所需的 Vulkan headers/loader 由 vcpkg manifest 管理。重新编译 shader 需要 Vulkan SDK 中的 `glslc`；GPU smoke 还需要系统 Vulkan 驱动和可用设备。
+
+## 编译和测试
+
+命令行入口的工具链和配置可以分开选择：
+
+```powershell
+.\scripts\cglab.ps1 build --preset windows-msvc-ninja --config Release --target TriangleSample
+.\scripts\cglab.ps1 build --preset windows-msvc-ninja --config Release --target GltfSponzaSample
+.\scripts\cglab.ps1 test --preset windows-msvc-ninja --config Debug
+```
+
+```bash
+bash scripts/cglab.sh build --preset linux-clang-ninja --config Release --target TriangleSample
+bash scripts/cglab.sh test --preset linux-clang-ninja --config Debug
+```
+
+构建目录按工具链和配置隔离，例如 `build/windows-msvc-ninja/Release`。因此切换 Debug/Release 或工具链不会共用一个 CMake cache。
+
+GPU smoke：
+
+```powershell
+.\scripts\cglab.ps1 smoke --preset windows-msvc-ninja --config Release --target TriangleSample --frames 6
+.\scripts\cglab.ps1 smoke --preset windows-msvc-ninja --config Release --target GltfSponzaSample --asset assets/triangle.gltf --frames 6
+```
+
+在 VS Code 中可运行以下 tasks：`Setup workspace`、`Diagnose environment`、`Configure`、`Build selected target`、`Build arbitrary target`、`Test all`、两个 smoke、`Clean current preset`。CMake Tools 和 C/C++ 扩展只是推荐项；未安装扩展时 tasks 和脚本仍可用。
+
+## 自定义工具链和路径
+
+不要修改提交的 `CMakePresets.json`。复制 `CMakeUserPresets.json.example` 为未提交的 `CMakeUserPresets.json`，然后继承仓库 preset，覆盖编译器、build 目录、triplet 或额外 cache variables：
+
+```powershell
+Copy-Item CMakeUserPresets.json.example CMakeUserPresets.json
+```
+
+常用环境覆盖项包括 `VCPKG_ROOT`、`VULKAN_SDK`、`CGLAB_PRESET`、`CGLAB_CONFIG` 和 `CGLAB_BUILD_DIR`。命令行参数优先级最高，其次是用户 preset，再其次是环境变量和仓库默认值。
+
+正式 preset 为：
+
+- `windows-msvc-ninja-{debug,release,relwithdebinfo}`
+- `linux-clang-ninja-{debug,release,relwithdebinfo}`
+
+其他编译器或生成器可以在 `CMakeUserPresets.json` 中继承 `base` preset 自行添加，不会污染仓库配置。
+
+## 可选第三方 targets
+
+默认构建包含两个现代 app。Render Graph、digital-content-loader 的额外 samples 和测试由根 CMake 选项控制，普通用户不需要启用它们。所有 CTest targets 可通过 `test` action 构建并执行。历史 Vulkan 样例仅保存在 `archive/legacy_vulkan/`，不属于构建图。
+
+## 架构文档
+
+当前所有权边界见 [Render Graph 与 Vulkan Backend](docs/RenderGraphAndRHI.md)。整体模块划分见 [Architecture](docs/Architecture.md) 和 [Application Runtime](docs/ApplicationRuntime.md)。
+
+## CGLab
+
+CGLab is a C++20 Vulkan framework experiment. The repository provides portable setup scripts for Windows MSVC/Ninja and Linux Clang/Ninja. See the Chinese quick-start section above for the supported workflow.
