@@ -36,7 +36,7 @@
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | **I0 Engine runtime 抽取（已完成）** | `cglab_engine_runtime` 持有窗口/帧循环/camera/scene/control/asset service；GltfSponzaSample 与 TriangleSample 共享 runtime | TriangleSample 应用文件 100 行以内；runtime 可注入 fake window/backend/asset service 做 CTest |
-| **I1 协议收尾 + UI 托管** | 协议文档化（methods/telemetry 的 JSON Schema 固化进 `docs/`）；控制平面加 HTTP 静态文件服务，`--ui-open-browser` 真正生效 | 启动引擎即开浏览器可用 dev console；协议文档与实现对齐有测试 |
+| **I1 协议收尾 + UI 托管（✅ 2026-08-17，`0e671a96`）** | 协议文档化（methods/telemetry 的 JSON Schema 固化进 `docs/`）；控制平面加 HTTP 静态文件服务，`--ui-open-browser` 真正生效 | 启动引擎即开浏览器可用 dev console；协议文档与实现对齐有测试 |
 | **I2 正式 Web UI v1** | `ui/`（Vite+React+TS）：dock 布局（dockview）、场景树/检视器/相机/帧控制/资产加载/console 面板，布局 localStorage 持久化 | 浏览器打开即完整覆盖 dev console 全部能力；UI 关掉引擎无恙 |
 | **I3 RG 可视化** | `debug_dump()` JSON 化（passes/resources/edges）经控制平面下发；React Flow DAG；pass timestamp 时序瀑布 | recompile 后图自动更新；能定位最慢 pass |
 | **I4 单窗口 B1** | webview 壳（saucer/CEF/Ultralight 选型 spike 先行）+ SDL 视口 HWND 子区域嵌入；焦点规则：进视口归引擎、出视口归 UI | 单窗口编辑器外观；画面零拷贝零延迟；`--no-ui`/浏览器模式仍可用 |
