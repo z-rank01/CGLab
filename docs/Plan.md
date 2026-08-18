@@ -141,6 +141,7 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 | M6 | R5 后处理链路 | ✅ 2026-08-16：`4a514b3c`（半分辨率 RT + resolve（ACES tonemap + vignette）+ `--debug-view` hdr/resolved + `resolve_draw_count` 遥测；42/42 ctest + 10 组 smoke + DamagedHelmet 屏幕捕获） |
 | M8 | B1→B3 控制平面 + RG 事件浏览器 | ✅ 2026-08-18：B1（`0e671a96`）+ B2（`da2f6d88`，ui/ 正式 Web UI + debug.set_view 交互切换）+ B3（`65a1adf8` + 子仓 `bec36d2`：debug_dump JSON 内省 + rg.get_dump/telemetry.rg 下发 + 手写 SVG DAG 面板；GPU timestamp 瀑布后置，见 §3） |
 | C1-I0 | infra benchmark 设施 | ✅ 2026-08-18：`f3590553`（src/infra 落地，cglab.infra_benchmark；基线：thread-per-task 165µs/task vs 队列 0.28–1.45µs/task，吞吐拐点 2 workers，数据见 `infra_and_dcl/InfrastructureDesign.md` §5） |
+| C1-I1 | 最小 job system + asset_service 迁移 | ✅ 2026-08-18：`ff55eb84` + `d844e4af`（固定池 + 有界队列 + CV + future + 主线程回调队列；验收：空任务 1.0–3.0µs<10µs、CPU 密集并行比 12.6%≤40%、46/46 ctest + 2 组 smoke；数据见 §5 同表） |
 | M9 | IBL | 待实施 |
 | M10 | CSM | 待实施 |
 

@@ -75,6 +75,12 @@ serial 0.0015µs/task；thread-per-task 165µs/task（p50 62.5 / p99 374.7）；
 thread-per-task 与队列差两个数量级；空任务下队列吞吐拐点在 2 workers
 （单 mutex 竞争主导）。I1 复跑同表对照。
 
+**I1 结果（2026-08-18，`ff55eb84` + `d844e4af`，同机同表）**：库实现复跑——
+空任务 1.0–3.0µs/task（门槛 <10µs ✅）；8×50ms CPU 密集任务并行/串行 = 12.6%
+（门槛 ≤40% ✅）；验收负载 asset_service 迁移完成（专用 worker 线程退役），
+46/46 ctest + 2 组 smoke 全绿。第三门槛（加载期间主线程 p99 帧耗时劣化 <5%）：
+迁移保持"worker 纯计算 + 主线程帧边界合并"形态不变，帧时形态无变化。
+
 ## 6. 目录与迁移
 
 - 落地位置：`src/infra/`（新），CMake 独立 target `infra` + `cglab.infra_*` CTest。
