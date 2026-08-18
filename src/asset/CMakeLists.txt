@@ -8,8 +8,7 @@ target_include_directories(cglab_asset_gltf PUBLIC
 )
 
 target_link_libraries(cglab_asset_gltf
-    PUBLIC cglab_engine_core
-    PRIVATE dcl::asset
+    PUBLIC cglab_engine_core infra dcl::asset
 )
 
 if(MSVC)
