@@ -88,7 +88,7 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 
 | 事项 | 触发条件 | 出处 |
 |---|---|---|
-| C1 job system（infra I0–I3：线程池 + MPMC + 任务图） | ~~M7 专用传输线程立项 / 第二个真实并发负载~~ ✅ 2026-08-18 触发成立：§8 dcl 纹理并行解码即"第二个真实并发负载"（InfrastructureDesign §2 首选候选族）；随 dcl 分支按 I0→I1 启动，I1 验收负载 = asset_service worker 迁移 | `InfrastructureDesign.md` §2/§3 |
+| C1 job system（infra I0–I3：线程池 + MPMC + 任务图） | ~~M7 专用传输线程立项 / 第二个真实并发负载~~ ✅ 2026-08-18 触发成立：§8 dcl 纹理并行解码即"第二个真实并发负载"（InfrastructureDesign §2 首选候选族）；随 dcl 分支按 I0→I1 启动，I1 验收负载 = asset_service worker 迁移。2026-08-18 决策：Unity 式 safety system（并发别名检查）先不实现 | `InfrastructureDesign.md` §2/§3 |
 | C2 primitive/draw 级与 GPU-driven 剔除 | M5 后 per-pass 遥测显示 CPU 仍是瓶颈 | `PerformancePlan.md` C2 |
 | C3 场景层级 `parent_index` + 变换传播（含 UI 层级显示） | 需要层级动画/场景树编辑时 | `PerformancePlan.md` C3 |
 | B4 单窗口 webview 壳（I4） | M8 的 B2 落地后评估 | `InterfaceRedesign.md` I4 |
