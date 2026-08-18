@@ -88,7 +88,7 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 
 | 事项 | 触发条件 | 出处 |
 |---|---|---|
-| C1 job system（infra I0–I3：线程池 + MPMC + 任务图） | M7 专用传输线程立项 / 第二个真实并发负载 | `InfrastructureDesign.md` §2/§3 |
+| C1 job system（infra I0–I3：线程池 + MPMC + 任务图） | ~~M7 专用传输线程立项 / 第二个真实并发负载~~ ✅ 2026-08-18 触发成立：§8 dcl 纹理并行解码即"第二个真实并发负载"（InfrastructureDesign §2 首选候选族）；随 dcl 分支按 I0→I1 启动，I1 验收负载 = asset_service worker 迁移 | `InfrastructureDesign.md` §2/§3 |
 | C2 primitive/draw 级与 GPU-driven 剔除 | M5 后 per-pass 遥测显示 CPU 仍是瓶颈 | `PerformancePlan.md` C2 |
 | C3 场景层级 `parent_index` + 变换传播（含 UI 层级显示） | 需要层级动画/场景树编辑时 | `PerformancePlan.md` C3 |
 | B4 单窗口 webview 壳（I4） | M8 的 B2 落地后评估 | `InterfaceRedesign.md` I4 |
@@ -187,6 +187,13 @@ tinygltf 阶段的纹理解码（Release 下同为数十秒级，并非"正常"�
    错误的问题；兼容性长尾（sparse/Draco/meshopt/KTX2/data URI/扩展机制）全要自扛。
    可选折中：仅当"JSON 极大+纹理少"资产成为常态时，自写 JSON+accessor 聚焦层
    （保 `gltf_loader.h` 接口，tinygltf 作异态回退）。大资产优先 .glb。
+5. **dcl 公共加载接口**（2026-08-18 设计结论）：统一自由函数形态
+   `dcl::load_asset(path, options, report*) -> result<asset_database>` 按扩展名分发，
+   各格式保同签名入口（`load_gltf`/`load_fbx`/`load_obj`）——不用虚接口类
+   （loader 是无状态纯函数，vtable 无收益）；`load_options`/`load_report` 预留并行/延迟
+   解码开关与三段计时装点（主仓 `load_report.parse/convert/decode_us` 数据源），
+   接口一次定型不再变动；fbx 占位类（namespace fbx + PascalCase，风格发散）作废；
+   主仓 `geometry_loader` 收敛为转调 dcl 分发。
 
 ## 9. UI 重构立项意向（2026-08-18，单独 feature 分支）
 
