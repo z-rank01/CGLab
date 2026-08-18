@@ -147,16 +147,24 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 
 实测（`NewSponza_Main_glTF_003.gltf`，vertex+index 192.5MB，MSVC Debug，两次）：
 `load_us` 82603529 / 76373045，其中 merge 5999/529us、upload 552795/531820us——
-**约 99% 耗在 worker 解析段**；Release 下同资产正常。渲染管线本身健康
+**约 99% 耗在 worker 解析段**。渲染管线本身健康
 （Debug 遥测 instances=115 / visible=115 / main_draws=405 / presented 递增，窗口截图确认出图）。
 
 调用链：`asset_service` → `gltf_adapter` → dcl `gltf_loader` → tinygltf。
-定性嫌疑（未量化，立项第一步为分段计时出数）：
 
-1. tinygltf 解析本体：JSON + stb_image 全纹理解码（dcl `gltf_loader.cpp:217-219`）；
-2. dcl 逐像素 RGBA 归一化循环（`gltf_loader.cpp:256-269`，亿级像素 × 逐通道 lambda）；
-3. dcl accessor 逐元素 `double` 中间态展开（`gltf_loader.cpp:134-141`，数百万顶点 ×
-   switch 派发，再由 adapter 二次转换）。三者均被 Release 优化掩盖，仅 Debug 现形。
+**分段实测（2026-08-18 二次，临时打点测后即弃；该资产几何 192.5MB + 纹理 2.6GB/73 张；
+绝对值随机器负载波动约 ±2x，比例稳定）**：
+
+| 段 | Debug | Release | 说明 |
+|---|---|---|---|
+| tinygltf 全程（JSON + buffer 读取 + stb 解码） | ~140s（~84%） | ~31-72s（~82-91%） | **2.6GB 纹理 I/O + PNG/JPEG 解码主导**，JSON 占比可忽略 |
+| dcl images RGBA 归一化 | ~23.7s（~14%） | ~6.2-6.5s（~8-17%） | 逐像素 lambda 循环 |
+| dcl meshes/accessor 展开 | ~2.8s（~1.7%） | ~0.5s（~1%） | double 中间态，占比小 |
+| materials/nodes | <0.1s | ≈0 | — |
+
+结论修正：初判"dcl 两个手写循环为主嫌疑"被实测推翻——对纹理重型资产，卡点是
+tinygltf 阶段的纹理解码（Release 下同为数十秒级，并非"正常"）；dcl 循环只对
+几何主导型资产才重要。
 
 附带发现（已澄清，非缺陷）：
 
@@ -168,8 +176,17 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 - 启动资产加载主线程空转等待（`engine_runtime.cpp:111-125`），窗口假死约 80s
   （控制平面 IO 线程不受影响）；大资产 Debug 迭代建议日常用 RelWithDebInfo。
 
-**立项意向（下一个 feature 分支）**：dcl 仓结构与性能优化。候选方向：同通道 RGBA
-直接 memcpy、紧排 accessor 整块拷贝、去除 double 中间态、纹理延迟解码等，以量化数据为准。
+**立项意向（下一个 feature 分支）**：dcl 仓结构与性能优化，按实测收益排序：
+
+1. **纹理解码管线**（80-90%）：73 张图天然独立——worker 内并行 stb decode（预期数倍）；
+   进一步做纹理延迟/异步解码（几何先行注册，配合 M7 流式口径，"可见"时间分钟级→秒级）；
+   资产侧建议离线压缩（KTX2/分级），2.6GB 属异常形态。
+2. **dcl RGBA 归一化**（8-17%）：4 通道直 memcpy、3→4 通道紧凑循环（去 lambda）。
+3. **dcl accessor double 中间态**（1-2%）：类型特化直读 + 紧排整块拷贝，顺手可改。
+4. **tinygltf 整体自写替换：评估结论为不做**。瓶颈在纹理解码而非 JSON/转换，自写解决
+   错误的问题；兼容性长尾（sparse/Draco/meshopt/KTX2/data URI/扩展机制）全要自扛。
+   可选折中：仅当"JSON 极大+纹理少"资产成为常态时，自写 JSON+accessor 聚焦层
+   （保 `gltf_loader.h` 接口，tinygltf 作异态回退）。大资产优先 .glb。
 
 ## 9. UI 重构立项意向（2026-08-18，单独 feature 分支）
 
