@@ -4,7 +4,9 @@
 > 与渲染/引擎完全解耦，未来可抽为独立仓库/submodule（与 render-graph、DCL 同级）。
 > 本文与 `InterfaceRedesign.md` 分离：UI/交互不关心本层实现，只通过业务层间接受益。
 >
-> **2026-08-16 起待办排序以 [Plan.md](Plan.md) 为准**（I0–I3 为触发式后置，见 Plan.md §3 C1）。
+> **2026-08-16 起待办排序以 [Plan.md](../Plan.md) 为准**（I0–I3 为触发式后置，见 Plan.md §3 C1）。
+> **2026-08-18：C1 触发成立（dcl 纹理并行解码 = 第二个真实并发负载），本文自
+> `docs/vulkan_sample_dod_refaction/` 迁出，成为 `feature/infra-and-dcl` 的生效设计稿。**
 
 ## 1. 目标与非目标
 

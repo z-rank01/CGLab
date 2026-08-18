@@ -4,7 +4,7 @@
 > `dee0a36e` → `2953d3bf` → `2b0d23d9`，主仓分支 feature/vulkan_sample_dod）**。
 > B/C 步骤仍只记录路线与触发条件，**暂不实施**，实施前另行评审。
 >
-> 依据：`Architecture.md`（架构与还债清单）、`InfrastructureDesign.md`（基础设施 I0–I3 与触发条款）、
+> 依据：`Architecture.md`（架构与还债清单）、`../infra_and_dcl/InfrastructureDesign.md`（基础设施 I0–I3 与触发条款）、
 > `InterfaceRedesign.md`（I1–I5 路线）、`RenderGraphAndRHI.md`（资源与内存模型）。
 >
 > **2026-08-16 起待办排序以 [Plan.md](Plan.md) 为准**；本文保留 A 系列设计稿与 B/C 路线记录，
@@ -45,7 +45,7 @@ indirect draw 以 `vertex_offset/first_index` 引用；分配/同步/生命周�
 
 ### 目标与非目标
 
-- **目标**：以数据驱动 A1/A2/后续优化（benchmark 驱动原则，`InfrastructureDesign.md`）；
+- **目标**：以数据驱动 A1/A2/后续优化（benchmark 驱动原则，`../infra_and_dcl/InfrastructureDesign.md`）；
   数据同时服务于未来 UI（B2 的图示/历史曲线），因此**协议先行、历史保留**。
 - **非目标**：不做火焰图/采样 profiler；不做 GPU 侧 timestamp 查询（归 B3 RG 可视化）；不引入第三方。
 
@@ -377,13 +377,13 @@ material upload（现状，一次事务）
 | B2 | I2 正式 Web UI（dock 布局）；**消费 A0 数据**：帧时曲线、阶段直方图、计数面板、加载瀑布 | `InterfaceRedesign.md` I2 | B1；A0 协议字段 |
 | B3 | I3 RG 可视化：`debug_dump()` JSON + React Flow DAG + pass 时序瀑布（GPU timestamp 查询在此引入） | `InterfaceRedesign.md` I3 | B2 |
 | B4 | I4 单窗口 B1：webview 壳 + SDL HWND 视口子区嵌入；焦点规则；`--no-ui`/浏览器模式仍可用 | `InterfaceRedesign.md` I4 | B2（依赖链 I4→I2） |
-| B5 | 加载后续：DCL 并行化评估（多资产并行解析 → 触发 infra 触发条款评估）；纹理流送评估；present 模式配置化（mailbox 选项，由 A0 数据决定是否值得） | `InfrastructureDesign.md` §2 | A0/A2 数据 |
+| B5 | 加载后续：DCL 并行化评估（多资产并行解析 → 触发 infra 触发条款评估）；纹理流送评估；present 模式配置化（mailbox 选项，由 A0 数据决定是否值得） | `../infra_and_dcl/InfrastructureDesign.md` §2 | A0/A2 数据 |
 
 ## C 步骤（仅记录，暂不实施）
 
 | # | 内容 | 触发/依据 |
 |---|---|---|
-| C1 | infra job system I0–I3（固定线程池 + MPMC + 主线程回调队列；任务图；协程层仅数据证明需要时） | `InfrastructureDesign.md` §2/§3：**触发条件 = 第二个真实并发负载**（多 glTF 并行解析 > shader 编译 > 纹理流送）或 worker 模式被复制粘贴 |
+| C1 | infra job system I0–I3（固定线程池 + MPMC + 主线程回调队列；任务图；协程层仅数据证明需要时） | `../infra_and_dcl/InfrastructureDesign.md` §2/§3：**触发条件 = 第二个真实并发负载**（多 glTF 并行解析 > shader 编译 > 纹理流送）或 worker 模式被复制粘贴 |
 | C2 | primitive/draw 级剔除与 GPU-driven culling（间接剔除 / meshlet） | 由 A1 的 instance 级收益数据决定是否值得 |
 | C3 | 场景层级：`parent_index` + dirty transform 批量重算（还债 `update_scene_transforms` 空 phase） | `Architecture.md` 还债清单；InterfaceRedesign §5 |
 | C4 | 渲染还债：`backend_capabilities()` 设备实测、executor/runtime 双资源表收敛等 | `Architecture.md` 还债清单 |
