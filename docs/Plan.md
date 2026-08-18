@@ -194,6 +194,11 @@ tinygltf 阶段的纹理解码（Release 下同为数十秒级，并非"正常"�
    解码开关与三段计时装点（主仓 `load_report.parse/convert/decode_us` 数据源），
    接口一次定型不再变动；fbx 占位类（namespace fbx + PascalCase，风格发散）作废；
    主仓 `geometry_loader` 收敛为转调 dcl 分发。
+   **并行解码的归属**（同日修正）：管线所有权归 dcl（解析→解码→转换是 dcl 内部流程，
+   主仓不组合 dcl 阶段）；`load_options` 内定义 `image_decode_executor` 函数表缝，
+   主仓以组合根身份注入 job system 实现（对齐 render_driver 函数表 DI 惯例；
+   本缝即 §3"DI 风格统一"评审的实验田）。dcl 保持零依赖；infra 抽仓后 dcl 可自带
+   默认并行执行器。
 
 ## 9. UI 重构立项意向（2026-08-18，单独 feature 分支）
 
