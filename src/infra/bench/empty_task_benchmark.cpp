@@ -1,19 +1,19 @@
-// infra I0 benchmark：空任务基线（InfrastructureDesign.md §5 口径）。
-// 产出三组对照 + 线程扩展曲线，数据是 I1 验收（同表复跑对比）的基线：
+// infra I0/I1 benchmark：空任务基线（InfrastructureDesign.md §5 口径）。
+// 产出对照表，I1 起"bounded queue"行换用库实现 infra::job_system（I0 参考
+// 实现已退役），另附 I1 验收用的 CPU 密集任务 并行/串行 比值场景：
 //   1. serial          —— 主线程内联执行（下界）；
 //   2. thread-per-task —— 每任务 spawn+join 一个 std::thread（朴素对照）；
-//   3. bounded queue   —— 有界环队列 + mutex/CV + 固定 worker 池（I1 设计形态，
-//                          本文件内置参考实现；I1 落地后以库实现复跑本表）。
-// 任务载荷刻意平凡（写结果槽）：I0 量的是派发/排队开销本身，不是任务体。
-// 结果槽按 DoD 口径预分配——worker 只写自己的槽位，主线程汇总。
+//   3. job_system      —— 库实现（固定池 + 有界队列 + CV），线程扩展 1/2/4/N；
+//   4. cpu_dense       —— 8 个 CPU 密集任务并行 vs 串行（§5 门槛：≤40%）。
+// 空任务载荷刻意平凡（写结果槽）：量的是派发/排队开销本身，不是任务体。
+
+#include "infra/job_system.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
-#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -106,119 +106,82 @@ namespace
                   summarize(std::move(latencies)));
     }
 
-    // --- 3. 有界环队列 + CV（I1 形态参考实现；SPMC 负载：主线程单生产者）---
-    struct queue_task
+    // --- 3. job_system：库实现（固定池 + 有界队列 + CV）---
+    void bench_job_system(std::uint64_t task_count, std::uint32_t worker_count)
     {
-        std::uint64_t submit_ns = 0;
-        std::uint64_t result_index = 0;
-    };
-
-    class bounded_task_queue
-    {
-    public:
-        explicit bounded_task_queue(std::uint32_t capacity) : slots_(capacity) {}
-
-        void push(const queue_task& task)
-        {
-            std::unique_lock lock(mutex_);
-            not_full_.wait(lock, [&] { return count_ < slots_.size(); });
-            slots_[tail_] = task;
-            tail_ = (tail_ + 1) % slots_.size();
-            count_++;
-            lock.unlock();
-            not_empty_.notify_one();
-        }
-
-        // 返回 false 表示队列已关闭且无剩余任务。
-        bool pop(queue_task& task)
-        {
-            std::unique_lock lock(mutex_);
-            not_empty_.wait(lock, [&] { return count_ > 0 || closed_; });
-            if (count_ == 0)
-            {
-                return false;
-            }
-            task = slots_[head_];
-            head_ = (head_ + 1) % slots_.size();
-            count_--;
-            lock.unlock();
-            not_full_.notify_one();
-            return true;
-        }
-
-        void close()
-        {
-            {
-                std::lock_guard lock(mutex_);
-                closed_ = true;
-            }
-            not_empty_.notify_all();
-        }
-
-    private:
-        std::vector<queue_task> slots_;
-        std::size_t head_ = 0;
-        std::size_t tail_ = 0;
-        std::size_t count_ = 0;
-        bool closed_ = false;
-        std::mutex mutex_;
-        std::condition_variable not_full_;
-        std::condition_variable not_empty_;
-    };
-
-    void bench_queue(std::uint64_t task_count, std::uint32_t worker_count)
-    {
+        infra::job_system jobs(worker_count, 1024);
         result_slots.assign(task_count, 0);
         std::vector<std::uint64_t> completion_ns(task_count, 0);
         std::vector<std::uint64_t> submit_ns(task_count, 0);
-        bounded_task_queue queue(1024);
         std::atomic<std::uint64_t> completed{0};
 
-        const auto worker_body = [&]
-        {
-            queue_task task;
-            while (queue.pop(task))
-            {
-                result_slots[task.result_index] = task.result_index + 1;
-                completion_ns[task.result_index] = now_ns();
-                completed.fetch_add(1, std::memory_order_relaxed);
-            }
-        };
-
-        std::vector<std::thread> workers;
-        workers.reserve(worker_count);
         const std::uint64_t begin = now_ns();
-        for (std::uint32_t index = 0; index < worker_count; index++)
-        {
-            workers.emplace_back(worker_body);
-        }
         for (std::uint64_t index = 0; index < task_count; index++)
         {
             submit_ns[index] = now_ns();
-            queue.push({.submit_ns = submit_ns[index], .result_index = index});
+            // future 即弃（fire-and-forget 口径）：packaged_task 共享态随任务执行回收，
+            // 不阻塞、不泄漏；该路径含每次提交一次的堆分配，即"空任务开销"实测对象。
+            static_cast<void>(jobs.submit([&, index]
+            {
+                result_slots[index] = index + 1;
+                completion_ns[index] = now_ns();
+                completed.fetch_add(1, std::memory_order_relaxed);
+            }));
         }
-        // 等待全部完成后再关队列（关早会丢任务，关晚 worker 空转）。
         while (completed.load(std::memory_order_relaxed) < task_count)
         {
             std::this_thread::yield();
         }
         const std::uint64_t end = now_ns();
-        queue.close();
-        for (auto& worker : workers) worker.join();
+        jobs.stop();
 
         std::vector<std::uint64_t> latencies(task_count);
         for (std::uint64_t index = 0; index < task_count; index++)
         {
             latencies[index] = completion_ns[index] - submit_ns[index];
         }
-        print_row("bounded queue", worker_count, task_count, static_cast<double>(end - begin) / 1.0e6,
+        print_row("job_system", worker_count, task_count, static_cast<double>(end - begin) / 1.0e6,
                   summarize(std::move(latencies)));
+    }
+
+    // --- 4. cpu_dense：8 个 CPU 密集任务并行 vs 串行（I1 验收 §5：并行 ≤ 串行 40%）---
+    void bench_cpu_dense(std::uint64_t spin_per_task_ns)
+    {
+        // 忙等自旋防优化抹除；模拟真实 CPU 密集任务（如纹理解码）。
+        const auto spin = [spin_per_task_ns]
+        {
+            const std::uint64_t deadline = now_ns() + spin_per_task_ns;
+            std::uint64_t value = result_slots[0];
+            while (now_ns() < deadline)
+            {
+                value = value * 1664525u + 1013904223u;
+            }
+            result_slots[0] = value;
+        };
+        result_slots.assign(1, 1);
+
+        const std::uint64_t serial_begin = now_ns();
+        for (std::uint32_t index = 0; index < 8; index++) spin();
+        const double serial_ms = static_cast<double>(now_ns() - serial_begin) / 1.0e6;
+
+        double parallel_ms = 0.0;
+        {
+            infra::job_system jobs(8);
+            const std::uint64_t parallel_begin = now_ns();
+            std::vector<std::future<void>> futures;
+            for (std::uint32_t index = 0; index < 8; index++) futures.push_back(jobs.submit(spin));
+            for (auto& future : futures) future.get();
+            parallel_ms = static_cast<double>(now_ns() - parallel_begin) / 1.0e6;
+        }
+        const double ratio = parallel_ms / serial_ms;
+        std::printf("  cpu_dense          tasks=8       serial=%8.2fms parallel=%8.2fms | ratio=%5.1f%% (gate: <= 40%%) %s\n",
+                    serial_ms, parallel_ms, ratio * 100.0, ratio <= 0.40 ? "[OK]" : "[MISS]");
     }
 } // namespace
 
 int main()
 {
-    std::printf("infra I0 empty-task baseline (unit: wall/ms, latency/us)\n");
+    std::printf("infra I0/I1 empty-task baseline (unit: wall/ms, latency/us)\n");
 
     bench_serial(1000000);
     bench_thread_per_task(2000);
@@ -229,8 +192,10 @@ int main()
     std::printf("  hardware_concurrency=%u, pool=%u\n", hardware, full_pool);
     for (const std::uint32_t workers : {1u, 2u, 4u, full_pool})
     {
-        bench_queue(200000, workers);
+        bench_job_system(200000, workers);
     }
+
+    bench_cpu_dense(50000000); // 50ms/task × 8，并行/串行比值（§5 门槛 ≤40%）
 
     std::printf("done.\n");
     return 0;
