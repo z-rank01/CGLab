@@ -103,7 +103,7 @@ private:
         std::uint64_t uploaded_bytes = 0;         // 进度：已上传 vertex+index 字节
         std::uint64_t total_bytes = 0;
         engine::load_report report;               // 完成时回填（worker 段 + 分片合计）
-        std::chrono::steady_clock::time_point upload_begin{};
+        std::chrono::steady_clock::time_point upload_begin;
     };
     struct frame_loads
     {
@@ -168,7 +168,7 @@ private:
     [[nodiscard]] nlohmann::json current_scene_state() const;
 
     // 异步加载管线
-    void enqueue_load(std::string path, std::string client_id, nlohmann::json rpc_id);
+    void enqueue_load(const std::string& path, std::string client_id, nlohmann::json rpc_id);
     void collect_completed_loads();
     void apply_completed_loads();
     // T1b/M7 分块流式上传：运行时资产按片上传（每帧一片），完成前不注册场景。
@@ -191,7 +191,7 @@ private:
         std::span<const engine::geometry_handle> mesh_handles,
         bool read_only,
         engine::load_report* report);
-    [[nodiscard]] std::vector<scene::object_id> merge_asset_database(engine::asset_database asset, bool read_only,
+    [[nodiscard]] std::vector<scene::object_id> merge_asset_database(const engine::asset_database& asset, bool read_only,
                                                                      engine::load_report* report = nullptr);
 
     // 帧阶段控制流：枚举代替布尔——stop 语义互斥（窗口关闭 / 错误），

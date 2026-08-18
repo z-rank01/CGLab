@@ -15,7 +15,7 @@ namespace
     constexpr float telemetry_interval_seconds = 0.1F;
     // T1b/M7 分块流式上传：每帧字节预算（8 MB ≈ 亚毫秒 memcpy，帧时间有界；
     // 单片超预算的 mesh 独立成片，帧上界 = 单 mesh 大小，设计取舍）
-    constexpr std::uint64_t upload_chunk_budget_bytes = 8ull * 1024ull * 1024ull;
+    constexpr std::uint64_t upload_chunk_budget_bytes = 8ULL * 1024ULL * 1024ULL;
 
     std::string geometry_arena_summary(const engine::load_report& report)
     {
@@ -170,9 +170,9 @@ engine::result<bool> engine_runtime::initialize()
 
 // --- 异步加载管线 ---
 
-void engine_runtime::enqueue_load(std::string path, std::string client_id, nlohmann::json rpc_id)
+void engine_runtime::enqueue_load(const std::string& path, std::string client_id, nlohmann::json rpc_id)
 {
-    const auto requested = loads.asset_loader->request(std::move(path));
+    const auto requested = loads.asset_loader->request(path);
     if (!requested)
     {
         if (control_plane)
@@ -229,8 +229,8 @@ void engine_runtime::begin_streamed_upload(completed_asset_request& completed, p
     upload.rpc_id = std::move(response.rpc_id);
     upload.respond = response.respond;
     upload.report = std::move(completed.report);
-    upload.total_bytes = upload.asset.vertex_blob.size() * sizeof(engine::vertex) +
-                         upload.asset.index_blob.size() * sizeof(std::uint32_t);
+    upload.total_bytes = (upload.asset.vertex_blob.size() * sizeof(engine::vertex)) +
+                         (upload.asset.index_blob.size() * sizeof(std::uint32_t));
     upload.upload_begin = std::chrono::steady_clock::now();
     loads.streamed_uploads.push_back(std::move(upload));
 }
@@ -334,7 +334,7 @@ void engine_runtime::finalize_streamed_upload(streamed_upload& upload)
 
 void engine_runtime::publish_load_progress(const streamed_upload& upload) const
 {
-    const std::uint32_t mesh_total = static_cast<std::uint32_t>(upload.asset.meshes.size());
+    const auto mesh_total = static_cast<std::uint32_t>(upload.asset.meshes.size());
     control_plane->publish(control_plane::make_notification("telemetry.load_progress",
                                                             {
                                                                 {"path", upload.report.path},
@@ -358,7 +358,7 @@ engine::result<std::uint32_t> engine_runtime::upload_asset_materials(const engin
     const auto upload_begin = std::chrono::steady_clock::now();
     const material_upload_row material_row{&asset};
     const auto material_changes = renderer->apply_resource_changes({.material_uploads = std::span(&material_row, 1)});
-    if (report)
+    if (report != nullptr)
     {
         report->upload_us += static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - upload_begin).count());
@@ -385,9 +385,9 @@ engine::result<engine::resource_change_result> engine_runtime::upload_asset_geom
         return output;
     }
     const auto upload_begin = std::chrono::steady_clock::now();
-    const geometry_upload_row geometry_row{&asset, first_mesh, mesh_count, material_base};
+    const geometry_upload_row geometry_row{.asset=&asset, .first_mesh=first_mesh, .mesh_count=mesh_count, .material_base=material_base};
     const auto geometry_changes = renderer->apply_resource_changes({.geometry_uploads = std::span(&geometry_row, 1)});
-    if (report)
+    if (report != nullptr)
     {
         report->upload_us += static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - upload_begin).count());
@@ -397,7 +397,7 @@ engine::result<engine::resource_change_result> engine_runtime::upload_asset_geom
         output.error = "Failed to upload glTF geometry: " + geometry_changes.error;
         return output;
     }
-    if (report)
+    if (report != nullptr)
     {
         report->geometry_arena_count = geometry_changes.value.geometry_arena_count;
         report->geometry_arenas_created = geometry_changes.value.geometry_arenas_created;
@@ -407,7 +407,7 @@ engine::result<engine::resource_change_result> engine_runtime::upload_asset_geom
         report->geometry_plan_us += geometry_changes.value.geometry_plan_us;
         report->geometry_transfer_us += geometry_changes.value.geometry_transfer_us;
     }
-    output.value = std::move(geometry_changes.value);
+    output.value = geometry_changes.value;
     return output;
 }
 
@@ -443,7 +443,7 @@ std::vector<scene::object_id> engine_runtime::register_asset_scene(const engine:
         if (resolved[index] == 1)
         {
             hierarchy_cycle = true;
-            return glm::mat4(1.0F);
+            return {1.0F};
         }
         resolved[index] = 1;
         const auto parent = asset.nodes[index].parent;
@@ -471,9 +471,12 @@ std::vector<scene::object_id> engine_runtime::register_asset_scene(const engine:
         if (node.mesh == engine::invalid_asset_index || node.mesh >= asset.meshes.size()) continue;
         const auto handle = mesh_handles[node.mesh];
         const auto& mesh = asset.meshes[node.mesh];
-        const auto id = scene_registry.register_matrix_object(node.name.empty() ? mesh.name : node.name,
-                                                               {mesh.bounds_min, mesh.bounds_max}, world[node_index],
-                                                               read_only, handle);
+        const auto id = scene_registry.register_matrix_object(
+            node.name.empty() ? mesh.name : node.name,
+            {.min=mesh.bounds_min, .max=mesh.bounds_max}, 
+            world[node_index],
+            read_only, 
+            handle);
         if (extract.runtime_geometry_slots.size() <= id) extract.runtime_geometry_slots.resize(id + 1);
         extract.runtime_geometry_slots[id] = handle;
         loads.geometry_ref_counts[handle]++;
@@ -482,7 +485,7 @@ std::vector<scene::object_id> engine_runtime::register_asset_scene(const engine:
     for (const auto handle : mesh_handles)
         if (handle != engine::invalid_geometry_handle && !loads.geometry_ref_counts.contains(handle))
             loads.pending_geometry_retires.push_back({handle});
-    if (report)
+    if (report != nullptr)
     {
         report->vertex_bytes = asset.vertex_blob.size() * sizeof(engine::vertex);
         report->index_bytes = asset.index_blob.size() * sizeof(std::uint32_t);
@@ -493,7 +496,7 @@ std::vector<scene::object_id> engine_runtime::register_asset_scene(const engine:
     return ids;
 }
 
-std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset_database asset, bool read_only,
+std::vector<scene::object_id> engine_runtime::merge_asset_database(const engine::asset_database& asset, bool read_only,
                                                                    engine::load_report* report)
 {
     // 启动路径：材质 + 几何一次事务 + 场景注册紧邻（行为与分片前一致）。
@@ -515,7 +518,7 @@ std::vector<scene::object_id> engine_runtime::merge_asset_database(engine::asset
             Logger::LogError(geometry_changes.error);
             return {};
         }
-        mesh_handles = std::move(geometry_changes.value.geometry_handles);
+        mesh_handles = geometry_changes.value.geometry_handles;
     }
     return register_asset_scene(asset, mesh_handles, read_only, report);
 }
@@ -856,8 +859,8 @@ void engine_runtime::try_pick_object(float x, float y)
     const interface::camera_config& camera_config = camera_container.configs[camera_entity_index];
 
     // 注意使用未做 Vulkan Y 翻转的投影做反投影（拾取在标准 NDC 约定下进行）
-    const float ndc_x             = (2.0F * x) / static_cast<float>(width) - 1.0F;
-    const float ndc_y             = 1.0F - (2.0F * y) / static_cast<float>(height);
+    const float ndc_x             = ((2.0F * x) / static_cast<float>(width)) - 1.0F;
+    const float ndc_y             = 1.0F - ((2.0F * y) / static_cast<float>(height));
     const glm::mat4 view          = interface::get_view_matrix(transform);
     const glm::mat4 proj          = interface::get_projection_matrix(transform, camera_config);
     const glm::mat4 inv_view_proj = glm::inverse(proj * view);
@@ -875,7 +878,7 @@ void engine_runtime::try_pick_object(float x, float y)
     if (hit.id != scene::invalid_object_id)
     {
         const scene::scene_object* object = scene_registry.find(hit.id);
-        Logger::LogInfo("Picked scene object " + std::to_string(hit.id) + " (\"" + (object ? object->name : "?") + "\") at distance " +
+        Logger::LogInfo("Picked scene object " + std::to_string(hit.id) + " (\"" + ((object != nullptr) ? object->name : "?") + "\") at distance " +
                         std::to_string(hit.distance));
     }
     publish_scene_telemetry_if_changed();
@@ -895,7 +898,7 @@ void engine_runtime::publish_frame_telemetry()
     telemetry.telemetry_accumulator = 0.0F;
 
     // 帧时间指数滑动平均，抑制单帧抖动
-    telemetry.smoothed_frame_time      = telemetry.smoothed_frame_time * 0.9F + delta_time * 0.1F;
+    telemetry.smoothed_frame_time      = (telemetry.smoothed_frame_time * 0.9F) + (delta_time * 0.1F);
     const float smoothed_fps = telemetry.smoothed_frame_time > 0.0F ? 1.0F / telemetry.smoothed_frame_time : 0.0F;
 
     const engine::render_statistics stats = renderer->statistics();
