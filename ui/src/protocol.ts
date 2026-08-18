@@ -1,4 +1,4 @@
-// 控制平面协议层：类型对照 docs/control_plane_protocol.schema.json 手写。
+// 控制平面协议层：类型对照 docs/control_plane_protocol/control_plane_protocol.schema.json 手写。
 // JSON-RPC 2.0 over WebSocket，与页面同源同端口。
 
 // ---------- 通知负载 ----------

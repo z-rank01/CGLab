@@ -410,9 +410,9 @@ namespace
         check(content_type_for("data.bin") == "application/octet-stream", "content type fallback");
     }
 
-    // I1 golden：docs/control_plane_protocol.schema.json 必须等于 build_protocol_schema() 输出。
+    // I1 golden：docs/control_plane_protocol/control_plane_protocol.schema.json 必须等于 build_protocol_schema() 输出。
     // 有意改协议时以 --write 重新生成：`cglab_control_plane_protocol_tests --write`。
-    constexpr std::string_view schema_relative_path = "docs/control_plane_protocol.schema.json";
+    constexpr std::string_view schema_relative_path = "docs/control_plane_protocol/control_plane_protocol.schema.json";
 
     void test_schema_golden()
     {
