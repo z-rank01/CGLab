@@ -140,6 +140,7 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 | M7 | T1b 分块流式上传 | ✅ 2026-08-16：`e5cad5c8`（子仓 docs `7c8aff0`；engine 逐帧分片 + A0 进度上报；91.2MB 12 片加载帧时间≈7ms 有界，资产生成脚本见 scripts/gen_stream_glb.ps1） |
 | M6 | R5 后处理链路 | ✅ 2026-08-16：`4a514b3c`（半分辨率 RT + resolve（ACES tonemap + vignette）+ `--debug-view` hdr/resolved + `resolve_draw_count` 遥测；42/42 ctest + 10 组 smoke + DamagedHelmet 屏幕捕获） |
 | M8 | B1→B3 控制平面 + RG 事件浏览器 | ✅ 2026-08-18：B1（`0e671a96`）+ B2（`da2f6d88`，ui/ 正式 Web UI + debug.set_view 交互切换）+ B3（`65a1adf8` + 子仓 `bec36d2`：debug_dump JSON 内省 + rg.get_dump/telemetry.rg 下发 + 手写 SVG DAG 面板；GPU timestamp 瀑布后置，见 §3） |
+| C1-I0 | infra benchmark 设施 | ✅ 2026-08-18：`f3590553`（src/infra 落地，cglab.infra_benchmark；基线：thread-per-task 165µs/task vs 队列 0.28–1.45µs/task，吞吐拐点 2 workers，数据见 `infra_and_dcl/InfrastructureDesign.md` §5） |
 | M9 | IBL | 待实施 |
 | M10 | CSM | 待实施 |
 

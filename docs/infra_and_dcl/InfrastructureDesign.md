@@ -69,6 +69,12 @@
 - 空任务平均开销 < 10 µs；
 - 加载期间主线程 p99 帧耗时劣化 < 5%。
 
+**I0 基线（2026-08-18，`f3590553`，Debug，hardware_concurrency=20）**：
+serial 0.0015µs/task；thread-per-task 165µs/task（p50 62.5 / p99 374.7）；
+有界队列吞吐 2.07M→3.57M→1.30M→0.69M tasks/s（1/2/4/19 workers）——
+thread-per-task 与队列差两个数量级；空任务下队列吞吐拐点在 2 workers
+（单 mutex 竞争主导）。I1 复跑同表对照。
+
 ## 6. 目录与迁移
 
 - 落地位置：`src/infra/`（新），CMake 独立 target `infra` + `cglab.infra_*` CTest。
