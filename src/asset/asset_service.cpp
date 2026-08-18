@@ -62,7 +62,7 @@ namespace asset
             const auto load_begin = std::chrono::steady_clock::now();
             try
             {
-                output.result = load_geometry(resolved);
+                output.result = load_geometry(resolved, &output.report);
             }
             catch (const std::exception& error)
             {

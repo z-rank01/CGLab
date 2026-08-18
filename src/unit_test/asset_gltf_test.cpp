@@ -118,8 +118,10 @@ int main()
         return EXIT_FAILURE;
     }
 
-    const auto unsupported = asset::load_geometry(temp_dir / "model.obj");
-    if (unsupported || unsupported.error.find("Unsupported geometry asset format") == std::string::npos)
+    // 未注册扩展名由 dcl::load_asset 拒绝（obj/fbx 已注册为 not-implemented 占位，
+    // 真正的"不支持"用未知扩展名覆盖）
+    const auto unsupported = asset::load_geometry(temp_dir / "model.xyz");
+    if (unsupported || unsupported.error.find("Unsupported asset format") == std::string::npos)
     {
         std::cerr << "Unsupported asset format was not rejected\n";
         std::filesystem::remove(uppercase_gltf, filesystem_error);

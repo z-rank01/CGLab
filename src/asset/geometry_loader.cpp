@@ -1,29 +1,13 @@
 #include "asset/geometry_loader.h"
 
-#include <algorithm>
-#include <cctype>
-#include <string>
-
 #include "asset/gltf_adapter.h"
 
 namespace asset
 {
-    engine::result<engine::asset_database> load_geometry(const std::filesystem::path& path)
+    engine::result<engine::asset_database> load_geometry(const std::filesystem::path& path,
+                                                         engine::load_report* report)
     {
-        std::string extension = path.extension().string();
-        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character)
-        {
-            return static_cast<char>(std::tolower(character));
-        });
-
-        if (extension == ".gltf" || extension == ".glb")
-        {
-            return load_gltf(path);
-        }
-
-        engine::result<engine::asset_database> result;
-        result.error = "Unsupported geometry asset format: " +
-                       (extension.empty() ? std::string("<none>") : extension);
-        return result;
+        // 格式分发已收敛进 dcl::load_asset（gltf_adapter 转调 + 三段计时映射）。
+        return load_asset(path, report);
     }
 } // namespace asset
