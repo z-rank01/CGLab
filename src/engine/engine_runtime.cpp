@@ -97,7 +97,11 @@ engine::result<bool> engine_runtime::initialize()
 
     if (!loads.asset_loader)
     {
-        loads.asset_loader = std::make_unique<asset::asset_service>();
+        if (!jobs_)
+        {
+            jobs_.emplace(); // C1/I1：任务池随首个资产服务启动
+        }
+        loads.asset_loader = std::make_unique<asset::asset_service>(*jobs_);
     }
     loads.asset_loader->start(config.working_directory);
     engine::load_report startup_report;
@@ -120,6 +124,11 @@ engine::result<bool> engine_runtime::initialize()
                 startup_report = std::move(completed.front().report);
                 loads.initial_asset = std::move(completed.front().result.value);
                 break;
+            }
+            // 完成经池的主线程回调队列投递：等待循环必须 drain，否则启动资产永远不到
+            if (jobs_)
+            {
+                jobs_->drain_main_callbacks(64);
             }
             std::this_thread::yield();
         }
@@ -187,6 +196,11 @@ void engine_runtime::enqueue_load(const std::string& path, std::string client_id
 
 void engine_runtime::collect_completed_loads()
 {
+    // 帧边界合并：先 drain 池主线程回调（完成回调在此并入 completed），再 drain
+    if (jobs_)
+    {
+        jobs_->drain_main_callbacks(256);
+    }
     for (completed_asset_request& completed : loads.asset_loader->drain_completed())
         loads.completed_asset_rows.push_back(std::move(completed));
 }
@@ -1289,6 +1303,10 @@ void engine_runtime::shutdown() noexcept
     if (loads.asset_loader)
     {
         loads.asset_loader->shutdown();
+    }
+    if (jobs_)
+    {
+        jobs_->stop(); // 资产服务停止后再停池：在途解析跑完，完成回调随池销毁
     }
     control_plane.reset();
     if (renderer)

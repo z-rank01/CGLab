@@ -28,7 +28,7 @@ target_include_directories(cglab_asset_runtime PUBLIC
 )
 
 target_link_libraries(cglab_asset_runtime
-    PUBLIC cglab_asset_gltf
+    PUBLIC cglab_asset_gltf infra
 )
 
 if(MSVC)
