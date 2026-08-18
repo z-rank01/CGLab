@@ -31,6 +31,6 @@
 
 ## 索引
 
-- 方法（`session.init` + 16 个命令方法）的参数规则、值域、result 形态：schema `methods`。
+- 方法（`session.init` + 17 个命令方法）的参数规则、值域、result 形态：schema `methods`。
 - 通知负载字段（`session.hello`、`telemetry.frame/scene/load/load_progress`）：schema `notifications`。
 - 引擎侧命令执行与遥测拼装：`src/engine/engine_runtime.cpp`。

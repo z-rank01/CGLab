@@ -467,6 +467,15 @@ namespace
         }
         check(found, "capabilities include debug.set_view");
     }
+    void test_dispatch_rg_get_dump()
+    {
+        // M8/B3：无参方法，入队为 rg_get_dump 命令，结果由引擎回填
+        const auto parsed = control_plane::parse_request(R"({"id":70,"method":"rg.get_dump"})");
+        const auto result = control_plane::dispatch_request("c", parsed.request);
+        check(result.outcome == control_plane::dispatch_outcome::queue_command, "rg.get_dump queued");
+        check(result.command.kind == control_plane::command_kind::rg_get_dump, "rg.get_dump kind");
+    }
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -497,6 +506,7 @@ int main(int argc, char** argv)
     test_web_static();
     test_schema_golden();
     test_dispatch_debug_set_view();
+    test_dispatch_rg_get_dump();
 
     if (failures != 0)
     {

@@ -171,6 +171,78 @@ export interface RpcError {
   message: string;
 }
 
+// ---------- telemetry.rg（M8/B3：RG 快照，recompile 时推送） ----------
+
+export interface RgPass {
+  index: number; // schedule 序下标（edges/barriers 的 pass 引用口径）
+  name: string;
+  kind: string; // raster | compute | copy
+  queue: string; // graphics | compute | copy
+  flags: string[]; // backend_upload | side_effect
+  colors: { resource: string; load: string; store: string }[];
+  depth: { resource: string; load: string; store: string } | null;
+}
+
+export interface RgEdge {
+  from: number;
+  to: number;
+  kind: string; // sync | cross_queue
+}
+
+export interface RgBarrierState {
+  usage: string[];
+  access: string;
+  domain: string;
+  queue: string;
+}
+
+export interface RgBarrier {
+  pass: number | null;
+  scope: string; // prologue | epilogue
+  kind: string; // image | buffer
+  resource: string;
+  phase: string; // full | release | acquire
+  intents: string[];
+  producer: number | null;
+  before: RgBarrierState;
+  after: RgBarrierState;
+}
+
+export interface RgAlias {
+  kind: string; // image | buffer
+  previous: string;
+  next: string;
+  memory_block: number | null;
+  at_pass: number | null;
+}
+
+export interface RgResource {
+  name: string;
+  kind: string; // image | buffer
+  imported: boolean;
+  first_pass: number | null;
+  last_pass: number | null;
+  physical: number | null;
+  memory_block: number | null;
+}
+
+export interface RgDump {
+  passes: RgPass[];
+  edges: RgEdge[];
+  barriers: RgBarrier[];
+  aliases: RgAlias[];
+  resources: RgResource[];
+  statistics: Record<string, number>;
+}
+
+export interface RgTelemetry {
+  revision: number;
+  dump: RgDump;
+}
+
+// rg.get_dump 结果（与 telemetry.rg 负载同形）
+export type RgGetDumpResult = RgTelemetry;
+
 // ---------- RPC 客户端 ----------
 
 export interface ClientHandlers {
@@ -181,6 +253,7 @@ export interface ClientHandlers {
   onScene?: (p: SceneState) => void;
   onLoad?: (p: LoadTelemetry) => void;
   onLoadProgress?: (p: LoadProgress) => void;
+  onRg?: (p: RgTelemetry) => void;
 }
 
 const RECONNECT_MS = 3000;
@@ -281,6 +354,9 @@ export class ControlPlaneClient {
           break;
         case 'telemetry.load_progress':
           this.handlers.onLoadProgress?.(msg.params as LoadProgress);
+          break;
+        case 'telemetry.rg':
+          this.handlers.onRg?.(msg.params as RgTelemetry);
           break;
       }
     };

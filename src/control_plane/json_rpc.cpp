@@ -225,17 +225,20 @@ namespace control_plane
              .result_hint = "场景状态对象，同 telemetry.scene 负载"},
             {.name = "debug.set_view", .kind = command_kind::debug_set_view, .rules = rules_debug_set_view,
              .result_hint = "{mode: uint（枚举下标，0=off…4=resolved）}"},
+            {.name = "rg.get_dump", .kind = command_kind::rg_get_dump, .rules = {},
+             .result_hint = "{revision: uint, dump: RG dump 对象（同 telemetry.rg 负载的 dump 字段）}"},
         };
 
         // capabilities 列表：session.init 响应与 schema 共用。
         inline constexpr std::string_view capability_names[]{
-            "telemetry.frame", "telemetry.scene", "telemetry.load", "telemetry.load_progress",
+            "telemetry.frame", "telemetry.scene", "telemetry.load", "telemetry.load_progress", "telemetry.rg",
             "debug.echo", "debug.set_view",
             "frame.pause", "frame.resume", "frame.step",
             "camera.set_mode", "camera.set_params", "camera.get_state", "camera.set_culling",
             "camera.bookmark.save", "camera.bookmark.goto",
             "scene.load_asset", "scene.unload", "scene.set_visibility",
             "scene.set_transform", "scene.select", "scene.list",
+            "rg.get_dump",
         };
 
         // 合法值下标（'|' 分隔序），未命中返回 -1。enum_as_index 的参数以此值入 validated。
@@ -514,6 +517,14 @@ namespace control_plane
             {"fraction", "number", "0..1"},
             {"meshes", "object", "done|total"},
         };
+        inline constexpr notification_field fields_rg[]{
+            {"revision", "integer", "RG 编译序号（graph_compiles），仅在 recompile 时推送"},
+            {"dump", "object",
+             "RG debug_dump 结构：passes[]（schedule 序，含附件）|edges[]（from/to/kind=sync|cross_queue）|"
+             "barriers[]（pass/scope/kind/resource/phase/intents/producer/before/after）|"
+             "aliases[]（kind/previous/next/memory_block/at_pass）|resources[]（name/kind/imported/"
+             "first_pass/last_pass/physical/memory_block）|statistics"},
+        };
 
         inline constexpr notification_entry notification_table[]{
             {.name = "session.hello", .description = "连接建立时服务端主动推送的握手",
@@ -526,6 +537,8 @@ namespace control_plane
              .fields = fields_load},
             {.name = "telemetry.load_progress", .description = "分块流式上传进度（M7）",
              .fields = fields_load_progress},
+            {.name = "telemetry.rg", .description = "已编译 render graph 快照（M8/B3，recompile 时推送）",
+             .fields = fields_rg},
         };
     } // namespace
 

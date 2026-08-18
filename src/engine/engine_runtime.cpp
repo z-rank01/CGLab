@@ -645,6 +645,29 @@ void engine_runtime::handle_scene_command(const control_plane::engine_command& c
                                      control_plane::make_result(command.id, {{"mode", debug_override.mode}}));
         break;
     }
+    case command_kind::rg_get_dump:
+    {
+        // M8/B3：子仓 dump 为确定性 JSON 文本，解析后随响应回填（镜像 scene.list 拉取口径）
+        auto dump = renderer->graph_debug_dump();
+        if (!dump)
+        {
+            control_plane->post_response(command.client_id,
+                                         control_plane::make_error(command.id, -32603, "RG debug dump unavailable: " + dump.error));
+            break;
+        }
+        auto parsed = nlohmann::json::parse(dump.value, nullptr, false);
+        if (parsed.is_discarded())
+        {
+            control_plane->post_response(command.client_id,
+                                         control_plane::make_error(command.id, -32603, "RG debug dump is not valid JSON"));
+            break;
+        }
+        control_plane->post_response(command.client_id,
+                                     control_plane::make_result(command.id,
+                                                                {{"revision", renderer->statistics().graph_compiles},
+                                                                 {"dump", std::move(parsed)}}));
+        break;
+    }
     default:
         break;
     }
@@ -844,6 +867,34 @@ void engine_runtime::publish_scene_telemetry_if_changed()
     control_plane->publish(control_plane::make_notification("telemetry.scene", current_scene_state()));
 }
 
+// M8/B3：RG 快照推送（镜像 scene 版本闸）——revision = graph_compiles，
+// debug 视图切换/resize 触发 recompile 后下一遥测帧自动下发新图。
+void engine_runtime::publish_rg_telemetry_if_changed()
+{
+    if (!control_plane)
+    {
+        return;
+    }
+    const std::uint64_t revision = renderer->statistics().graph_compiles;
+    if (revision == 0 || revision == telemetry.last_published_rg_revision)
+    {
+        return;
+    }
+    auto dump = renderer->graph_debug_dump();
+    if (!dump)
+    {
+        return; // 版本号不消费，下个遥测帧重试
+    }
+    auto parsed = nlohmann::json::parse(dump.value, nullptr, false);
+    if (parsed.is_discarded())
+    {
+        return;
+    }
+    telemetry.last_published_rg_revision = revision;
+    control_plane->publish(control_plane::make_notification("telemetry.rg",
+                                                            {{"revision", revision}, {"dump", std::move(parsed)}}));
+}
+
 // fly 模式左键拾取：窗口坐标 → 相机射线 → registry AABB pick
 void engine_runtime::try_pick_object(float x, float y)
 {
@@ -962,6 +1013,7 @@ void engine_runtime::publish_frame_telemetry()
                                                             }));
 
     publish_scene_telemetry_if_changed();
+    publish_rg_telemetry_if_changed();
 }
 
 void engine_runtime::publish_load_telemetry(const engine::load_report& report) const

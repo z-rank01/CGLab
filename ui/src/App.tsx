@@ -16,8 +16,10 @@ import { CameraPanel } from './panels/CameraPanel';
 import { AssetPanel } from './panels/AssetPanel';
 import { DebugViewPanel } from './panels/DebugViewPanel';
 import { ConsolePanel } from './panels/ConsolePanel';
+import { RgGraphPanel } from './panels/RgGraphPanel';
 
-const LAYOUT_KEY = 'cglab.ui.layout.v1';
+// v2：M8/B3 新增 RG 图面板，旧缓存布局不含该面板，整体重置一次
+const LAYOUT_KEY = 'cglab.ui.layout.v2';
 
 const PANEL_DEFS: Record<
   string,
@@ -32,6 +34,7 @@ const PANEL_DEFS: Record<
   camera: { component: CameraPanel, title: '相机' },
   assets: { component: AssetPanel, title: '资产' },
   debugView: { component: DebugViewPanel, title: '调试视图' },
+  rg: { component: RgGraphPanel, title: 'RG 图' },
   console: { component: ConsolePanel, title: '控制台' },
 };
 
@@ -59,6 +62,12 @@ function buildDefaultLayout(event: DockviewReadyEvent): void {
     title: PANEL_DEFS.graph.title,
     position: { referencePanel: 'frame', direction: 'right' },
     initialWidth: 560,
+  });
+  api.addPanel({
+    id: 'rg',
+    component: 'rg',
+    title: PANEL_DEFS.rg.title,
+    position: { referencePanel: 'graph', direction: 'within' },
   });
   api.addPanel({
     id: 'phases',

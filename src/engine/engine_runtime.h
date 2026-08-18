@@ -148,6 +148,7 @@ private:
         float telemetry_accumulator = 0.0F;
         float smoothed_frame_time = 1.0F / 60.0F;
         std::uint64_t last_published_scene_revision = 0;
+        std::uint64_t last_published_rg_revision = 0; // M8/B3：telemetry.rg 版本闸（graph_compiles）
     };
     frame_telemetry telemetry;
 
@@ -163,6 +164,7 @@ private:
     void handle_scene_command(const control_plane::engine_command& command);
     void publish_frame_telemetry();
     void publish_scene_telemetry_if_changed();
+    void publish_rg_telemetry_if_changed(); // M8/B3：recompile 时推送 RG 快照
     void publish_load_telemetry(const engine::load_report& report) const;
     [[nodiscard]] nlohmann::json current_camera_state() const;
     [[nodiscard]] nlohmann::json current_scene_state() const;

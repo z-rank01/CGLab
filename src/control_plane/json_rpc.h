@@ -74,6 +74,7 @@ namespace control_plane
         scene_select,         // scene.select {id: uint|null}
         scene_list,           // scene.list
         debug_set_view,       // debug.set_view {view: "off"|"shadow"|"depth"|"hdr"|"resolved"}（M8/B2，转发 sample 通道）
+        rg_get_dump,          // rg.get_dump（M8/B3，回 {revision, dump}，同 telemetry.rg 负载）
     };
 
     struct engine_command

@@ -98,6 +98,11 @@ namespace
                 state.object_counts.push_back(instance_count);
                 return state.status;
             },
+            .graph_debug_dump = [](void*)
+            {
+                return engine::result<std::string>{
+                    .value = R"({"passes":[],"edges":[],"barriers":[],"aliases":[],"resources":[],"statistics":{}})"};
+            },
             .request_resize = [](void*) noexcept {},
             .shutdown = [](void* value) noexcept { ++static_cast<fake_backend*>(value)->state->shutdown_calls; },
             .statistics = [](const void* value) noexcept

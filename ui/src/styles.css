@@ -209,3 +209,49 @@ tbody tr:hover {
   --dv-group-view-background-color: var(--bg);
   --dv-tabs-and-actions-container-background-color: var(--panel);
 }
+
+/* ---- RG 图面板（M8/B3） ---- */
+
+.rg-svg {
+  display: block;
+  margin: 8px 0;
+}
+
+.rg-node {
+  fill: var(--panel);
+}
+
+.rg-node-name {
+  fill: var(--fg);
+  font-size: 12px;
+}
+
+.rg-node-kind {
+  fill: var(--dim);
+  font-size: 10px;
+}
+
+.rg-edge {
+  fill: none;
+  stroke: var(--dim);
+  stroke-width: 1.5;
+  opacity: 0.85;
+}
+
+.rg-edge-queue {
+  stroke-dasharray: 5 4;
+  stroke: #d39e43;
+}
+
+.rg-chip {
+  display: inline-block;
+  width: 10px;
+  height: 3px;
+  border-radius: 1px;
+  vertical-align: middle;
+  margin-right: 2px;
+}
+
+.rg-chip-dashed {
+  background: repeating-linear-gradient(90deg, #d39e43 0 3px, transparent 3px 5px);
+}

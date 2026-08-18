@@ -11,6 +11,8 @@ import {
   FrameTelemetry,
   LoadProgress,
   LoadTelemetry,
+  RgGetDumpResult,
+  RgTelemetry,
   SceneState,
   SessionInitResult,
 } from './protocol';
@@ -27,6 +29,7 @@ export interface UiState {
   scene: SceneState | null;
   loadProgress: LoadProgress | null;
   lastLoad: LoadTelemetry | null;
+  rg: RgTelemetry | null; // M8/B3：RG 快照（telemetry.rg 推送 + 连接后 rg.get_dump 拉取）
   debugView: DebugView;
   logs: string[];
 }
@@ -40,6 +43,7 @@ let state: UiState = {
   scene: null,
   loadProgress: null,
   lastLoad: null,
+  rg: null,
   debugView: 'off',
   logs: [],
 };
@@ -92,6 +96,12 @@ const client = new ControlPlaneClient({
       .then((r) => {
         setState({ capabilities: r.capabilities });
         logEvent(`session.init OK，capabilities ${r.capabilities.length} 项`);
+        // 晚加入客户端拉一次当前图；之后的 recompile 由 telemetry.rg 推送
+        if (r.capabilities.includes('rg.get_dump')) {
+          call<RgGetDumpResult>('rg.get_dump')
+            .then((rg) => setState({ rg }))
+            .catch(() => undefined);
+        }
       })
       .catch(() => undefined);
   },
@@ -115,6 +125,10 @@ const client = new ControlPlaneClient({
     logEvent(`资产加载完成: ${l.path} (load ${(l.load_us / 1000).toFixed(1)} ms)`);
   },
   onLoadProgress: (p) => setState({ loadProgress: p }),
+  onRg: (r) => {
+    setState({ rg: r });
+    logEvent(`RG 图更新：revision ${r.revision}，${r.dump.passes.length} 个 pass`);
+  },
 });
 
 client.start();

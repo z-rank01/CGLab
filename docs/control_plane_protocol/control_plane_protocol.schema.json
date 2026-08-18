@@ -4,6 +4,7 @@
     "telemetry.scene",
     "telemetry.load",
     "telemetry.load_progress",
+    "telemetry.rg",
     "debug.echo",
     "debug.set_view",
     "frame.pause",
@@ -20,7 +21,8 @@
     "scene.set_visibility",
     "scene.set_transform",
     "scene.select",
-    "scene.list"
+    "scene.list",
+    "rg.get_dump"
   ],
   "convention": "命令全部帧边界生效；UI 永不直接触碰引擎内存；错误码遵循 JSON-RPC 2.0 标准；HTTP 静态服务与 WS 同端口（GET / 提供 dev console）",
   "endpoint": "ws://127.0.0.1:17381（默认；--ui-port 可改）",
@@ -446,6 +448,17 @@
         "type": "object"
       },
       "result": "{mode: uint（枚举下标，0=off…4=resolved）}"
+    },
+    {
+      "kind": "command",
+      "name": "rg.get_dump",
+      "params": {
+        "additionalProperties": true,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "result": "{revision: uint, dump: RG dump 对象（同 telemetry.rg 负载的 dump 字段）}"
     }
   ],
   "notifications": [
@@ -633,6 +646,22 @@
         }
       ],
       "name": "telemetry.load_progress"
+    },
+    {
+      "description": "已编译 render graph 快照（M8/B3，recompile 时推送）",
+      "fields": [
+        {
+          "members": "RG 编译序号（graph_compiles），仅在 recompile 时推送",
+          "name": "revision",
+          "type": "integer"
+        },
+        {
+          "members": "RG debug_dump 结构：passes[]（schedule 序，含附件）|edges[]（from/to/kind=sync|cross_queue）|barriers[]（pass/scope/kind/resource/phase/intents/producer/before/after）|aliases[]（kind/previous/next/memory_block/at_pass）|resources[]（name/kind/imported/first_pass/last_pass/physical/memory_block）|statistics",
+          "name": "dump",
+          "type": "object"
+        }
+      ],
+      "name": "telemetry.rg"
     }
   ],
   "protocol": "jsonrpc-2.0",
