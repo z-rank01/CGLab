@@ -98,6 +98,7 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 | 专用传输线程（§五.3） | 随 M7 立项一并评审（触发 C1） | 子仓上传规划 §五.3 |
 | reversed-Z | ~~M4 评审时给结论~~ ✅ 2026-08-16 结论：**不做**（阴影图正交投影深度线性、D32 精度充足；主 pass 无精度症状；M10 CSM 近阶或大场景实机数据出现 z-fighting 再评估） | `RenderLayerPlan.md` §不做 |
 | DI 风格统一（`render_driver` function-table vs `asset_service`/`window` 虚接口） | 下次新增边界接口时一并评审 | `Architecture.md` 还债清单 |
+| per-pass GPU timestamp 时序瀑布（I3"定位最慢 pass"完整验收项） | 需要按 pass 定位 GPU 热点时 | `InterfaceRedesign.md` I3 |
 | 物理多队列启用 / history 资源语义 | RG 预留能力，无排期 | RG 子仓 `ArchitectureAndInternals.md` |
 | pipeline 去重的全量哈希 + 线性扫（`vk_pipeline_store.cpp:79-88/249-258`） | 非每帧路径；批量建管线可测到开销时再议 | H1 审查记录 |
 
@@ -138,6 +139,47 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 | H1 | 录制路径 DoD 还债 | ✅ 2026-08-16：子仓 `42f8091` + `b01fa91`、主仓 `4716944c` |
 | M7 | T1b 分块流式上传 | ✅ 2026-08-16：`e5cad5c8`（子仓 docs `7c8aff0`；engine 逐帧分片 + A0 进度上报；91.2MB 12 片加载帧时间≈7ms 有界，资产生成脚本见 scripts/gen_stream_glb.ps1） |
 | M6 | R5 后处理链路 | ✅ 2026-08-16：`4a514b3c`（半分辨率 RT + resolve（ACES tonemap + vignette）+ `--debug-view` hdr/resolved + `resolve_draw_count` 遥测；42/42 ctest + 10 组 smoke + DamagedHelmet 屏幕捕获） |
-| M8 | B1→B3 控制平面 + RG 事件浏览器 | 待实施 |
+| M8 | B1→B3 控制平面 + RG 事件浏览器 | ✅ 2026-08-18：B1（`0e671a96`）+ B2（`da2f6d88`，ui/ 正式 Web UI + debug.set_view 交互切换）+ B3（`65a1adf8` + 子仓 `bec36d2`：debug_dump JSON 内省 + rg.get_dump/telemetry.rg 下发 + 手写 SVG DAG 面板；GPU timestamp 瀑布后置，见 §3） |
 | M9 | IBL | 待实施 |
 | M10 | CSM | 待实施 |
+
+## 8. 资产加载性能登记（2026-08-18，立项意向：dcl 结构与性能优化）
+
+实测（`NewSponza_Main_glTF_003.gltf`，vertex+index 192.5MB，MSVC Debug，两次）：
+`load_us` 82603529 / 76373045，其中 merge 5999/529us、upload 552795/531820us——
+**约 99% 耗在 worker 解析段**；Release 下同资产正常。渲染管线本身健康
+（Debug 遥测 instances=115 / visible=115 / main_draws=405 / presented 递增，窗口截图确认出图）。
+
+调用链：`asset_service` → `gltf_adapter` → dcl `gltf_loader` → tinygltf。
+定性嫌疑（未量化，立项第一步为分段计时出数）：
+
+1. tinygltf 解析本体：JSON + stb_image 全纹理解码（dcl `gltf_loader.cpp:217-219`）；
+2. dcl 逐像素 RGBA 归一化循环（`gltf_loader.cpp:256-269`，亿级像素 × 逐通道 lambda）；
+3. dcl accessor 逐元素 `double` 中间态展开（`gltf_loader.cpp:134-141`，数百万顶点 ×
+   switch 派发，再由 adapter 二次转换）。三者均被 Release 优化掩盖，仅 Debug 现形。
+
+附带发现（已澄清，非缺陷）：
+
+- 场景树 "Draws" 列读注册期 `scene_object::draw_count`，handle 路径恒 0
+  （`scene_registry.h:174` 恒传空 draws），Release 同；运行期 per-object draws 未接线，
+  与 §4 Sponza 回填项一并处理。
+- smoke 契约 `expected_indirect_groups_per_frame=3`（`gltf_sponza_sample.cpp:69`）按小资产
+  "每 pass 一组"校准，Sponza 实测 5 组/帧——大资产跑 smoke 双配置都会失败，契约口径问题。
+- 启动资产加载主线程空转等待（`engine_runtime.cpp:111-125`），窗口假死约 80s
+  （控制平面 IO 线程不受影响）；大资产 Debug 迭代建议日常用 RelWithDebInfo。
+
+**立项意向（下一个 feature 分支）**：dcl 仓结构与性能优化。候选方向：同通道 RGBA
+直接 memcpy、紧排 accessor 整块拷贝、去除 double 中间态、纹理延迟解码等，以量化数据为准。
+
+## 9. UI 重构立项意向（2026-08-18，单独 feature 分支）
+
+B2/B3 落地后的实机反馈（三角/Shadow/Sponza 目检）：
+
+1. **视觉**：单一灰蓝配色 + 原生控件观感简陋；缺设计令牌（色板/间距/圆角/字体层级），
+   按钮/输入/表格/滚动条样式未统一，信息密度与层次不清。
+2. **默认布局失衡**：左侧「帧控制/调试视图/帧计数」tab 组内容单薄却占约 1/3 屏宽，
+   数据密集面板（帧时曲线/RG 图/阶段耗时/控制台）反被压缩；默认布局应按
+   "控制窄栏 + 数据主区"重新配比，或评估响应式默认布局。
+
+**立项意向（单独 feature 分支）**：ui/ 视觉与布局整体重构——设计令牌 + 控件样式统一 +
+默认布局重排；dockview 布局缓存版本（现 v2）随重构再 bump。范围仅前端，协议/引擎零改动。

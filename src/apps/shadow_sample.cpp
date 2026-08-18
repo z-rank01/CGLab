@@ -113,6 +113,7 @@ int main(int argc, char** argv)
             {
                 std::unique_ptr<apps::lights_table> lights = std::make_unique<apps::lights_table>();
                 std::unique_ptr<apps::sun_light> sun = std::make_unique<apps::sun_light>();
+                engine::debug_view_status debug_status{}; // 每帧回报实际生效的 debug 视图（M8/B2）
                 bool plane_fit = false;
             };
             sample_persistent_state persistent;
@@ -148,13 +149,21 @@ int main(int argc, char** argv)
                 .required_startup_asset = asset_path.string(),
                 .update = [debug_mode, persistent = std::move(persistent_holder)](engine::runtime_services& services, float)
                 {
-                    if (debug_mode != apps::debug_view_mode::off)
+                    // debug 视图：web 覆盖（debug.set_view → override 通道，M8/B2）优先于 CLI
+                    const auto* override_state = services.channels.find_state<engine::debug_view_override>();
+                    const std::uint32_t view_mode = (override_state != nullptr && override_state->active)
+                                                        ? override_state->mode
+                                                        : static_cast<std::uint32_t>(debug_mode);
+                    if (view_mode != static_cast<std::uint32_t>(apps::debug_view_mode::off))
                     {
                         // owned 发布（每帧一个请求，机制防呆）
                         auto debug = std::make_unique<apps::debug_view_request>();
-                        debug->mode = static_cast<std::uint32_t>(debug_mode);
+                        debug->mode = view_mode;
                         services.channels.publish_state_owned<apps::debug_view_request>(std::move(debug));
                     }
+                    // 状态回报（持久成员裸指针，H1）：随 telemetry.frame 下发，UI 初值对齐 CLI
+                    persistent->debug_status.mode = view_mode;
+                    services.channels.publish_state<engine::debug_view_status>(&persistent->debug_status);
                     // 持久对象，非局部变量：裸指针发布，帧间零分配（H1）
                     services.channels.publish_state<apps::lights_table>(persistent->lights.get());
                     services.channels.publish_state<apps::sun_light>(persistent->sun.get());

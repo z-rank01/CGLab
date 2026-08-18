@@ -71,6 +71,9 @@ private:
     std::unique_ptr<control_plane::control_plane_server> control_plane;
     bool frame_paused = false;
     std::uint32_t pending_frame_steps = 0;
+    // debug.set_view 覆盖状态（M8/B2）：持久成员，每帧裸指针发布进帧通道（H1 口径），
+    // sample 侧翻译为 apps::debug_view_request。active=false 时 sample 回退 CLI。
+    engine::debug_view_override debug_override{};
 
     // --- scene system ---
     scene::scene_registry scene_registry;
@@ -100,7 +103,7 @@ private:
         std::uint64_t uploaded_bytes = 0;         // 进度：已上传 vertex+index 字节
         std::uint64_t total_bytes = 0;
         engine::load_report report;               // 完成时回填（worker 段 + 分片合计）
-        std::chrono::steady_clock::time_point upload_begin{};
+        std::chrono::steady_clock::time_point upload_begin;
     };
     struct frame_loads
     {
@@ -145,6 +148,7 @@ private:
         float telemetry_accumulator = 0.0F;
         float smoothed_frame_time = 1.0F / 60.0F;
         std::uint64_t last_published_scene_revision = 0;
+        std::uint64_t last_published_rg_revision = 0; // M8/B3：telemetry.rg 版本闸（graph_compiles）
     };
     frame_telemetry telemetry;
 
@@ -160,12 +164,13 @@ private:
     void handle_scene_command(const control_plane::engine_command& command);
     void publish_frame_telemetry();
     void publish_scene_telemetry_if_changed();
+    void publish_rg_telemetry_if_changed(); // M8/B3：recompile 时推送 RG 快照
     void publish_load_telemetry(const engine::load_report& report) const;
     [[nodiscard]] nlohmann::json current_camera_state() const;
     [[nodiscard]] nlohmann::json current_scene_state() const;
 
     // 异步加载管线
-    void enqueue_load(std::string path, std::string client_id, nlohmann::json rpc_id);
+    void enqueue_load(const std::string& path, std::string client_id, nlohmann::json rpc_id);
     void collect_completed_loads();
     void apply_completed_loads();
     // T1b/M7 分块流式上传：运行时资产按片上传（每帧一片），完成前不注册场景。
@@ -188,7 +193,7 @@ private:
         std::span<const engine::geometry_handle> mesh_handles,
         bool read_only,
         engine::load_report* report);
-    [[nodiscard]] std::vector<scene::object_id> merge_asset_database(engine::asset_database asset, bool read_only,
+    [[nodiscard]] std::vector<scene::object_id> merge_asset_database(const engine::asset_database& asset, bool read_only,
                                                                      engine::load_report* report = nullptr);
 
     // 帧阶段控制流：枚举代替布尔——stop 语义互斥（窗口关闭 / 错误），

@@ -25,8 +25,10 @@ namespace control_plane
     {
         bool enabled = true;
         std::uint16_t port = default_port;
-        bool open_browser = false; // 预留：当前无 HTTP 静态服务，暂为空操作
+        bool open_browser = false; // 启动成功后在系统浏览器打开 http://127.0.0.1:<port>/
         std::string server_name = "CGLab";
+        // HTTP 静态根目录（I1，dev console 托管；与 WS 同端口）。空 = 不托管（HTTP 一律 404）。
+        std::string web_root;
     };
 
     struct control_plane_statistics

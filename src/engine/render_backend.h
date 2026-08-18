@@ -32,6 +32,8 @@ namespace engine
         std::uint64_t steady_frame_descriptor_updates = 0;
         std::uint64_t pipeline_creations = 0;
         std::uint64_t indirect_groups = 0;
+        // M8/B3：图编译次数（RG recompile 计数），telemetry.rg 的版本闸数据源
+        std::uint64_t graph_compiles = 0;
     };
 
     struct camera_row
@@ -158,6 +160,8 @@ namespace engine
         result<bool> (*initialize)(void*, interface::window&, const backend_config&);
         result<resource_change_result> (*apply_resource_changes)(void*, resource_change_batch);
         frame_status (*render)(void*, const render_frame_packet&);
+        // M8/B3：当前已编译图的 debug dump（JSON 文本；未编译过为空段落）
+        result<std::string> (*graph_debug_dump)(void*);
         void (*request_resize)(void*) noexcept;
         void (*shutdown)(void*) noexcept;
         render_statistics (*statistics)(const void*) noexcept;
@@ -199,6 +203,7 @@ namespace engine
         [[nodiscard]] result<resource_change_result> apply_resource_changes(resource_change_batch batch)
         { return api->apply_resource_changes(state, batch); }
         [[nodiscard]] frame_status render(const render_frame_packet& packet) { return api->render(state, packet); }
+        [[nodiscard]] result<std::string> graph_debug_dump() { return api->graph_debug_dump(state); }
         void request_resize() noexcept { api->request_resize(state); }
         void shutdown() noexcept { if (state) api->shutdown(state); }
         [[nodiscard]] render_statistics statistics() const noexcept { return api->statistics(state); }

@@ -5,6 +5,7 @@ project(control_plane LANGUAGES CXX)
 add_library(control_plane STATIC
     json_rpc.h
     json_rpc.cpp
+    web_static.h
     control_plane_server.h
     control_plane_server.cpp
 )

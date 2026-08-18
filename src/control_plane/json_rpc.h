@@ -73,6 +73,8 @@ namespace control_plane
         scene_set_transform,  // scene.set_transform {id: uint, position?/rotation?/scale?: [x,y,z]}
         scene_select,         // scene.select {id: uint|null}
         scene_list,           // scene.list
+        debug_set_view,       // debug.set_view {view: "off"|"shadow"|"depth"|"hdr"|"resolved"}（M8/B2，转发 sample 通道）
+        rg_get_dump,          // rg.get_dump（M8/B3，回 {revision, dump}，同 telemetry.rg 负载）
     };
 
     struct engine_command
@@ -103,5 +105,11 @@ namespace control_plane
 
     // 连接建立时服务端主动推送的握手通知
     [[nodiscard]] nlohmann::json make_hello_notification(std::string_view server = default_server_name);
+
+    // --- 协议 schema（I1）---
+    // 从方法表/通知表生成协议 JSON Schema（方法与遥测负载的单一事实源）。
+    // docs/control_plane_protocol/control_plane_protocol.schema.json 是本函数 dump(2) 的逐字节输出，
+    // 由 control_plane_protocol_tests 的 golden 用例保证文档不漂移。
+    [[nodiscard]] nlohmann::json build_protocol_schema();
 
 } // namespace control_plane

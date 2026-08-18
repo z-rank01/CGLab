@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>CGLab Dev Console</title>
+<style>
+  :root { --bg:#16181d; --panel:#1e222a; --border:#2c313c; --fg:#d6dae2; --dim:#8a919e; --accent:#4fa3ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.5 "Segoe UI", system-ui, sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:8px 14px; background:var(--panel); border-bottom:1px solid var(--border); }
+  header h1 { font-size:14px; margin:0; font-weight:600; }
+  .dot { width:9px; height:9px; border-radius:50%; background:#555; }
+  .dot.on { background:#4caf50; } .dot.off { background:#e5533f; }
+  main { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px,1fr)); gap:10px; padding:10px; }
+  section { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:10px 12px; min-width:0; }
+  section h2 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); }
+  button { background:#2a303c; color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:3px 10px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--accent); }
+  input[type=text] { background:#12141a; border:1px solid var(--border); color:var(--fg); border-radius:4px; padding:3px 8px; font:inherit; width:70%; }
+  .row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:4px 0; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; }
+  .kv b { font-weight:500; color:var(--dim); white-space:nowrap; }
+  .kv span { font-variant-numeric:tabular-nums; }
+  .bar { height:5px; background:#2a303c; border-radius:2px; overflow:hidden; margin-top:2px; }
+  .bar i { display:block; height:100%; background:var(--accent); }
+  table { border-collapse:collapse; width:100%; }
+  th,td { text-align:left; padding:2px 6px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  th { color:var(--dim); font-weight:500; }
+  tr.sel { background:#26314a; }
+  tr:hover { background:#232936; cursor:pointer; }
+  #log { height:140px; overflow-y:auto; background:#12141a; border:1px solid var(--border); border-radius:4px; padding:6px 8px; font:11px/1.5 Consolas,monospace; white-space:pre-wrap; }
+  .muted { color:var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>CGLab Dev Console</h1>
+  <span id="server" class="muted">未连接</span>
+  <span style="flex:1"></span>
+  <span id="fps" style="font-size:15px"></span>
+</header>
+<main>
+  <section>
+    <h2>帧控制</h2>
+    <div class="row">
+      <button id="pause">Pause</button><button id="resume">Resume</button>
+      <button id="step">Step ×1</button><button id="step8">Step ×8</button>
+      <span id="paused" class="muted"></span>
+    </div>
+    <h2 style="margin-top:10px">分位数</h2>
+    <div class="kv" id="quantiles"></div>
+  </section>
+  <section>
+    <h2>帧计数</h2>
+    <div class="kv" id="counters"></div>
+  </section>
+  <section>
+    <h2>阶段耗时（p50 µs）</h2>
+    <div id="phases"></div>
+  </section>
+  <section>
+    <h2>相机</h2>
+    <div class="row">
+      <button id="mode_fly">Fly</button><button id="mode_orbit">Orbit</button>
+      <button id="cam_refresh">刷新状态</button>
+    </div>
+    <div class="kv" id="camera"></div>
+  </section>
+  <section style="grid-column:1/-1">
+    <h2>场景</h2>
+    <div class="row">
+      <input type="text" id="asset_path" placeholder="glTF/GLB 路径（引擎工作目录相对或绝对）">
+      <button id="load">加载资产</button>
+      <span id="load_progress" class="muted"></span>
+    </div>
+    <table id="objects">
+      <thead><tr><th>ID</th><th>名称</th><th>可见</th><th>只读</th><th>Draws</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+  <section style="grid-column:1/-1">
+    <h2>事件日志</h2>
+    <div id="log"></div>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const logEl = $("log"), dot = $("dot");
+let ws = null, rpcId = 0, selectedId = null;
+const pending = new Map();
+
+function log(msg) {
+  const line = document.createElement("div");
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
+  while (logEl.childElementCount > 200) logEl.firstChild.remove();
+}
+function call(method, params, onResult) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const id = ++rpcId;
+  pending.set(id, onResult || null);
+  ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params: params || {} }));
+}
+function notify(method, params) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ jsonrpc: "2.0", method, params: params || {} }));
+}
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss://" : "ws://";
+  ws = new WebSocket(proto + location.host);
+  ws.onopen = () => { dot.className = "dot on"; log("WebSocket 已连接"); };
+  ws.onclose = () => {
+    dot.className = "dot off"; $("server").textContent = "已断开，3s 后重连…";
+    setTimeout(connect, 3000);
+  };
+  ws.onerror = () => {};
+  ws.onmessage = ev => {
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.id !== undefined && msg.id !== null && pending.has(msg.id)) {
+      const cb = pending.get(msg.id); pending.delete(msg.id);
+      if (msg.error) log(`error ${msg.error.code}: ${msg.error.message}`);
+      else if (cb) cb(msg.result);
+      return;
+    }
+    if (msg.method === "session.hello") {
+      $("server").textContent = `${msg.params.server} (protocol v${msg.params.protocol_version})`;
+      call("session.init", { protocol_version: msg.params.protocol_version }, r =>
+        log(`session.init OK，capabilities ${r.capabilities.length} 项`));
+    } else if (msg.method === "telemetry.frame") onFrame(msg.params);
+    else if (msg.method === "telemetry.scene") onScene(msg.params);
+    else if (msg.method === "telemetry.load") log(`资产加载完成: ${msg.params.path} (load ${(msg.params.load_us/1000).toFixed(1)}ms)`);
+    else if (msg.method === "telemetry.load_progress") {
+      $("load_progress").textContent =
+        `上传中 ${msg.params.meshes.done}/${msg.params.meshes.total} meshes (${(msg.params.fraction*100).toFixed(0)}%)`;
+    }
+  };
+}
+
+const COUNTER_KEYS = ["instances","visible","culled","draws","shadow_draws","main_draws","debug_draws","resolve_draws","buffer_uploads","image_uploads"];
+function onFrame(t) {
+  $("fps").textContent = `${t.fps.toFixed(1)} fps · ${t.frame_time_ms.toFixed(2)} ms`;
+  $("paused").textContent = t.paused ? "已暂停" : "";
+  const q = t.quantiles || {};
+  $("quantiles").innerHTML =
+    `<b>p50</b><span>${(q.frame_p50_ms||0).toFixed(2)} ms</span>` +
+    `<b>p95</b><span>${(q.frame_p95_ms||0).toFixed(2)} ms</span>` +
+    `<b>p99</b><span>${(q.frame_p99_ms||0).toFixed(2)} ms</span>` +
+    `<b>validation</b><span>${t.validation_errors}</span>`;
+  const c = t.counters || {};
+  $("counters").innerHTML = COUNTER_KEYS.filter(k => k in c)
+    .map(k => `<b>${k}</b><span>${c[k]}</span>`).join("");
+  const ph = t.phase_us || {};
+  const max = Math.max(1, ...Object.values(ph));
+  $("phases").innerHTML = Object.entries(ph).map(([k, v]) =>
+    `<div class="row" style="margin:2px 0"><b class="muted" style="width:180px;overflow:hidden;text-overflow:ellipsis">${k}</b>` +
+    `<span style="width:64px;text-align:right">${v.toFixed(0)}</span>` +
+    `<div class="bar" style="flex:1"><i style="width:${(100*v/max).toFixed(1)}%"></i></div></div>`).join("");
+  const cam = t.camera || {};
+  $("camera").innerHTML =
+    `<b>mode</b><span>${cam.mode ?? "-"}</span>` +
+    `<b>position</b><span>${(cam.position||[]).map(v => (+v).toFixed(2)).join(", ")}</span>` +
+    `<b>yaw/pitch</b><span>${(cam.yaw??0).toFixed(1)} / ${(cam.pitch??0).toFixed(1)}</span>` +
+    `<b>fov</b><span>${(cam.fov??0).toFixed(1)}</span>` +
+    `<b>culling</b><span>${cam.culling ? "on" : "off"}</span>`;
+}
+
+function onScene(s) {
+  selectedId = s.selected;
+  const tbody = $("objects").querySelector("tbody");
+  tbody.innerHTML = "";
+  for (const o of s.objects) {
+    const tr = document.createElement("tr");
+    if (o.id === s.selected) tr.className = "sel";
+    const td = (txt) => { const d = document.createElement("td"); d.append(txt); return d; };
+    tr.append(td(o.id), td(o.name));
+    const vis = document.createElement("input");
+    vis.type = "checkbox"; vis.checked = o.visible;
+    vis.onclick = ev => { ev.stopPropagation();
+      call("scene.set_visibility", { id: o.id, visible: vis.checked }); };
+    const visTd = document.createElement("td"); visTd.append(vis);
+    tr.append(visTd, td(o.read_only ? "yes" : ""), td(o.draw_count));
+    tr.onclick = () => call("scene.select", { id: o.id === selectedId ? null : o.id });
+    tbody.append(tr);
+  }
+}
+
+$("pause").onclick = () => call("frame.pause");
+$("resume").onclick = () => call("frame.resume");
+$("step").onclick = () => call("frame.step", { count: 1 });
+$("step8").onclick = () => call("frame.step", { count: 8 });
+$("mode_fly").onclick = () => call("camera.set_mode", { mode: "fly" });
+$("mode_orbit").onclick = () => call("camera.set_mode", { mode: "orbit" });
+$("cam_refresh").onclick = () => call("camera.get_state", {}, r => log("camera.get_state: " + JSON.stringify(r)));
+$("load").onclick = () => {
+  const path = $("asset_path").value.trim();
+  if (path) call("scene.load_asset", { path }, r => log("load_asset: " + JSON.stringify(r)));
+};
+
+log("dev console 启动（I1）；WS 同源连接 " + location.host);
+connect();
+</script>
+</body>
+</html>

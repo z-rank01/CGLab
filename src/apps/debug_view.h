@@ -13,6 +13,6 @@ namespace apps
 {
     struct debug_view_request
     {
-        std::uint32_t mode = 0; // 0=off 1=shadow(原始深度) 2=depth(线性化热力图)
+        std::uint32_t mode = 0; // 0=off 1=shadow(原始深度) 2=depth(线性化热力图) 3=hdr 4=resolved（M6）
     };
 } // namespace apps

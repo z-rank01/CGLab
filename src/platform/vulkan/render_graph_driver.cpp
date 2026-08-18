@@ -78,6 +78,8 @@ namespace platform::vulkan
                 if (!result.error.empty()) std::cerr << "[RenderGraph] " << result.error << '\n';
                 return engine::frame_status::failed;
             },
+            .graph_debug_dump = [](void* value)
+            { return engine::result<std::string>{.value = driver(value).device.debug_dump()}; },
             .request_resize = [](void* value) noexcept { driver(value).device.request_resize(); },
             .shutdown = [](void* value) noexcept
             {
@@ -99,6 +101,7 @@ namespace platform::vulkan
                                                        state.steady_descriptor_baseline,
                     .pipeline_creations = stats.pipeline_creations,
                     .indirect_groups = stats.indirect_groups,
+                    .graph_compiles = stats.graph_compiles,
                 };
             },
             .validation_error_count = [](const void* value) noexcept

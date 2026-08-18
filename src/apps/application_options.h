@@ -11,7 +11,7 @@ namespace apps
 {
     // 调试视图模式（R4/M3 + M6/R5）：recipe 按模式追加 debug pass，把中间 RT
     // （阴影图/半分辨率 RT）渲染到屏幕角落 inset。off = 不加 pass（默认，零开销）。
-    enum class debug_view_mode : std::uint32_t
+    enum class debug_view_mode : std::uint8_t
     {
         off = 0,
         shadow = 1,  // 阴影图原始深度（近=白）
@@ -48,7 +48,7 @@ namespace apps
         debug_view_mode debug_view = debug_view_mode::off;
     };
 
-    enum class application_options_status
+    enum class application_options_status : std::uint8_t
     {
         success,
         help,
