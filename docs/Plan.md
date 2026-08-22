@@ -145,6 +145,7 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 | dcl-接口 | dcl 公共加载接口 + image_decode_executor 缝 | ✅ 2026-08-18：子仓 `7951f4e` + 主仓 `2dc686ca`（`dcl::load_asset` 扩展名分发 + `load_options`/`load_report` + 函数表缝；telemetry.load 三段计时接线；Sponza 73 URI 纹理启动加载 29.4s 与旧路径逐字节一致） |
 | dcl-并行解码 | job system 并行图像解码执行器 + asset_service 在途节流 | ✅ 2026-08-18：`99b6659a`（每图一任务入池；节流 ≤4 防嵌套提交全池堵死；Sponza 启动加载 29.4s→12.6s） |
 | dcl-转换层 | RGBA8 整块 memcpy + accessor 类型化整块展开 | ✅ 2026-08-18：子仓 `64ba4fe` + 主仓 `a74d4d13`（Sponza 启动加载 → Release 7.1–8.2s / Debug 13.6s，vs 初始 Release ~31s / Debug 76–82s） |
+| 合并门 | feature/infra-and-dcl 尖端复验（合并 main 前最后一道门） | ✅ 2026-08-22：尖端 `82aac31e`（RG `b63cbf3b` / dcl `324e43c7`，指针提交晚于此前各阶段回填，故单独复验）46/46 ctest（dcl/infra/RG/主仓全覆盖）+ 8 组 GPU smoke（`--validation`：Triangle/GltfSponza/Shadow/Culling 默认 + `--debug-view` shadow/depth/hdr/resolved）全绿 |
 | M9 | IBL | 待实施 |
 | M10 | CSM | 待实施 |
 
