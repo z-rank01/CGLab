@@ -5,7 +5,7 @@
 > `Architecture.md`（as-built 总纲 + 还债清单）、`PerformancePlan.md`（A 系列设计稿 + B/C 路线）、
 > `EngineLayerDoDPlan.md`（D/F 设计稿）、`RenderLayerPlan.md`（R 系列设计稿）、
 > `EngineRoadmapPlan.md`（M1–M10 动机与改动点细节）、`InterfaceRedesign.md`（I 系列 UI 路线）、
-> `InfrastructureDesign.md`（infra I0–I3）、RG 子仓 `docs/上传路径与大场景规划.md`（T 系列）。
+> `infra_and_dcl/InfrastructureDesign.md`（infra I0–I3，2026-08-18 起为 feature/infra-and-dcl 生效设计稿）、RG 子仓 `docs/上传路径与大场景规划.md`（T 系列）。
 
 ## 0. 定位与排序原则
 
@@ -88,7 +88,7 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 
 | 事项 | 触发条件 | 出处 |
 |---|---|---|
-| C1 job system（infra I0–I3：线程池 + MPMC + 任务图） | ~~M7 专用传输线程立项 / 第二个真实并发负载~~ ✅ 2026-08-18 触发成立：§8 dcl 纹理并行解码即"第二个真实并发负载"（InfrastructureDesign §2 首选候选族）；随 dcl 分支按 I0→I1 启动，I1 验收负载 = asset_service worker 迁移 | `InfrastructureDesign.md` §2/§3 |
+| C1 job system（infra I0–I3：线程池 + MPMC + 任务图） | ~~M7 专用传输线程立项 / 第二个真实并发负载~~ ✅ 2026-08-18 触发成立：§8 dcl 纹理并行解码即"第二个真实并发负载"（InfrastructureDesign §2 首选候选族）；I0/I1 已落地（`f3590553`/`ff55eb84`/`d844e4af`），I2 任务图随 RG 传输线程或第二个多阶段负载评审。2026-08-18 决策：Unity 式 safety system（并发别名检查）先不实现 | `infra_and_dcl/InfrastructureDesign.md` §2/§3 |
 | C2 primitive/draw 级与 GPU-driven 剔除 | M5 后 per-pass 遥测显示 CPU 仍是瓶颈 | `PerformancePlan.md` C2 |
 | C3 场景层级 `parent_index` + 变换传播（含 UI 层级显示） | 需要层级动画/场景树编辑时 | `PerformancePlan.md` C3 |
 | B4 单窗口 webview 壳（I4） | M8 的 B2 落地后评估 | `InterfaceRedesign.md` I4 |
@@ -140,6 +140,12 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 | M7 | T1b 分块流式上传 | ✅ 2026-08-16：`e5cad5c8`（子仓 docs `7c8aff0`；engine 逐帧分片 + A0 进度上报；91.2MB 12 片加载帧时间≈7ms 有界，资产生成脚本见 scripts/gen_stream_glb.ps1） |
 | M6 | R5 后处理链路 | ✅ 2026-08-16：`4a514b3c`（半分辨率 RT + resolve（ACES tonemap + vignette）+ `--debug-view` hdr/resolved + `resolve_draw_count` 遥测；42/42 ctest + 10 组 smoke + DamagedHelmet 屏幕捕获） |
 | M8 | B1→B3 控制平面 + RG 事件浏览器 | ✅ 2026-08-18：B1（`0e671a96`）+ B2（`da2f6d88`，ui/ 正式 Web UI + debug.set_view 交互切换）+ B3（`65a1adf8` + 子仓 `bec36d2`：debug_dump JSON 内省 + rg.get_dump/telemetry.rg 下发 + 手写 SVG DAG 面板；GPU timestamp 瀑布后置，见 §3） |
+| C1-I0 | infra benchmark 设施 | ✅ 2026-08-18：`f3590553`（src/infra 落地，cglab.infra_benchmark；基线：thread-per-task 165µs/task vs 队列 0.28–1.45µs/task，吞吐拐点 2 workers，数据见 `infra_and_dcl/InfrastructureDesign.md` §5） |
+| C1-I1 | 最小 job system + asset_service 迁移 | ✅ 2026-08-18：`ff55eb84` + `d844e4af`（固定池 + 有界队列 + CV + future + 主线程回调队列；验收：空任务 1.0–3.0µs<10µs、CPU 密集并行比 12.6%≤40%、46/46 ctest + 2 组 smoke；数据见 §5 同表） |
+| dcl-接口 | dcl 公共加载接口 + image_decode_executor 缝 | ✅ 2026-08-18：子仓 `7951f4e` + 主仓 `2dc686ca`（`dcl::load_asset` 扩展名分发 + `load_options`/`load_report` + 函数表缝；telemetry.load 三段计时接线；Sponza 73 URI 纹理启动加载 29.4s 与旧路径逐字节一致） |
+| dcl-并行解码 | job system 并行图像解码执行器 + asset_service 在途节流 | ✅ 2026-08-18：`99b6659a`（每图一任务入池；节流 ≤4 防嵌套提交全池堵死；Sponza 启动加载 29.4s→12.6s） |
+| dcl-转换层 | RGBA8 整块 memcpy + accessor 类型化整块展开 | ✅ 2026-08-18：子仓 `64ba4fe` + 主仓 `a74d4d13`（Sponza 启动加载 → Release 7.1–8.2s / Debug 13.6s，vs 初始 Release ~31s / Debug 76–82s） |
+| 合并门 | feature/infra-and-dcl 尖端复验（合并 main 前最后一道门） | ✅ 2026-08-22：尖端 `82aac31e`（RG `b63cbf3b` / dcl `324e43c7`，指针提交晚于此前各阶段回填，故单独复验）46/46 ctest（dcl/infra/RG/主仓全覆盖）+ 8 组 GPU smoke（`--validation`：Triangle/GltfSponza/Shadow/Culling 默认 + `--debug-view` shadow/depth/hdr/resolved）全绿 |
 | M9 | IBL | 待实施 |
 | M10 | CSM | 待实施 |
 
@@ -178,22 +184,29 @@ tinygltf 阶段的纹理解码（Release 下同为数十秒级，并非"正常"�
 
 **立项意向（下一个 feature 分支）**：dcl 仓结构与性能优化，按实测收益排序：
 
-1. **纹理解码管线**（80-90%）：73 张图天然独立——worker 内并行 stb decode（预期数倍）；
-   进一步做纹理延迟/异步解码（几何先行注册，配合 M7 流式口径，"可见"时间分钟级→秒级）；
+1. **纹理解码管线**（80-90%）：✅ 并行 stb decode 已落地（2026-08-18，`99b6659a`，
+   job system 注入 `image_decode_executor` 缝 + asset_service 在途节流 ≤4 防嵌套死锁，
+   Sponza 29.4s→12.6s）；后续：纹理延迟/异步解码（几何先行注册，配合 M7 流式口径）；
    资产侧建议离线压缩（KTX2/分级），2.6GB 属异常形态。
-2. **dcl RGBA 归一化**（8-17%）：4 通道直 memcpy、3→4 通道紧凑循环（去 lambda）。
-3. **dcl accessor double 中间态**（1-2%）：类型特化直读 + 紧排整块拷贝，顺手可改。
+2. **dcl RGBA 归一化**（8-17%）：✅ 已落地（子仓 `64ba4fe`，component==4 整块 memcpy）。
+3. **dcl accessor double 中间态**（1-2%）：✅ 已落地（子仓 `64ba4fe`，紧排常用类型
+   整块展开；double 接口未动）。
 4. **tinygltf 整体自写替换：评估结论为不做**。瓶颈在纹理解码而非 JSON/转换，自写解决
    错误的问题；兼容性长尾（sparse/Draco/meshopt/KTX2/data URI/扩展机制）全要自扛。
    可选折中：仅当"JSON 极大+纹理少"资产成为常态时，自写 JSON+accessor 聚焦层
    （保 `gltf_loader.h` 接口，tinygltf 作异态回退）。大资产优先 .glb。
-5. **dcl 公共加载接口**（2026-08-18 设计结论）：统一自由函数形态
-   `dcl::load_asset(path, options, report*) -> result<asset_database>` 按扩展名分发，
+5. **dcl 公共加载接口**（2026-08-18 设计结论；✅ 已落地：子仓 `7951f4e` + 主仓 `2dc686ca`）：
+   统一自由函数形态 `dcl::load_asset(path, options, report*) -> result<asset_database>` 按扩展名分发，
    各格式保同签名入口（`load_gltf`/`load_fbx`/`load_obj`）——不用虚接口类
    （loader 是无状态纯函数，vtable 无收益）；`load_options`/`load_report` 预留并行/延迟
    解码开关与三段计时装点（主仓 `load_report.parse/convert/decode_us` 数据源），
    接口一次定型不再变动；fbx 占位类（namespace fbx + PascalCase，风格发散）作废；
    主仓 `geometry_loader` 收敛为转调 dcl 分发。
+   **并行解码的归属**（同日修正）：管线所有权归 dcl（解析→解码→转换是 dcl 内部流程，
+   主仓不组合 dcl 阶段）；`load_options` 内定义 `image_decode_executor` 函数表缝，
+   主仓以组合根身份注入 job system 实现（对齐 render_driver 函数表 DI 惯例；
+   本缝即 §3"DI 风格统一"评审的实验田）。dcl 保持零依赖；infra 抽仓后 dcl 可自带
+   默认并行执行器。
 
 ## 9. UI 重构立项意向（2026-08-18，单独 feature 分支）
 

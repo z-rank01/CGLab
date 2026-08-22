@@ -17,6 +17,7 @@
 #include "engine/culling_manager.h"
 #include "engine/runtime_config.h"
 #include "engine/sample.h"
+#include "infra/job_system.h"
 #include "measure/frame_metrics.h"
 #include "scene/scene_registry.h"
 
@@ -118,6 +119,11 @@ private:
         std::optional<std::filesystem::path> required_startup_asset;
     };
     frame_loads loads;
+
+    // C1/I1：任务池（job_system）持有异步解析等 CPU 负载；声明在 loads 之后——
+    // 析构时池先于 asset_loader 停止，未 drain 的完成回调随池销毁（不触碰资产服务）。
+    // initialize() 时 emplace（单 worker 负载场景不提前占线程）。
+    std::optional<infra::job_system> jobs_;
 
     // --- 提取簇：packet 行表缓冲与剔除输入 ---
     struct frame_extract

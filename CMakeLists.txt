@@ -82,6 +82,7 @@ endif()
 
 add_subdirectory(src/utility)
 add_subdirectory(src/measure)
+add_subdirectory(src/infra)
 add_subdirectory(src/engine)
 add_subdirectory(src/_interface)
 add_subdirectory(src/control_plane)

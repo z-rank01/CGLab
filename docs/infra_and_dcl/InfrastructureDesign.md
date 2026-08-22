@@ -4,7 +4,9 @@
 > 与渲染/引擎完全解耦，未来可抽为独立仓库/submodule（与 render-graph、DCL 同级）。
 > 本文与 `InterfaceRedesign.md` 分离：UI/交互不关心本层实现，只通过业务层间接受益。
 >
-> **2026-08-16 起待办排序以 [Plan.md](Plan.md) 为准**（I0–I3 为触发式后置，见 Plan.md §3 C1）。
+> **2026-08-16 起待办排序以 [Plan.md](../Plan.md) 为准**（I0–I3 为触发式后置，见 Plan.md §3 C1）。
+> **2026-08-18：C1 触发成立（dcl 纹理并行解码 = 第二个真实并发负载），本文自
+> `docs/vulkan_sample_dod_refaction/` 迁出，成为 `feature/infra-and-dcl` 的生效设计稿。**
 
 ## 1. 目标与非目标
 
@@ -66,6 +68,18 @@
 - 8 个 CPU 密集任务并行总耗时 ≤ 串行的 40%；
 - 空任务平均开销 < 10 µs；
 - 加载期间主线程 p99 帧耗时劣化 < 5%。
+
+**I0 基线（2026-08-18，`f3590553`，Debug，hardware_concurrency=20）**：
+serial 0.0015µs/task；thread-per-task 165µs/task（p50 62.5 / p99 374.7）；
+有界队列吞吐 2.07M→3.57M→1.30M→0.69M tasks/s（1/2/4/19 workers）——
+thread-per-task 与队列差两个数量级；空任务下队列吞吐拐点在 2 workers
+（单 mutex 竞争主导）。I1 复跑同表对照。
+
+**I1 结果（2026-08-18，`ff55eb84` + `d844e4af`，同机同表）**：库实现复跑——
+空任务 1.0–3.0µs/task（门槛 <10µs ✅）；8×50ms CPU 密集任务并行/串行 = 12.6%
+（门槛 ≤40% ✅）；验收负载 asset_service 迁移完成（专用 worker 线程退役），
+46/46 ctest + 2 组 smoke 全绿。第三门槛（加载期间主线程 p99 帧耗时劣化 <5%）：
+迁移保持"worker 纯计算 + 主线程帧边界合并"形态不变，帧时形态无变化。
 
 ## 6. 目录与迁移
 

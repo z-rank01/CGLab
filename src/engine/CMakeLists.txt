@@ -34,6 +34,7 @@ target_include_directories(cglab_engine_runtime
 target_link_libraries(cglab_engine_runtime
     PUBLIC
         cglab_engine_core
+        infra
     PRIVATE
         cglab_asset_runtime
         control_plane
