@@ -57,6 +57,10 @@ int main(int argc, char** argv)
                     },
             };
             const auto frames = options.smoke_test ? std::optional<std::uint64_t>(options.frame_limit.value_or(3)) : options.frame_limit;
+            // A3-2：本样本原先漏设契约字段，"三字段缺省"又无声地等于"不校验"——
+            // 契约对它形同虚设。现在字段语义显式化并补齐：pipeline 恒 7（debug 管线
+            // 无条件创建）、raster pass 3（debug off；本样本未接 --debug-view）、
+            // 间接分组数由 driver 从 frame_plan 归约，不需要声明。
             return apps::application_setup_result{.request = apps::application_run_request{
                                                       .runtime     = std::move(config),
                                                       .sample      = {.name = "CullingSample", .required_startup_asset = asset_path.string()},
@@ -64,6 +68,8 @@ int main(int argc, char** argv)
                                                       .frame_limit = frames,
                                                       .require_validation_clean = options.validation,
                                                       .enforce_smoke_contract   = options.smoke_test,
+                                                      .expected_pipeline_creations = 7,
+                                                      .expected_raster_passes_per_frame = 3,
                                                       .culling_enabled          = true,
                                                   }};
         },

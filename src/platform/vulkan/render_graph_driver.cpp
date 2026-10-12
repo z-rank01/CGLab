@@ -16,9 +16,13 @@ namespace platform::vulkan
             render_recipe recipe;
             render_graph::render_device device;
             const engine::render_frame_packet* packet = nullptr;
+            const render_graph::frame_plan* plan = nullptr;
             uint64_t steady_descriptor_baseline = 0;
             bool render_started = false;
             bool shutdown = false;
+            // A3-2：末帧成功提交图的客观规模（缓存，不在 statistics() 调用点重算）
+            uint64_t last_frame_raster_passes = 0;
+            uint64_t last_frame_draw_groups = 0;
         };
 
         driver_state& driver(void* value) { return *static_cast<driver_state*>(value); }
@@ -29,7 +33,38 @@ namespace platform::vulkan
                                                        render_graph::frame_plan& plan)
         {
             auto& state = *static_cast<driver_state*>(value);
+            state.plan = &plan;
             return state.recipe.api->build_frame(state.recipe.state, state.device, *state.packet, environment, plan);
+        }
+
+        // A3-2：从**计划**（recipe 的声明，driver 归约）求末帧成功提交图的客观规模。
+        // 分组口径与后端记录口径一致：按各 pass 的 indexed_indirect_draws 切片累加，
+        // 只计 draw_count > 0 的行（vulkan_device.cpp 的 indirect_groups 同口径）；
+        // 不能拿 plan.indexed_indirect_draws.size() —— 它含不参与分组的命令区行。
+        void capture_plan_scale(driver_state& state)
+        {
+            if (state.plan == nullptr) return;
+            const render_graph::frame_plan& plan = *state.plan;
+            std::uint64_t raster_passes = 0;
+            std::uint64_t draw_groups = 0;
+            for (const render_graph::frame_pass_row& pass : plan.passes)
+            {
+                if (pass.kind != render_graph::pass_kind::raster) continue;
+                ++raster_passes;
+                const std::size_t begin = pass.indexed_indirect_draws.begin;
+                const std::size_t count = pass.indexed_indirect_draws.count;
+                if (begin > plan.indexed_indirect_draws.size() ||
+                    count > plan.indexed_indirect_draws.size() - begin)
+                {
+                    continue; // 越界由后端校验负责报错，这里不制造第二处失败点
+                }
+                for (const render_graph::draw_indexed_indirect_row& draw :
+                     plan.indexed_indirect_draws.subspan(begin, count))
+                    if (draw.draw_count != 0) ++draw_groups;
+            }
+            state.last_frame_raster_passes = raster_passes;
+            state.last_frame_draw_groups = draw_groups;
+            state.plan = nullptr;
         }
 
         const engine::render_driver_api driver_api{
@@ -73,9 +108,18 @@ namespace platform::vulkan
                     state.steady_descriptor_baseline = state.device.statistics().descriptor_updates;
                     state.render_started = true;
                 }
-                if (result.status == render_graph::frame_status::rendered) return engine::frame_status::rendered;
-                if (result.status == render_graph::frame_status::skipped) return engine::frame_status::skipped;
+                if (result.status == render_graph::frame_status::rendered)
+                {
+                    capture_plan_scale(state);
+                    return engine::frame_status::rendered;
+                }
+                if (result.status == render_graph::frame_status::skipped)
+                {
+                    state.plan = nullptr; // 未提交：规模不更新（statistics 里保留上一次成功帧）
+                    return engine::frame_status::skipped;
+                }
                 if (!result.error.empty()) std::cerr << "[RenderGraph] " << result.error << '\n';
+                state.plan = nullptr;
                 return engine::frame_status::failed;
             },
             .graph_debug_dump = [](void* value)
@@ -102,6 +146,9 @@ namespace platform::vulkan
                     .pipeline_creations = stats.pipeline_creations,
                     .indirect_groups = stats.indirect_groups,
                     .graph_compiles = stats.graph_compiles,
+                    // A3-2：末帧成功提交图的规模（driver 归约，供 smoke 契约独立交叉校验）
+                    .last_frame_raster_passes = state.last_frame_raster_passes,
+                    .last_frame_draw_groups = state.last_frame_draw_groups,
                 };
             },
             .validation_error_count = [](const void* value) noexcept

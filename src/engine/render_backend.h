@@ -34,6 +34,10 @@ namespace engine
         std::uint64_t indirect_groups = 0;
         // M8/B3：图编译次数（RG recompile 计数），telemetry.rg 的版本闸数据源
         std::uint64_t graph_compiles = 0;
+        // A3-2：末帧成功提交图的客观规模（driver 从 frame_plan 求得，recipe 不参与，
+        // 故可作为独立度量与"本帧实际记录的分组数"交叉校验）。fail/skip 帧不更新。
+        std::uint64_t last_frame_raster_passes = 0; // 计划内 raster pass 行数
+        std::uint64_t last_frame_draw_groups = 0;   // 计划内各 pass 的间接绘制分组数（draw_count > 0 的行）
     };
 
     struct camera_row

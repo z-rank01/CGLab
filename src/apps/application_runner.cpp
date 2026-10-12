@@ -58,11 +58,13 @@ namespace apps
                                                     statistics.presented_frames == 0;
                 if (!degraded_minimized_run &&
                     (!request.frame_limit || statistics.upload_pass_executions != 1 ||
-                     statistics.draw_pass_executions != *request.frame_limit * request.expected_draw_passes_per_frame ||
+                     statistics.draw_pass_executions != *request.frame_limit * statistics.last_frame_raster_passes ||
                      statistics.presented_frames != *request.frame_limit ||
                      statistics.steady_frame_descriptor_updates != 0 ||
                      statistics.pipeline_creations != request.expected_pipeline_creations ||
-                     statistics.indirect_groups != *request.frame_limit * request.expected_indirect_groups_per_frame))
+                     statistics.indirect_groups != *request.frame_limit * statistics.last_frame_draw_groups ||
+                     (request.expected_raster_passes_per_frame != 0 &&
+                      statistics.last_frame_raster_passes != request.expected_raster_passes_per_frame)))
                 {
                     Logger::LogError("GPU smoke counters did not match the requested frame contract: "
                                      "uploads=" + std::to_string(statistics.upload_pass_executions) +
@@ -71,9 +73,15 @@ namespace apps
                                      " steady_desc_updates=" + std::to_string(statistics.steady_frame_descriptor_updates) +
                                      " pipelines=" + std::to_string(statistics.pipeline_creations) +
                                      " indirect_groups=" + std::to_string(statistics.indirect_groups) +
-                                     " (expected " + std::to_string(request.expected_draw_passes_per_frame) +
-                                     "/" + std::to_string(request.expected_pipeline_creations) +
-                                     "/" + std::to_string(request.expected_indirect_groups_per_frame) + " per frame)");
+                                     " (expected draw_passes=" +
+                                     std::to_string(*request.frame_limit * statistics.last_frame_raster_passes) +
+                                     " pipelines=" + std::to_string(request.expected_pipeline_creations) +
+                                     " indirect_groups=" +
+                                     std::to_string(*request.frame_limit * statistics.last_frame_draw_groups) +
+                                     "; plan raster_passes=" + std::to_string(statistics.last_frame_raster_passes) +
+                                     " plan draw_groups_per_frame=" + std::to_string(statistics.last_frame_draw_groups) +
+                                     " declared raster_passes=" +
+                                     std::to_string(request.expected_raster_passes_per_frame) + ")");
                     return EXIT_FAILURE;
                 }
                 if (degraded_minimized_run)
@@ -87,8 +95,8 @@ namespace apps
                 // resolve pass（≥3 raster pass 的 recipe）恒画全屏 quad（1 条）；
                 // debug pass 仅在 debug 模式画 quad。
                 const auto& counters = runtime.last_frame_counters();
-                const std::uint64_t expected_debug_draws = request.expected_draw_passes_per_frame == 4 ? 1u : 0u;
-                const std::uint64_t expected_resolve_draws = request.expected_draw_passes_per_frame >= 3 ? 1u : 0u;
+                const std::uint64_t expected_debug_draws = request.expected_raster_passes_per_frame == 4 ? 1u : 0u;
+                const std::uint64_t expected_resolve_draws = request.expected_raster_passes_per_frame >= 3 ? 1u : 0u;
                 if (counters.main_draw_count + counters.resolve_draw_count + counters.debug_draw_count !=
                         counters.draw_commands ||
                     counters.shadow_draw_count > counters.main_draw_count ||
