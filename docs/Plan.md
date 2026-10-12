@@ -1,6 +1,6 @@
 # CGLab 统一计划单
 
-> 状态：**生效（2026-10-12 修订）**。本文是全部待办事项的**唯一排序口径**。
+> 状态：**生效（2026-10-12 修订，同日 A3-1/A3-2/I6 落地）**。本文是全部待办事项的**唯一排序口径**。
 > 本轮修订新增：§4 质量欠债（复验发现的 A3 两项缺陷）、§5 第一梯队、§6 第二梯队、
 > §7 待决策（计算机动画主线）、§10 复验记录。
 > 其余计划文档保留为设计依据与历史记录，不再单独维护顺序：
@@ -30,8 +30,8 @@
 | 4 | ~~**M7**~~ | T1b 分块流式上传（跨帧续传 + 进度经 A0 协议上报 + T0–T3 回退） | `EngineRoadmapPlan.md` §M7 + 子仓 `上传路径与大场景规划.md` §五.2/§六 | 1–3 s/GB 单事务挂帧是最大架构级瓶颈；M2（arena 池）已就绪 | — |
 | 5 | ~~**M6**~~ | R5 后处理链路（半分辨率 + tonemap + resolve；`--debug-view` 扩 hdr/resolved） | `EngineRoadmapPlan.md` §M6 | 画面完成度最高杠杆；R0b 的 per-pass area 已铺路 | — |
 | 6 | ~~**M8**~~ | B1→B3：控制平面收尾 + Web UI + RG 事件浏览器 | `EngineRoadmapPlan.md` §M8 + `InterfaceRedesign.md` I1–I3 | 消费 M5 遥测 + M3 调试状态；Frame Debugger 形态 | — |
-| 7 | **A3** | 帧边界健壮性：零 extent 帧 + smoke 契约脱硬编码 | 本文 §4 | 窗口最小化即杀进程（实测复现）；smoke 契约只在最小资产上校准、CullingSample 未生效 | 基建 |
-| 8 | **I6** | UI 视觉与布局重构（设计令牌 + 默认布局配比） | `InterfaceRedesign.md` §5 | 纯前端、零协议/引擎改动、验收直观；开发者速度项 | 基建 |
+| 7 | ~~**A3**~~ | 帧边界健壮性：零 extent 帧 + smoke 契约脱硬编码 | 本文 §4 | 窗口最小化即杀进程（实测复现）；smoke 契约只在最小资产上校准、CullingSample 未生效 | 基建 ✅ |
+| 8 | ~~**I6**~~ | UI 视觉与布局重构（设计令牌 + 默认布局配比） | `InterfaceRedesign.md` §5 | 纯前端、零协议/引擎改动、验收直观；开发者速度项 | 基建 ✅ |
 | 9 | **R6** | RG 后端能力：FP16 色彩格式 + compute 路径首验 | `RenderLayerPlan.md` §R6 | M9 的前置（枚举表当前无浮点格式，tonemap 实为 LDR 重映射）；compute 首次实机验证 | 实验 |
 | 10 | **M9** | IBL：环境贴图 + 预过滤 | `EngineRoadmapPlan.md` §M9 + `RenderLayerPlan.md` §M9 | 材质正确性；lights_table 的第一个真实消费者方向 | 实验 |
 | 11 | **M10** | CSM 分阶阴影 | `EngineRoadmapPlan.md` §M10 + `RenderLayerPlan.md` §M10 | 大场景阴影；依赖 M4/M5；**前置：解耦相机/光两路剔除（本文 §3 C3a 已提级）** | 实验 |
@@ -47,6 +47,7 @@
    主仓也有两处每帧临时 vector 与启动路径 8 处 `throw`。属"修复/还债"，排在小件能力之前。
 3. **2026-10-12 新增 A3 / I6 / R6**。复验发现两项健壮性缺陷（§4），按"修复优先"插到最前；
    UI 重构与 R6 属开发者速度与能力补齐，排在画面项（M9/M10）之前。
+   A3-1/A3-2/I6 于同日落地（§5 状态列与 §12），**执行序列序 9（R6）起为当前待办**。
 
 ## 2. H1 — 录制路径 DoD 还债
 
@@ -120,28 +121,28 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 
 | # | 症状 | 证据 | 根因 | 处置 |
 |---|---|---|---|---|
-| A3-1 | 窗口最小化 → 应用 exit 1 | 同一条 `TriangleSample --smoke-test --frames 60`：最小化窗口 = exit 1，正常窗口 = exit 0 | swapchain extent 归零后帧计划仍声明零尺寸 transient image → `vk_backend.h:196` 校验失败 → `frame_status::failed` 穿透 `application_runner.cpp:41-44` 变 `EXIT_FAILURE` | 零 extent 帧在 runtime 侧识别为"跳过提交 + 等待 resize"，失败不穿透应用层 |
-| A3-2 | smoke 契约只在最小资产上成立 | `expected_indirect_groups_per_frame = 3` 按 `assets/triangle.gltf` 校准，而 group 数 = pass 数 × arena 分段数（Sponza 实测 5）；`culling_sample.cpp:60-68` 未设三字段，契约对其空转 | 契约硬编码"每 pass 一组"，与实际分段耦合 | 期望值由 `build_frame` 实际发射行推导；三字段构造缺省即"不校验"的口径需显式化 |
+| A3-1 | 窗口最小化 → 应用 exit 1 | 同一条 `TriangleSample --smoke-test --frames 60`：最小化窗口 = exit 1，正常窗口 = exit 0 | **三段链（2026-10-12 实测修正，原登记不完整）**：① `SDL_GetWindowSize` 在最小化时仍返回最小化前的尺寸（Windows 实测 1280×720），`sdl_vulkan_surface_adapter.cpp` 的 `drawable_extent` 因此看不出异常；② `VkSurfaceCapabilitiesKHR.currentExtent` 此时为 0×0，且 `min/maxImageExtent` **同为 0**，`std::clamp(0, 0, 0)` 把非法值"合法化"→ 交换链被建成 0×0，extent 存为 {0,0}；③ 下一帧 `frame_environment.extent = {0,0,1}`，recipe 的 transient 图描述尺寸为 0 → `vk_backend.h:195` 校验失败 → `frame_status::failed` 穿透 `application_runner.cpp` 变 `EXIT_FAILURE` | 引擎侧识别"窗口不可呈现"降级为跳过（`window::is_minimized()` 事件驱动 + `submit_render_packet` 帧边界出口），子仓 `create_swapchain` 对 0 值兜底；有界帧数运行按上限收尾为**降级完成**而非空转，契约只在"零提交且确实发生过最小化跳过"时接受降级 |
+| A3-2 | smoke 契约只在最小资产上成立 | `expected_indirect_groups_per_frame = 3` 按 `assets/triangle.gltf` 校准，而分组数 = 各 pass 的 draw 行数（大资产实测 5）；`culling_sample.cpp:60-68` 未设三字段，契约对其空转 | 契约硬编码"每 pass 一组"，与实际（组 × arena 分段）耦合；"三字段缺省 = 不校验"无显式语义 | 期望值改由 driver 从 `frame_plan` 归约（`last_frame_raster_passes`/`last_frame_draw_groups`），与后端实测累计值**两路交叉校验**；`expected_indirect_groups_per_frame` 删除，`expected_draw_passes_per_frame` 更名 `expected_raster_passes_per_frame`；CullingSample 补齐字段 |
 
 **A3 执行序列**
 
-| 序 | 内容 | 落点 | 验收 | 归属 |
-|---|---|---|---|---|
-| A3-1 | 零 extent 帧跳过 + resize 等待 | `engine_runtime.cpp`（帧边界出口）、`render_graph_driver.cpp` | 新增单测覆盖零 extent 帧；最小化窗口 smoke 退出码 0 且帧计数不推进；常规 smoke 契约逐字不变 | 基建 |
-| A3-2 | smoke 契约去硬编码 | `application_runner.cpp`、四个 `*_sample.cpp` | 大资产（分段 >1）smoke 通过；CullingSample 补契约字段；契约失败信息仍打印实际计数 | 基建 |
+| 序 | 内容 | 落点 | 验收 | 归属 | 状态 |
+|---|---|---|---|---|---|
+| A3-1 | 零 extent 帧跳过 + 窗口最小化降级 | `window.h`/`sdl_window`、`engine_runtime`（帧边界出口）、子仓 `vk_runtime.cpp` | 最小化窗口 smoke 退出码 0 且帧计数不推进；常规 smoke 契约逐字不变；新增单测覆盖 | 基建 | ✅ `89398127` + 子仓 `740b625` |
+| A3-2 | smoke 契约去硬编码 | `render_backend.h`、`render_graph_driver.cpp`、`application_runner`、四个 `*_sample.cpp` | 多 mesh 资产 smoke 通过；CullingSample 补契约字段；反向验证（改动声明值）如期失败并打印计划规模 | 基建 | ✅ `4bb89d39` |
 
 ## 5. 第一梯队执行计划（2026-10-12 立项）
 
 排序原则不变（修复/还债优先），四项均独立提交、独立验收。
 
-| 序 | 阶段 | 内容 | 验收 | 归属 |
-|---|---|---|---|---|
-| 1 | **A3-1** | 零 extent 帧跳过 + resize 等待 | 最小化窗口 exit 0；常规 smoke 全绿 | 基建 |
-| 2 | **A3-2** | smoke 契约由实际发射行推导 | 大资产 smoke 通过；CullingSample 契约生效 | 基建 |
-| 3 | **I6** | UI 视觉与布局重构（详见 `InterfaceRedesign.md` §5） | 设计令牌统一；默认"控制窄栏 + 数据主区"；`--no-ui` 与协议零改动 | 基建 |
-| 4 | **R6** | FP16 色彩格式 + compute 路径首验（详见 `RenderLayerPlan.md` §R6） | 浮点 RT 端到端；compute dispatch 实机零 validation 错误；LDR 路径回归逐字节不变 | 实验 |
+| 序 | 阶段 | 内容 | 验收 | 归属 | 状态 |
+|---|---|---|---|---|---|
+| 1 | **A3-1** | 零 extent 帧跳过 + 窗口最小化降级 | 最小化窗口 exit 0；常规 smoke 全绿 | 基建 | ✅ `89398127` + 子仓 `740b625` |
+| 2 | **A3-2** | smoke 契约由实际发射行推导 | 多 mesh 资产 smoke 通过；CullingSample 契约生效 | 基建 | ✅ `4bb89d39` |
+| 3 | **I6** | UI 视觉与布局重构（详见 `InterfaceRedesign.md` §5） | 设计令牌统一；默认"控制窄栏 + 数据主区"；`--no-ui` 与协议零改动 | 基建 | ✅ `3906f7db` |
+| 4 | **R6** | FP16 色彩格式 + compute 路径首验（详见 `RenderLayerPlan.md` §R6） | 浮点 RT 端到端；compute dispatch 实机零 validation 错误；LDR 路径回归逐字节不变 | 实验 | 待实施 |
 
-依赖：R6 无前置；A3 与 I6 无依赖，可并行。R6-1（子仓能力）完成后才能开 M9。
+依赖：R6 无前置。R6-1（子仓能力）完成后才能开 M9。
 
 ## 6. 第二梯队执行计划（2026-10-12 立项）
 
@@ -180,8 +181,9 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 - **M2 多 arena GPU 实机路径**：>256MB 真实资产加载（现仅 benchmark 逻辑级覆盖 arena_count=3）。
 - **运行期 per-object draws 未接线**：场景树 "Draws" 列读注册期 `scene_object::draw_count`
   （`scene_registry.h:174` 恒传空 draws），handle 路径恒 0；随 Sponza 数据回填一并接线。
-- **大资产 smoke 未复验**：A3-2 完成后需用分段 >1 的资产（`scripts/gen_stream_glb.ps1` 产物）
-  跑一次 smoke，确认契约去硬编码后仍能守住不变式。
+- ~~**大资产 smoke 未复验**~~ ✅ 2026-10-12：A3-2 后用多 mesh 资产
+  （`scripts/gen_stream_glb.ps1` 产物的 100 mesh / 91.2MB `build/stream_test.glb`）
+  复验通过——契约去硬编码后仍守住不变式，且证明分组期望不再与资产规模耦合。
 
 ## 9. 推进纪律
 
@@ -189,10 +191,20 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
   `CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS=ON`，默认随 `BUILD_TESTING`，2026-08-16 已修正缓存）
   → 独立提交（子仓 `[refactor]`/`[feature]`，主仓 `[feature]`/`[refactor]`/`[test]`/`[docs]`）
   → 回填本文 ✅ + commit。
-- GPU smoke（Triangle/GltfSponza/Shadow/Culling 默认 + `--debug-view` shadow/depth 共 7 组，
-  `--validation`）在行为变化点复验；benchmark/measure 数据记录，以数据为准。
+- GPU smoke（Triangle/GltfSponza/Shadow/Culling 默认 + `--debug-view`
+  shadow/depth/hdr/resolved 共 8 组，`--validation`）在行为变化点复验；benchmark/measure
+  数据记录，以数据为准。
 - `ArchitectureContract.cmake` 与子仓 `BackendOwnershipContract`/`CoreLayoutContract` 全程绿；
   新风格规则先落契约检查再实施。
+
+**坑清单（2026-10-12 实测所得）**
+
+| # | 坑 |
+|---|---|
+| 1 | **`SDL_GetWindowSize` 在最小化时不归零**（Windows 上保持最小化前的尺寸），窗口尺寸**不能**作为"可否呈现"的判据。可信来源只有两个：`SDL_GetWindowFlags` 的 MINIMIZED 位，或 `vkGetPhysicalDeviceSurfaceCapabilitiesKHR` 的 `currentExtent`。 |
+| 2 | 同上状态下的 `minImageExtent`/`maxImageExtent` **也是 0**，`std::clamp(0, 0, 0)` 会把非法值"合法化"——对来自能力查询的尺寸做 clamp 前必须先有下限。 |
+| 3 | 复现窗口类缺陷可用 `Start-Process -WindowStyle Minimized`（无需人工最小化）；程序内构造用 `SDL_MinimizeWindow`（最小化前后 `SDL_GetWindowSize` 都不变）。 |
+| 4 | **改共享头后必须整体重建再测**：本轮 A3-2 期间出现"只重建目标子集 → 各 TU 对结构体布局认知不一致 → `render_statistics` 读到 `0xCCCC…` 未初始化栈内存"的假缺陷。判据是 ninja 的 `no work to do`，不是"我曾经编译过"。 |
 
 **文档纪律：归属口径**（2026-10-12 确立）
 
@@ -206,15 +218,21 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 落到文档：`实验` 项只写"机制用法（不实现）"小节（如 `RenderLayerPlan.md` §R6），
 不写行表设计、不写算法体、不给出实现步骤；设计决策留给作者。
 
-## 10. 复验记录（2026-10-12）
+## 10. 复验记录（2026-10-12，A3-1/A3-2/I6 落地后）
 
 | 项 | 结果 |
 |---|---|
-| Debug 构建 | ✅ 92/92 target |
-| Release 构建 | ✅ 92/92 target |
-| CTest | ✅ 46/46 通过（3.62s） |
-| GPU smoke ×4（--validation） | ✅ Triangle / GltfSponza / Shadow / Culling 全 exit 0，零 validation 错误 |
-| 控制平面 + Web UI | ✅ WS 监听 + HTTP 托管 `ui/dist` 正常 |
+| Debug 构建 | ✅ 全 target（含 4 个 sample + 全部 ctest 目标） |
+| Release 构建 | ✅ 全 target |
+| CTest | ✅ 46/46 通过（3.5s） |
+| 子仓 CTest | ✅ 26/26 通过（含 `resource_description_lowering` / 两个契约） |
+| GPU smoke ×4（`--validation`） | ✅ Triangle / GltfSponza / Shadow / Culling 全 exit 0，零 validation 错误 |
+| GPU smoke `--debug-view` ×4 | ✅ shadow / depth / hdr / resolved 全 exit 0 |
+| 最小化窗口（A3-1 回归） | ✅ `TriangleSample --smoke-test --frames 60` 最小化启动 exit 0，stderr 干净，Warning 记录跳过帧数 |
+| 多 mesh 资产 smoke（A3-2） | ✅ `GltfSponzaSample ... --asset build/stream_test.glb`（100 mesh / 91.2MB）exit 0 |
+| 契约反向验证（A3-2） | ✅ 把声明的 pass 数改成错误值 → exit 1 且打印 `plan raster_passes=3 … declared=5` |
+| 控制平面 + Web UI | ✅ WS 监听 + HTTP 托管 `ui/dist`（index.html + 560.9KB JS + 138.7KB CSS 全 200） |
+| UI 令牌贯通 | ✅ `ui/src` 内除 `styles.css`/`theme.ts` 外无颜色字面量；构建产物含全部 11 个面板 id 与 `layout.v3` |
 | 环境 | RTX 5060 Ti / Vulkan SDK 1.4.328.1 / MSVC 19.44 / Ninja |
 
 ## 11. 不做（当前范围外）
@@ -245,9 +263,10 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 | dcl-转换层 | RGBA8 整块 memcpy + accessor 类型化整块展开 | ✅ 2026-08-18：子仓 `64ba4fe` + 主仓 `a74d4d13`（Sponza 启动加载 → Release 7.1–8.2s / Debug 13.6s，vs 初始 Release ~31s / Debug 76–82s） |
 | 合并门 | feature/infra-and-dcl 尖端复验（合并 main 前最后一道门） | ✅ 2026-08-22：尖端 `82aac31e`（RG `b63cbf3b` / dcl `324e43c7`，指针提交晚于此前各阶段回填，故单独复验）46/46 ctest（dcl/infra/RG/主仓全覆盖）+ 8 组 GPU smoke（`--validation`：Triangle/GltfSponza/Shadow/Culling 默认 + `--debug-view` shadow/depth/hdr/resolved）全绿 |
 | 复验 | main 全量复验（构建 + ctest + smoke + UI）| ✅ 2026-10-12：见 §10；同时登记两项缺陷为 §4 A3 |
-| A3 | 帧边界健壮性（A3-1 零 extent 帧 / A3-2 smoke 契约脱硬编码） | 待实施（§5 序 1-2） |
-| I6 | UI 视觉与布局重构 | 待实施（§5 序 3） |
-| R6 | RG 后端能力：FP16 色彩格式 + compute 路径首验 | 待实施（§5 序 4） |
+| A3-1 | 零 extent 帧：窗口最小化不再杀进程（引擎降级跳过 + 子仓交换链 0 值兜底） | ✅ 2026-10-12：`89398127` + 子仓 `740b625`（最小化启动 smoke exit 0；单测新增最小化用例；46/46 ctest + 26/26 子仓 + 8 组 smoke） |
+| A3-2 | smoke 契约脱硬编码（driver 归约计划规模 + 后端实测交叉校验） | ✅ 2026-10-12：`4bb89d39`（多 mesh 资产 smoke 通过、反向验证有牙齿、CullingSample 契约生效） |
+| I6 | UI 视觉与布局重构（设计令牌 + `theme.ts` 取色口 + 控制窄栏默认布局） | ✅ 2026-10-12：`3906f7db`（令牌贯通 grep 干净；11 面板零回归；协议/golden 逐字节不变） |
+| R6 | RG 后端能力：FP16 色彩格式 + compute 路径首验 | 待实施（§5 序 4；机制用法见 `RenderLayerPlan.md` §R6） |
 | M9-1 | compute 真实负载：运行时 BRDF LUT | 待实施（§6） |
 | M9-2 | IBL 主链路：skybox + 预过滤 + irradiance | 待实施（§6） |
 | M10 | CSM | 待实施（§6） |
@@ -281,8 +300,9 @@ tinygltf 阶段的纹理解码（Release 下同为数十秒级，并非"正常"�
 - 场景树 "Draws" 列读注册期 `scene_object::draw_count`，handle 路径恒 0
   （`scene_registry.h:174` 恒传空 draws），Release 同；运行期 per-object draws 未接线，
   与 §8 Sponza 回填项一并处理。
-- smoke 契约 `expected_indirect_groups_per_frame=3`（`gltf_sponza_sample.cpp:69`）按小资产
-  "每 pass 一组"校准，Sponza 实测 5 组/帧——大资产跑 smoke 双配置都会失败，契约口径问题。
+- smoke 契约 ~~`expected_indirect_groups_per_frame=3`（`gltf_sponza_sample.cpp:69`）按小资产
+  "每 pass 一组"校准，Sponza 实测 5 组/帧——大资产跑 smoke 双配置都会失败，契约口径问题。~~
+  ✅ 2026-10-12 已修复（A3-2，`4bb89d39`，见 §4）：该字段删除，期望由计划归约。
 - 启动资产加载主线程空转等待（`engine_runtime.cpp:111-125`），窗口假死约 80s
   （控制平面 IO 线程不受影响）；大资产 Debug 迭代建议日常用 RelWithDebInfo。
 

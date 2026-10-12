@@ -60,7 +60,9 @@ acquire -> realize_resources -> record_batches -> submit -> present -> collect_r
 
 固定 bindless ABI 包含 sampled images、samplers、storage images、uniform buffers 和 storage buffers。slot 0 是默认资源；CPU handle 使用 index + generation。Vulkan 要求 runtime descriptor array、partially bound、update-after-bind 和 non-uniform indexing，不提供传统 descriptor fallback。
 
-**色彩格式现状（2026-10-12 核实）**：`format` 枚举只有 `R8G8B8A8_UNORM/SRGB`、`B8G8R8A8_UNORM/SRGB`、`D32_SFLOAT`，**无浮点色彩格式**——M6 的 tonemap 因此是 LDR 曲线重映射（半分辨率 RT 为 UNORM，输入已钳到 [0,1]）。FP16 与 compute 路径首验为 R6（[Plan.md](Plan.md) §5），是 IBL（M9）的前置。compute 的下降路径（`dispatch_row`/`compute_pipeline_desc`/storage 表）已就绪但主仓尚无真实使用；所有 pass 当前落在 graphics queue。
+**色彩格式现状（2026-10-12 核实，同日 A3 落地后仍成立）**：`format` 枚举只有 `R8G8B8A8_UNORM/SRGB`、`B8G8R8A8_UNORM/SRGB`、`D32_SFLOAT`，**无浮点色彩格式**——M6 的 tonemap 因此是 LDR 曲线重映射（半分辨率 RT 为 UNORM，输入已钳到 [0,1]）。FP16 与 compute 路径首验为 R6（[Plan.md](Plan.md) §5），是 IBL（M9）的前置；四个落地检查点（枚举序 / 双向 lowering / `optimalTilingFeatures` 线性滤波能力 / 契约测试）见 `RenderLayerPlan.md` §R6。compute 的下降路径（`dispatch_row`/`compute_pipeline_desc`/storage 表）已就绪但主仓尚无真实使用；所有 pass 当前落在 graphics queue。
+
+**帧边界"不可呈现"语义（2026-10-12，A3-1）**：窗口最小化时 `SDL_GetWindowSize` 仍返回最小化前的尺寸，而 `VkSurfaceCapabilitiesKHR.currentExtent` 与 `min/maxImageExtent` 同时归零——**窗口尺寸不可作为可否呈现的判据**。可信来源是 `SDL_GetWindowFlags` 的 MINIMIZED 位（经 `window::is_minimized()`，事件驱动）或 surface capabilities 的 `currentExtent`。引擎在 `submit_render_packet` 的帧边界出口把该状态降级为"跳过提交"（不推进帧计数、不置失败），有界帧数运行按 `runtime_config.max_skipped_minimized_frames` 收尾为**降级完成**；应用侧契约用 `skipped_minimized_frames` 区分降级完成与帧数缺口。
 
 Dynamic Rendering 保留，attachment format 进入 pipeline key。Triangle 与 glTF 分别拥有自己的 recipe；glTF recipe 按 opaque/mask、single/double-sided、blend 分组，透明行按相机距离排序，以 indexed indirect 批量录制。RG backend 不知道 shader 路径或 glTF/PBR 语义。稳定场景不会逐帧分配 descriptor，也不会因上传行数变化重新编译 graph。
 
@@ -118,7 +120,7 @@ probe 表等新组件表由 sample 侧发布、recipe 侧消费，engine 零改�
 - ~~`update_scene_transforms` 当前是空 phase：矩阵在 merge/extract 时解析，该 phase 名存实亡，应承担 dirty transform 批量重算或调整固定表语义。~~ ✅ 已修复（2026-08-14，D2）：脏行批量重算矩阵缓存（`refresh_matrices`），静态场景零矩阵数学，见 `EngineLayerDoDPlan.md`。
 - ~~`poll_events` 内有两处提前副作用（resize 直接 `request_resize`、拾取命中后即时发布遥测），应改为请求行并归并到 `publish_telemetry` 出口。~~ ✅ 已修复（2026-08-14，D2）：resize 请求在 submit 前边界执行、拾取请求在 telemetry 出口执行（pick 命中高亮延后一帧），见 `EngineLayerDoDPlan.md`。
 - DI 风格不统一：`render_driver` 为 opaque state + function table，`asset_service`/`window` 为虚接口。
-- 帧边界健壮性两处（2026-10-12 复验新发现，见 [Plan.md](Plan.md) §4）：零 extent 帧失败会穿透到应用层（窗口最小化即 exit 1）；smoke 契约的期望计数按最小资产硬编码（大资产必失败、CullingSample 未生效）。
+- 帧边界健壮性两处（2026-10-12 复验新发现，见 [Plan.md](Plan.md) §4）：~~零 extent 帧失败会穿透到应用层（窗口最小化即 exit 1）~~ ✅ 已修复（2026-10-12，A3-1，`89398127` + 子仓 `740b625`）：`window::is_minimized()`（事件驱动）在帧边界出口把"不可呈现"降级为跳过，子仓 `create_swapchain` 对 0 值能力兜底；有界帧数运行按上限收尾为降级完成，契约只在"零提交且确实发生过最小化跳过"时接受。~~smoke 契约的期望计数按最小资产硬编码（大资产必失败、CullingSample 未生效）~~ ✅ 已修复（2026-10-12，A3-2，`4bb89d39`）：期望规模由 driver 从 `frame_plan` 归约（`render_statistics.last_frame_*`），与后端累计值两路交叉校验。
 - ~~`scene_registry` 为胖 AoS 行（内含 `std::string`/`std::vector`）且 `find` 为 O(n) 线性扫描，可改为 id→slot 索引。~~ ✅ 已修复（2026-08-14，D1/D2）：id→slot 直接寻址 O(1) 查找 + active_slots 紧凑索引 + 热列直读（extract -97.8%），见 `EngineLayerDoDPlan.md`。
 - ~~runtime 合并加载结果时把共享 blob 切片回拷为每 primitive 一份的 `geometry_asset` vectors（SoA→AoS 回退点）。~~ ✅ 已修复（2026-08，A2）：`geometry_upload_row` 改为引用共享 blob 的批量行，整资产单事务零拷贝上传；`geometry_asset` AoS 已删除，见 [PerformancePlan.md](PerformancePlan.md)。
 - ~~RG compiler 丢失了最初设计的 pass culling（无 output 根 → 全部 pass/资源都参与调度与物理分配），持久资源经 `apply_resource_changes` 急切物化；`culling_compile` 等测试名为占位。偏差分析与实施方案见子仓 `docs/ArchitectureAndInternals.md` §13。~~ ✅ 已修复（2026-08-12）：pass culling 已恢复（§6.4），transient 惰性分配已生效，持久资源急切物化保持原样。
