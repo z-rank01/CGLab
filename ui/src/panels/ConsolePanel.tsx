@@ -12,15 +12,12 @@ export function ConsolePanel() {
   }, [logs]);
 
   return (
-    <div
-      className="panel"
-      style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
-    >
-      <div className="row" style={{ flex: 'none', margin: 0 }}>
+    <div className="panel col">
+      <div className="row row-flush row-none">
         <button onClick={clearLogs}>清空</button>
         <span className="muted">{logs.length} 条</span>
       </div>
-      <div className="log-box" ref={boxRef} style={{ flex: 1 }}>
+      <div className="log-box fill" ref={boxRef}>
         {logs.map((l, i) => (
           <div key={i}>{l}</div>
         ))}

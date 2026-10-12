@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useUiState } from '../store';
+import { initTheme, token } from '../theme';
 
 type Metric = 'fps' | 'frame_time_ms';
 
@@ -21,8 +22,9 @@ export function FrameGraphPanel() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.scale(dpr, dpr);
+    initTheme(); // 幂等；保证画布取色走令牌表
 
-    ctx.fillStyle = '#12141a';
+    ctx.fillStyle = token('--chart-bg');
     ctx.fillRect(0, 0, w, h);
 
     const pad = { l: 44, r: 8, t: 8, b: 18 };
@@ -45,8 +47,8 @@ export function FrameGraphPanel() {
     const y = (v: number) => pad.t + plotH - (v / max) * plotH;
 
     // 网格与纵轴刻度
-    ctx.strokeStyle = '#2c313c';
-    ctx.fillStyle = '#8a919e';
+    ctx.strokeStyle = token('--chart-grid');
+    ctx.fillStyle = token('--chart-axis');
     ctx.font = '10px Consolas, monospace';
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
@@ -64,19 +66,19 @@ export function FrameGraphPanel() {
     ctx.textAlign = 'left';
     for (const r of refs) {
       const yy = y(r.value);
-      ctx.strokeStyle = 'rgba(79, 163, 255, 0.35)';
+      ctx.strokeStyle = token('--chart-band');
       ctx.setLineDash([4, 3]);
       ctx.beginPath();
       ctx.moveTo(pad.l, yy);
       ctx.lineTo(w - pad.r, yy);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = 'rgba(79, 163, 255, 0.8)';
+      ctx.fillStyle = token('--chart-fill');
       ctx.fillText(`${r.label} ${r.value.toFixed(1)}`, pad.l + 4, yy - 6);
     }
 
     // 折线
-    ctx.strokeStyle = '#4fa3ff';
+    ctx.strokeStyle = token('--chart-line');
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     values.forEach((v, i) => {
@@ -88,8 +90,8 @@ export function FrameGraphPanel() {
 
   const latest = samples.length > 0 ? samples[samples.length - 1] : null;
   return (
-    <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
-      <div className="row" style={{ flex: 'none' }}>
+    <div className="panel col">
+      <div className="row row-flush row-none">
         <button
           className={metric === 'frame_time_ms' ? 'active' : ''}
           onClick={() => setMetric('frame_time_ms')}
@@ -110,7 +112,7 @@ export function FrameGraphPanel() {
             : '等待遥测…'}
         </span>
       </div>
-      <canvas ref={canvasRef} style={{ flex: 1, minHeight: 0, width: '100%' }} />
+      <canvas ref={canvasRef} className="fill" style={{ minHeight: 0, width: '100%' }} />
     </div>
   );
 }

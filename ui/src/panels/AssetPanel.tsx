@@ -16,7 +16,7 @@ export function AssetPanel() {
       <div className="row">
         <input
           type="text"
-          style={{ flex: 1, minWidth: 200 }}
+          className="grow-input"
           placeholder="glTF/GLB 路径（引擎工作目录相对或绝对）"
           value={path}
           onChange={(e) => setPath(e.target.value)}
@@ -31,7 +31,7 @@ export function AssetPanel() {
             上传中 {loadProgress.meshes.done}/{loadProgress.meshes.total} meshes (
             {(loadProgress.fraction * 100).toFixed(0)}%)
           </span>
-          <div className="bar" style={{ maxWidth: 240 }}>
+          <div className="bar bar-capped">
             <i style={{ width: `${(loadProgress.fraction * 100).toFixed(1)}%` }} />
           </div>
         </div>
@@ -75,7 +75,7 @@ export function AssetPanel() {
         </thead>
         <tbody>
           {(scene?.objects ?? []).map((o) => (
-            <tr key={o.id} style={{ cursor: 'default' }}>
+            <tr key={o.id} className="flat-row">
               <td>{o.id}</td>
               <td>{o.name}</td>
               <td>

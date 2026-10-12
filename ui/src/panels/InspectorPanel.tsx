@@ -65,19 +65,19 @@ export function InspectorPanel() {
         {ro ? '（只读）' : ''}
       </h3>
       <div className="row">
-        <b className="muted" style={{ width: 64 }}>
+        <b className="muted field-label-sm">
           position
         </b>
         <Vec3Input values={form.position} onChange={setField('position')} disabled={ro} />
       </div>
       <div className="row">
-        <b className="muted" style={{ width: 64 }}>
+        <b className="muted field-label-sm">
           rotation
         </b>
         <Vec3Input values={form.rotation} onChange={setField('rotation')} disabled={ro} />
       </div>
       <div className="row">
-        <b className="muted" style={{ width: 64 }}>
+        <b className="muted field-label-sm">
           scale
         </b>
         <Vec3Input values={form.scale} onChange={setField('scale')} disabled={ro} />

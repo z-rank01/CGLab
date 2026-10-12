@@ -28,7 +28,7 @@ export function CountersPanel() {
         </thead>
         <tbody>
           {COUNTER_KEYS.map((k) => (
-            <tr key={k} style={{ cursor: 'default' }}>
+            <tr key={k} className="flat-row">
               <td className="muted">{k}</td>
               <td>{c ? c[k] : '-'}</td>
             </tr>

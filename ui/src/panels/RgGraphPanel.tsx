@@ -3,19 +3,13 @@
 import { useMemo, useState } from 'react';
 import type { RgBarrier, RgDump } from '../protocol';
 import { useUiState } from '../store';
+import { initTheme, passKindColor, passKindLegend } from '../theme';
 
 const NODE_W = 132;
 const NODE_H = 40;
 const GAP_X = 56;
 const GAP_Y = 18;
 const PAD = 16;
-
-// pass 类型配色（raster/compute/copy），未知类型落回边框色
-const KIND_COLORS: Record<string, string> = {
-  raster: '#4fa3ff',
-  compute: '#4caf50',
-  copy: '#d39e43',
-};
 
 interface GraphLayout {
   x: number[];
@@ -79,6 +73,11 @@ export function RgGraphPanel() {
   const { rg } = useUiState();
   const [selected, setSelected] = useState<number | null>(null);
   const layout = useMemo(() => (rg ? layoutGraph(rg.dump) : null), [rg]);
+  // 令牌取色（I6）：色表只在 theme.ts 定义一次，图例与节点描边同源
+  const legend = useMemo(() => {
+    initTheme();
+    return passKindLegend();
+  }, []);
 
   if (!rg) return <div className="panel muted">等待 RG 遥测…</div>;
   const { dump, revision } = rg;
@@ -102,8 +101,8 @@ export function RgGraphPanel() {
           {(dump.statistics.culled_pass_count ?? 0) > 0 &&
             ` · 剔除 ${dump.statistics.culled_pass_count}`}
         </span>
-        <span style={{ flex: 1 }} />
-        {Object.entries(KIND_COLORS).map(([kind, color]) => (
+        <span className="fill" />
+        {legend.map(({ kind, color }) => (
           <span key={kind}>
             <i className="rg-chip" style={{ background: color }} /> {kind}
           </span>
@@ -138,7 +137,7 @@ export function RgGraphPanel() {
               ev.stopPropagation();
               setSelected(p.index === selected ? null : p.index);
             }}
-            style={{ cursor: 'pointer' }}
+            className="clickable"
           >
             <rect
               width={NODE_W}
@@ -146,7 +145,7 @@ export function RgGraphPanel() {
               rx={6}
               className="rg-node"
               style={{
-                stroke: KIND_COLORS[p.kind] ?? 'var(--border)',
+                stroke: passKindColor(p.kind),
                 strokeWidth: selected === p.index ? 2.5 : 1.5,
               }}
             />

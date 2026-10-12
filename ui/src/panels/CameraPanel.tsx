@@ -77,7 +77,7 @@ export function CameraPanel() {
         <>
           {PARAM_FIELDS.map((k) => (
             <div className="row" key={k}>
-              <b className="muted" style={{ width: 130, fontWeight: 400 }}>
+              <b className="muted field-label">
                 {k}
               </b>
               <input
@@ -99,7 +99,7 @@ export function CameraPanel() {
       <h3 className="section-title">书签</h3>
       <div className="row">
         {(cam?.bookmarks_valid ?? Array<boolean>(8).fill(false)).map((valid, i) => (
-          <span key={i} style={{ display: 'inline-flex', gap: 2 }}>
+          <span key={i} className="bookmark-slot">
             <button
               title={`跳转 slot ${i}${valid ? '' : '（空）'}`}
               disabled={!valid}

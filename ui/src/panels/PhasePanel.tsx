@@ -11,21 +11,11 @@ export function PhasePanel() {
     <div className="panel">
       <h3 className="section-title">阶段耗时（p50 µs）</h3>
       {entries.map(([k, v]) => (
-        <div className="row" key={k} style={{ margin: '2px 0' }}>
-          <b
-            className="muted"
-            style={{
-              width: 180,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              fontWeight: 400,
-              flex: 'none',
-            }}
-            title={k}
-          >
+        <div className="row phase-row" key={k}>
+          <b className="muted phase-name" title={k}>
             {k}
           </b>
-          <span style={{ width: 64, textAlign: 'right', flex: 'none' }}>{v.toFixed(0)}</span>
+          <span className="tick">{v.toFixed(0)}</span>
           <div className="bar">
             <i style={{ width: `${((100 * v) / max).toFixed(1)}%` }} />
           </div>
