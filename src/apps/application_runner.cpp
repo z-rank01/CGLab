@@ -50,12 +50,19 @@ namespace apps
             if (request.enforce_smoke_contract)
             {
                 const engine::render_statistics statistics = runtime.statistics();
-                if (!request.frame_limit || statistics.upload_pass_executions != 1 ||
-                    statistics.draw_pass_executions != *request.frame_limit * request.expected_draw_passes_per_frame ||
-                    statistics.presented_frames != *request.frame_limit ||
-                    statistics.steady_frame_descriptor_updates != 0 ||
-                    statistics.pipeline_creations != request.expected_pipeline_creations ||
-                    statistics.indirect_groups != *request.frame_limit * request.expected_indirect_groups_per_frame)
+                // A3-1：窗口最小化时引擎在帧边界出口跳过提交（不推进帧计数），
+                // 有界帧数运行因此可能"降级完成"——不满足帧数契约是预期的，
+                // 但不是静默放行：只允许"零提交且确实发生过最小化跳过"这一种形态，
+                // 其余任何帧数缺口仍然失败。
+                const bool degraded_minimized_run = runtime.skipped_minimized_frames() != 0 &&
+                                                    statistics.presented_frames == 0;
+                if (!degraded_minimized_run &&
+                    (!request.frame_limit || statistics.upload_pass_executions != 1 ||
+                     statistics.draw_pass_executions != *request.frame_limit * request.expected_draw_passes_per_frame ||
+                     statistics.presented_frames != *request.frame_limit ||
+                     statistics.steady_frame_descriptor_updates != 0 ||
+                     statistics.pipeline_creations != request.expected_pipeline_creations ||
+                     statistics.indirect_groups != *request.frame_limit * request.expected_indirect_groups_per_frame))
                 {
                     Logger::LogError("GPU smoke counters did not match the requested frame contract: "
                                      "uploads=" + std::to_string(statistics.upload_pass_executions) +
@@ -68,6 +75,11 @@ namespace apps
                                      "/" + std::to_string(request.expected_pipeline_creations) +
                                      "/" + std::to_string(request.expected_indirect_groups_per_frame) + " per frame)");
                     return EXIT_FAILURE;
+                }
+                if (degraded_minimized_run)
+                {
+                    // 降级完成：零提交，per-pass 契约无数据可校验，跳过。
+                    return EXIT_SUCCESS;
                 }
                 // R3/M5 per-pass draw 契约（末帧 frame_counters）：
                 // 主 pass = 全量 draw（resolve/debug quad 归属各自 pass）；

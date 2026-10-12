@@ -30,6 +30,9 @@ namespace interface
             return false;
         }
 
+        // A3-1：以创建时的实际状态初始化（可能以最小化状态启动）。
+        minimized_internal = (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) != 0;
+
         return true;
     }
 
@@ -91,6 +94,16 @@ namespace interface
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             destination.type = event_type::focus_lost;
             return true;
+        // A3-1：最小化状态是"本帧可否提交"的判据（尺寸在此状态下不可信）。
+        // 不进 input_event（引擎经 window::is_minimized() 查询），只更新成员。
+        case SDL_EVENT_WINDOW_MINIMIZED:
+            minimized_internal = true;
+            return false;
+        case SDL_EVENT_WINDOW_RESTORED:
+        case SDL_EVENT_WINDOW_MAXIMIZED:
+        case SDL_EVENT_WINDOW_SHOWN:
+            minimized_internal = false;
+            return false;
         case SDL_EVENT_KEY_DOWN:
             destination.type = event_type::key_down;
             destination.key.key = translate_key_code(source.key.key);

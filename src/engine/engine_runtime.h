@@ -44,6 +44,12 @@ public:
     {
         return telemetry.frame_counters;
     }
+    // A3-1：因窗口最小化而跳过的帧数（未提交、未推进帧计数）。上层契约用它区分
+    // "窗口不可见导致的降级完成"与"帧数契约未满足"。
+    [[nodiscard]] std::uint64_t skipped_minimized_frames() const noexcept
+    {
+        return telemetry.skipped_minimized_frames;
+    }
 
     void set_initial_geometry(engine::asset_database asset);
     void set_required_startup_asset(std::filesystem::path path);
@@ -155,6 +161,9 @@ private:
         float smoothed_frame_time = 1.0F / 60.0F;
         std::uint64_t last_published_scene_revision = 0;
         std::uint64_t last_published_rg_revision = 0; // M8/B3：telemetry.rg 版本闸（graph_compiles）
+        // A3-1：最小化导致的跳过帧累计（窗口不可呈现，提交被跳过）。
+        // frame_limit 存在时用它界定"永不结束的空转"，交互式运行不受限。
+        std::uint64_t skipped_minimized_frames = 0;
     };
     frame_telemetry telemetry;
 

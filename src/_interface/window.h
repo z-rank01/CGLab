@@ -54,6 +54,12 @@ namespace interface
         virtual void get_extent(int& width, int& height) const = 0;
 
         virtual float get_aspect_ratio() const = 0;
+
+        // 窗口是否已最小化（A3-1）。**这是"本帧能否呈现"的唯一可信窗口判据**：
+        // Windows 上最小化后 SDL_GetWindowSize 仍返回最小化前的尺寸，只有该状态
+        // 与 VkSurfaceCapabilities 的 currentExtent 会归零。默认实现返回 false，
+        // 无最小化概念的实现（测试替身、headless）零改动。
+        [[nodiscard]] virtual bool is_minimized() const { return false; }
     };
 
 } // namespace interface

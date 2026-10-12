@@ -1006,6 +1006,8 @@ void engine_runtime::publish_frame_telemetry()
                                                                 {"indirect_groups", stats.indirect_groups},
                                                                 {"validation_errors", validation_error_count()},
                                                                 {"paused", frame_paused},
+                                                                // A3-1：最小化导致的跳过帧累计（窗口不可呈现）
+                                                                {"skipped_minimized_frames", telemetry.skipped_minimized_frames},
                                                                 // M8/B2：sample 回报的实际生效 debug 视图（缺通道 = off）
                                                                 {"debug_view", debug_view_mode},
                                                                 {"camera", current_camera_state()},
@@ -1111,6 +1113,17 @@ bool engine_runtime::tick(std::optional<std::uint64_t> frame_limit)
         if (context.stop == frame_stop_reason::failure) return false;
         if (context.stop == frame_stop_reason::user_requested) return true;
         if (context.rendered && frame_limit && ++rendered_frames >= *frame_limit) return true;
+        // A3-1：窗口持续不可呈现时，有界帧数的运行不能无限空转（headless/CI 友好）。
+        // 这不是失败而是**降级完成**：用户把窗口最小化是正常操作，进程不该死。
+        // 帧数是否达成交给上层契约判断（application_runner 用 skipped_minimized_frames
+        // 区分"降级完成"与"帧数契约未满足"）。交互式运行无 frame_limit，语义不变。
+        if (frame_limit && telemetry.skipped_minimized_frames > config.max_skipped_minimized_frames)
+        {
+            Logger::LogWarning("Window stayed minimized for " + std::to_string(telemetry.skipped_minimized_frames) +
+                               " frames; stopping after " + std::to_string(rendered_frames) + " of " +
+                               std::to_string(*frame_limit) + " requested frames");
+            return true;
+        }
     }
     return true;
 }
@@ -1257,6 +1270,16 @@ void engine_runtime::submit_render_packet(frame_phase_context& context)
     {
         renderer->request_resize();
         resize_requests = 0;
+    }
+    // A3-1：最小化帧不提交。窗口尺寸在最小化时不可信（Windows 上 SDL_GetWindowSize
+    // 仍返回最小化前的尺寸），而交换链 extent 会归零 → 帧计划里的 transient 图描述
+    // 尺寸为 0 → 后端校验失败并穿透成 EXIT_FAILURE。这里在帧边界出口识别"不可呈现"，
+    // 降级为跳过（与暂停同路径：不推进帧计数、不置失败），恢复后自然继续。
+    if (window->is_minimized())
+    {
+        ++telemetry.skipped_minimized_frames;
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        return;
     }
     // render_this_frame 降为局部变量（是否暂停仅本阶段相关）
     bool render_this_frame = !frame_paused;

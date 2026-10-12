@@ -31,9 +31,14 @@ namespace interface
 
         float get_aspect_ratio() const override;
 
+        // A3-1：事件驱动的最小化状态（MINIMIZED → true，RESTORED/MAXIMIZED/SHOWN → false），
+        // 比每帧查 SDL_WindowFlags 更早生效——最小化事件在本帧 poll 内到达。
+        [[nodiscard]] bool is_minimized() const override { return minimized_internal; }
+
     private:
         SDL_Window* window = nullptr;
         bool should_close_internal  = false;
+        bool minimized_internal     = false;
 
         static key_code translate_key_code(SDL_Keycode key);
 

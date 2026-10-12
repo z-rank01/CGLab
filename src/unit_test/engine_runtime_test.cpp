@@ -20,7 +20,7 @@ namespace
 
 #define CHECK(expression) check((expression), #expression, __LINE__)
 
-    class fake_window final : public interface::window
+    class fake_window : public interface::window
     {
     public:
         bool open(const interface::window_config& requested) override
@@ -46,6 +46,14 @@ namespace
         bool closed = false;
         int width = 1;
         int height = 1;
+    };
+
+    // A3-1：只覆写最小化状态的最小化窗口（派生而非改基类——其余用例的
+    // render_calls/object_counts 断言保持逐字不变）。
+    class minimized_window final : public fake_window
+    {
+    public:
+        [[nodiscard]] bool is_minimized() const override { return true; }
     };
 
     struct backend_state
@@ -198,6 +206,23 @@ int main()
     CHECK(static_cast<bool>(failing.initialize()));
     CHECK(!failing.tick(1));
     failing.shutdown();
+
+    // A3-1：最小化窗口 —— 帧不提交（不碰后端、帧计数不推进），且无界帧数运行
+    // 不空转：跳过帧数超上限后以降级完成收尾（返回 true，不是失败）——把窗口
+    // 最小化当失败处理会让进程在正常操作下退出。契约层用 skipped_minimized_frames
+    // 区分降级完成与帧数缺口。容忍上限调小以免测试真的睡满默认的 ~2s（每帧 8ms）。
+    engine::runtime_config minimized_config = config;
+    minimized_config.max_skipped_minimized_frames = 2;
+    auto minimized_state = std::make_shared<backend_state>();
+    engine::engine_runtime minimized_runtime(
+        minimized_config,
+        make_fake_driver(minimized_state),
+        std::make_unique<minimized_window>());
+    CHECK(static_cast<bool>(minimized_runtime.initialize()));
+    CHECK(minimized_runtime.tick(3));                              // 降级完成，不是失败
+    CHECK(minimized_state->render_calls == 0);                     // 最小化期间零提交
+    CHECK(minimized_runtime.skipped_minimized_frames() == 3);      // 跳过帧可观测（契约用）
+    minimized_runtime.shutdown();
 
     auto boundary_backend_state = std::make_shared<backend_state>();
     auto boundary_asset_state = std::make_shared<asset_state>();
