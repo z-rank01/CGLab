@@ -1,11 +1,13 @@
 # 渲染层 R 系列计划：阴影 pass 与 render-graph 能力扩展
 
-> 状态：**R0a–R0c + R1a–R1e + R2 + R3 已实施完成（2026-08-16，提交见 §阶段记录）**。
+> 状态：**R0a–R0c + R1a–R1e + R2 + R3 + R5 已实施完成（2026-08-16，提交见 §阶段记录）；
+> R6 + M9 + M10 已立项待实施（2026-10-12）**。
 > 依据：`Architecture.md`（四层模型、还债清单、帧通道术语表）、
 > `EngineLayerDoDPlan.md`（D/F 系列推进纪律与文档风格）、render-graph 子仓
 > `docs/ArchitectureAndInternals.md`（pass 模型、同步两遍法）与 `docs/计划.md`。
 >
-> **2026-08-16 起待办排序以 [Plan.md](Plan.md) 为准**（R2/R3 由 Plan.md M4/M5 承接）；
+> **2026-08-16 起待办排序以 [Plan.md](Plan.md) 为准**（R2/R3 由 Plan.md M4/M5 承接；
+> R6/M9/M10 为 Plan.md §5/§6 第一、第二梯队）；
 > 本文保留 R 系列设计稿与阶段记录。
 >
 > 背景：引擎层 D/F 系列已收尾（帧通道插件化 + F3 lights_table 端到端验证），
@@ -258,6 +260,84 @@ frame_counters 加 per-pass draw 计数（measure 槽 6–15 空闲，协议不�
   （25.6 / 3156）、triangle 场景（11.9 / 3115）；hdr-vs-resolved inset 逐像素
   diff（mean 6.62 / max 109）确认 tonemap 生效。
 
+## R6 — RG 后端能力：FP16 色彩格式 + compute 路径首验（2026-10-12 立项）
+
+**动机**：`resource_types.h:17-26` 的 `format` 枚举当前只有 `R8G8B8A8_UNORM/SRGB`、`B8G8R8A8_UNORM/SRGB`、`D32_SFLOAT`——**无浮点色彩格式**，故 M6 的 tonemap 实为 LDR 曲线重映射（输入已被 UNORM 钳到 [0,1]，见 `EngineRoadmapPlan.md` §M6 记录）。FP16 是 M9 IBL 的硬前置。compute 同理：`dispatch_row`/`compute_pipeline_desc`/storage image+buffer bindless 表齐备，但主仓零 compute pass、零 dispatch。
+
+**子步骤（各自独立提交验收）**
+
+| 步 | 归属 | 内容 | 验收 |
+|---|---|---|---|
+| **R6-1** | 子仓 | `format` 增浮点色彩格式（至少 `R16G16B16A16_SFLOAT`）；`lower_vk_format` 映射；色彩附件/采样/blend 能力校验；资源 lowering 契约测试 | 子仓 ctest 全绿；`core_layout`/`backend_ownership` 契约绿 |
+| **R6-2** | 主仓 | compute 最小实机路径：一个 compute pass（storage buffer→storage buffer）经 `dispatch_row` 走通，验证 bindless storage 槽位、barrier 注入、dispatch 录制 | 双仓 ctest 全绿；dispatch 路径 `--validation` 零错误；稳态帧 descriptor updates 仍为 0；图形路径回归逐字节不变 |
+
+**落地后（主仓，随 M9 一并）**：半分辨率 RT 换 `R16G16B16A16_SFLOAT`，resolve 的 ACES 改真 HDR 输入（去 LDR 重映射）；`--debug-view hdr` 语义变为"tonemap 前 HDR"（需确认显示映射）。
+
+### 机制用法（不实现，仅接口事实与踩坑）
+
+**compute pass 接线**（`dispatch_row` 路径已通，主仓首次使用）：
+
+| 环节 | 事实 |
+|---|---|
+| pass 声明 | `frame_pass_row.kind = pass_kind::compute`；`dispatches` 指向 dispatch 行段；`area` 对 compute 无意义 |
+| 兼容矩阵 | compute pass **不得**带 `attachments`/`buffer_copies`/`indexed_indirect_draws`（`vulkan_device.cpp:885` 校验），只允许 `buffer_accesses`/`image_accesses` + `dispatches` |
+| 管线创建 | `compute_pipeline_create_row`，shader 行须 `stage == compute` 且 `binary_format == spirv`，否则 `vulkan_device.cpp:257` 直接报错 |
+| **barrier 自动注入** | 无需手写 barrier。声明正确的 `frame_buffer_access_row`（`usage = STORAGE_BUFFER`、`access = read/read_write`）即由编译器推导同步 |
+| bindless 绑定 | 录制时自动绑 set 0（compute bind point，`vk_scene_recorder.cpp:175`），**每 dispatch 零 descriptor 更新**——storage 表访问走 bindless，不需要按 dispatch 声明 descriptor |
+| 数据入口 | `buffer_upload_row{device_buffer_handle, offset, span<const std::byte>}`；以 `bindless_publish_row{table = storage_buffers}` 发布供 shader 索引 |
+
+**已知陷阱**
+
+| # | 陷阱 | 依据 |
+|---|---|---|
+| 1 | `x/y/z` 任一为 0 → 录制整体失败（不是跳过） | `vk_scene_recorder.cpp:151` |
+| 2 | push constant 切片越界 → 录制失败；offset/size 取 `frame_plan.push_constants` 的子区间 | `vk_scene_recorder.cpp:167-172`、`vulkan_device.cpp:1055-1063` |
+| 3 | **push constant 总预算**：Vulkan 只保证 `maxPushConstantsSize ≥ 128B`。当前 push blob = main + debug + resolve 三段之和（`gltf_render_recipe.cpp:196`），新增 compute 段前先查设备上限 | Vulkan 规范下限 |
+| 4 | compute 的 push range 起点为 0（只负责从 blob 选切片）；若扩到统一范围，**四个图形管线的 push range 必须同步扩大**——recorder 恒从 offset 0 推整个 range | `vk_scene_recorder.cpp:178`、M6 记录 |
+| 5 | `queue_availability{compute:false, copy:false}`：所有 pass 仍落 graphics queue（无独立 compute 队列，也无需） | `ArchitectureAndInternals.md:567` |
+
+**FP16 格式落地**（R6-1）：格式枚举 → `lower_vk_format` 映射 → 能力校验与调用点见下。
+
+| 环节 | 事实 |
+|---|---|
+| 能力查询路径 | `backend_capabilities` 是**标量布尔集合**，无 per-format 查询入口；唯一可扩展点是 backend 的 `validate_image_desc`（`vk_backend.h:191`，已是实例方法，内部查 `vkGetPhysicalDeviceFormatProperties`），调用方经 `resource_validation_api.validate_image` 消费 |
+| 线性滤波前提 | Vulkan 只**保证** FP16 支持 sampled image 与 color attachment；**线性滤波是可选**（`VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT`）。M9 预过滤 mip 采样需线性 → 必须查 `optimalTilingFeatures`（与既有 D32 检查同口径，`vk_backend.h:182-184`） |
+| 查询格式必须匹配 tiling | `optimalTilingFeatures` 与 `linearTilingFeatures` 不可混用，device-local 采样图走 optimal |
+
+---
+
+## M9 — IBL：环境贴图 + 预过滤（2026-10-12 补充实施拆分）
+
+> 动机与改动点见 `EngineRoadmapPlan.md` §M9。此处只定拆分与验收口径。
+
+| 步 | 内容 | 验收 |
+|---|---|---|
+| **M9-1** | compute 首个**真实负载**：运行时生成 BRDF LUT（256² 目标） | LUT 可采样；`--validation` 零错误；稳态帧零额外计算；加载期/启动期一次完成 |
+| **M9-2** | skybox + 预过滤 mip chain + irradiance + `gltf.frag` 接入 specular IBL | 金属材质反射环境（人工目检）；smoke 全绿；`sun_light` 阴影行为不变 |
+
+R6-2 是 M9-1 的**能力**前置（路径已验），M9-1 是**真实负载**验收——两步都做，不合并。
+
+---
+
+## M10 — CSM 分阶阴影（2026-10-12 补充设计）
+
+> 动机见 `EngineRoadmapPlan.md` §M10。
+
+**硬前置**：M5 的光视图剔除位于相机可见集上游——视锥外遮光体不投影，这在 CSM 下不可接受（分阶级联需覆盖相机视野外的投影者）。执行序列第一步即**解耦相机/光两路剔除**（Plan.md §3 C3a 已提级为第二梯队项）。
+
+**改动点**
+
+| 层 | 内容 |
+|---|---|
+| 剔除 | 光视图候选集不再取自相机可见集；相机剔除保持现状（`culling_manager` 单视图不变） |
+| recipe | 光正交盒按相机深度分阶收紧（3–4 阶）；shadow pass 逐阶绘制（RG 多 pass 或分层已可表达）；主 pass 按深度选阶采样 |
+| 遥测 | 每阶 draw 计数进 `frame_counters`（沿用 R3 的 per-pass 口径，measure 槽扩展） |
+| 资产 | `sun_light.ortho_box` 单值 → 分阶列（保留单阶回退语义） |
+
+**验收**：大场景近远影清晰度对比目检（damaged helmet 贴地/大平面）；smoke 契约同步；每阶 draw 计数可见。
+
+**不做**：PCSS 软阴影、透明物投影（沿用本文件 §不做）。
+
 ## 推进纪律
 
 - 每阶段：实现 → 构建（vcvars64 环境）→ 子仓 ctest / 主仓 cglab ctest 全绿 →
@@ -268,13 +348,15 @@ frame_counters 加 per-pass draw 计数（measure 槽 6–15 空闲，协议不�
 
 ## 不做（本轮范围外）
 
-- cascaded shadow map（CSM 分阶投影后续再说）、PCSS/软阴影。
+> **2026-10-12 修订**：CSM（M10）与 IBL（M9）已移出本清单，立项为 Plan.md §6 第二梯队。
+
+- PCSS/软阴影。
 - 透明物投影（shadow pass 只画不透明两组；透明物不投影是常见简化）。
 - reversed-Z（**2026-08-16 M4 评审结论：不做**。阴影图是正交投影，深度线性、
   D32 精度充足；主 pass 当前无 z-fighting 症状。若 M10 CSM 近阶小视锥或大场景
-  实机数据（Plan.md §4 欠债）出现精度问题再评估——届时翻转需同步改 depth
+  实机数据（Plan.md §8 欠债）出现精度问题再评估——届时翻转需同步改 depth
   clear/比较方向、采样器比较方向与 bias 符号，并重审 `0ef2da49` 的深度约定）。
-- compare sampler（R2）、transient→bindless 槽位协议（缺口 D）、GI、IBL。
+- transient→bindless 槽位协议（缺口 D）、GI 本体、deferred/G-Buffer。
 - 大场景上传路径 / job system / DI 风格统一：维持各自触发条款，不在本轮。
 
 ## 阶段与提交记录
@@ -293,3 +375,8 @@ frame_counters 加 per-pass draw 计数（measure 槽 6–15 空闲，协议不�
 | R2 | compare sampler + 硬件 PCF（✅ 2026-08-16：子仓 `6cf61c5`（sampler_desc.compare_op + 三后端契约）；主仓 `0f1348ec`（comparison sampler + dref 硬件 PCF + debug raw sampler）；42/42 ctest + 7 组 GPU smoke 全过；reversed-Z 评审结论=不做） | ✅ 2026-08-16：子仓 `6cf61c5`、主仓 `0f1348ec` |
 | R3 | 阴影视锥剔除 + per-pass 遥测（✅ 2026-08-16：recipe 侧光视图剔除（光视锥 × 世界 AABB 掩码）+ 独立阴影命令区 + `frame_counters` per-pass draw 计数（measure 槽 6–8）+ smoke per-pass 不变式；`transform_aabb` 进 `_interface/culling.h`；42/42 ctest + 7 组 smoke 全过 + two_triangles 资产端到端验证（shadow 2 / main 3）+ DamagedHelmet 实机目检） | ✅ 2026-08-16：`a74ca942` |
 | R5 | 半分辨率后处理链路（✅ 2026-08-16：半分辨率 persistent RT（随 extent 重建 + retire 延迟销毁）+ 主 pass 半分辨率 + resolve pass（ACES tonemap + vignette）+ `--debug-view` 扩 hdr/resolved + `resolve_draw_count` 遥测（槽 9）+ 统一 push blob 三段切片 + steady 基线首帧后捕获；42/42 ctest + 10 组 smoke 全过 + DamagedHelmet 屏幕捕获（CopyFromScreen，PrintWindow 对 Vulkan 交换链不可靠）） | ✅ 2026-08-16：`4a514b3c` |
+| R6-1 | FP16 色彩格式（子仓） | 待实施（Plan.md §5 序 4） |
+| R6-2 | compute 路径首验（主仓） | 待实施（Plan.md §5 序 4） |
+| M9-1 | compute 真实负载：运行时 BRDF LUT | 待实施（Plan.md §6 序 1） |
+| M9-2 | IBL 主链路：skybox + 预过滤 + irradiance | 待实施（Plan.md §6 序 1） |
+| M10 | CSM 分阶阴影 | 待实施（Plan.md §6 序 2，前置 C3a） |

@@ -85,7 +85,9 @@ Copy-Item CMakeUserPresets.json.example CMakeUserPresets.json
 
 ## 架构文档
 
-当前所有权边界见 [Render Graph 与 Vulkan Backend](docs/RenderGraphAndRHI.md)。整体模块划分见 [Architecture](docs/Architecture.md) 和 [Application Runtime](docs/ApplicationRuntime.md)。
+当前所有权边界见 [Render Graph 与 Vulkan Backend](docs/vulkan_sample_dod_refaction/RenderGraphAndRHI.md)。整体模块划分见 [Architecture](docs/vulkan_sample_dod_refaction/Architecture.md) 和 [Application Runtime](docs/vulkan_sample_dod_refaction/ApplicationRuntime.md)。
+
+待办排序与当前执行序列（第一/第二梯队）见 [统一计划单](docs/Plan.md)。
 
 ## CGLab
 

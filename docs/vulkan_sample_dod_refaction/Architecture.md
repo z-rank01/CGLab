@@ -41,7 +41,7 @@ publish_telemetry
 
 phase 顺序显式固定。worker 只写私有值类型结果，主线程在帧边界合并；load、unload、resize、pause/step 都转换为 request rows。关闭流程可重复执行。
 
-CPU Asset Database 行表模型（node/parent/local transform、mesh、primitive、material、image、sampler 行和共享 vertex/index blobs）由子仓库 `third_party/digital-content-loader`（DCL）的 `dcl::core` 定义，格式无关，glTF 与未来的 FBX/OBJ loader 共用同一输出；glTF 加载实现（`dcl::gltf`）也在 DCL 内，主仓 `cglab_asset_gltf` 只做 DCL 结果到 Engine 契约的薄映射，Engine 公共头通过 `using` 别名复用 DCL 行类型而不引入 glTF 类型。节点变换不烘焙进顶点，同一 mesh 可由多个 node 实例化。当前支持 Core 2.0 静态 metallic-roughness PBR；动画、蒙皮、morph、KHR 材质扩展和 IBL 不在当前范围。
+CPU Asset Database 行表模型（node/parent/local transform、mesh、primitive、material、image、sampler 行和共享 vertex/index blobs）由子仓库 `third_party/digital-content-loader`（DCL）的 `dcl::core` 定义，格式无关，glTF 与未来的 FBX/OBJ loader 共用同一输出；glTF 加载实现（`dcl::gltf`）也在 DCL 内，主仓 `cglab_asset_gltf` 只做 DCL 结果到 Engine 契约的薄映射，Engine 公共头通过 `using` 别名复用 DCL 行类型而不引入 glTF 类型。节点变换不烘焙进顶点，同一 mesh 可由多个 node 实例化。当前支持 Core 2.0 静态 metallic-roughness PBR；动画、蒙皮、morph、KHR 材质扩展和 IBL 不在当前范围（动画立项待决，见 [Plan.md](Plan.md) §7）。
 
 ## Render Graph 与 Vulkan
 
@@ -59,6 +59,8 @@ acquire -> realize_resources -> record_batches -> submit -> present -> collect_r
 持久几何、材质、纹理和 frame tables 由 RG 创建。upload arena 采用大 buffer 子分配和 free-span 复用；vertex/index 也使用大 device-local arena 的 slice，而非每个 primitive 一个 VkBuffer。staging slice 和 bindless slot 都在 completed submission gate 后复用。
 
 固定 bindless ABI 包含 sampled images、samplers、storage images、uniform buffers 和 storage buffers。slot 0 是默认资源；CPU handle 使用 index + generation。Vulkan 要求 runtime descriptor array、partially bound、update-after-bind 和 non-uniform indexing，不提供传统 descriptor fallback。
+
+**色彩格式现状（2026-10-12 核实）**：`format` 枚举只有 `R8G8B8A8_UNORM/SRGB`、`B8G8R8A8_UNORM/SRGB`、`D32_SFLOAT`，**无浮点色彩格式**——M6 的 tonemap 因此是 LDR 曲线重映射（半分辨率 RT 为 UNORM，输入已钳到 [0,1]）。FP16 与 compute 路径首验为 R6（[Plan.md](Plan.md) §5），是 IBL（M9）的前置。compute 的下降路径（`dispatch_row`/`compute_pipeline_desc`/storage 表）已就绪但主仓尚无真实使用；所有 pass 当前落在 graphics queue。
 
 Dynamic Rendering 保留，attachment format 进入 pipeline key。Triangle 与 glTF 分别拥有自己的 recipe；glTF recipe 按 opaque/mask、single/double-sided、blend 分组，透明行按相机距离排序，以 indexed indirect 批量录制。RG backend 不知道 shader 路径或 glTF/PBR 语义。稳定场景不会逐帧分配 descriptor，也不会因上传行数变化重新编译 graph。
 
@@ -116,6 +118,7 @@ probe 表等新组件表由 sample 侧发布、recipe 侧消费，engine 零改�
 - ~~`update_scene_transforms` 当前是空 phase：矩阵在 merge/extract 时解析，该 phase 名存实亡，应承担 dirty transform 批量重算或调整固定表语义。~~ ✅ 已修复（2026-08-14，D2）：脏行批量重算矩阵缓存（`refresh_matrices`），静态场景零矩阵数学，见 `EngineLayerDoDPlan.md`。
 - ~~`poll_events` 内有两处提前副作用（resize 直接 `request_resize`、拾取命中后即时发布遥测），应改为请求行并归并到 `publish_telemetry` 出口。~~ ✅ 已修复（2026-08-14，D2）：resize 请求在 submit 前边界执行、拾取请求在 telemetry 出口执行（pick 命中高亮延后一帧），见 `EngineLayerDoDPlan.md`。
 - DI 风格不统一：`render_driver` 为 opaque state + function table，`asset_service`/`window` 为虚接口。
+- 帧边界健壮性两处（2026-10-12 复验新发现，见 [Plan.md](Plan.md) §4）：零 extent 帧失败会穿透到应用层（窗口最小化即 exit 1）；smoke 契约的期望计数按最小资产硬编码（大资产必失败、CullingSample 未生效）。
 - ~~`scene_registry` 为胖 AoS 行（内含 `std::string`/`std::vector`）且 `find` 为 O(n) 线性扫描，可改为 id→slot 索引。~~ ✅ 已修复（2026-08-14，D1/D2）：id→slot 直接寻址 O(1) 查找 + active_slots 紧凑索引 + 热列直读（extract -97.8%），见 `EngineLayerDoDPlan.md`。
 - ~~runtime 合并加载结果时把共享 blob 切片回拷为每 primitive 一份的 `geometry_asset` vectors（SoA→AoS 回退点）。~~ ✅ 已修复（2026-08，A2）：`geometry_upload_row` 改为引用共享 blob 的批量行，整资产单事务零拷贝上传；`geometry_asset` AoS 已删除，见 [PerformancePlan.md](PerformancePlan.md)。
 - ~~RG compiler 丢失了最初设计的 pass culling（无 output 根 → 全部 pass/资源都参与调度与物理分配），持久资源经 `apply_resource_changes` 急切物化；`culling_compile` 等测试名为占位。偏差分析与实施方案见子仓 `docs/ArchitectureAndInternals.md` §13。~~ ✅ 已修复（2026-08-12）：pass culling 已恢复（§6.4），transient 惰性分配已生效，持久资源急切物化保持原样。

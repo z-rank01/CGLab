@@ -5,7 +5,8 @@
 > v1 的方案搜罗（§3 选型分析）、协议与线程模型（§4）、单窗口路线（§4.5/4.6）、健壮性清单（§6）
 > 结论全部沿用且已被实现验证，本文不再重复论证，只保留结论与偏差记录。
 >
-> **2026-08-16 起待办排序以 [Plan.md](Plan.md) 为准**（I1–I3 由 Plan.md M8 承接，I4/I5 触发式后置）；
+> **2026-08-16 起待办排序以 [Plan.md](Plan.md) 为准**（I1–I3 由 Plan.md M8 承接；I4/I5 触发式后置；
+> **U1 UI 重构为 Plan.md §5 第一梯队序 3，见本文 §5**）；
 > 本文保留协议与 UI 路线的设计细节。
 
 ## 1. 已落地（as-built）
@@ -40,9 +41,11 @@
 | **I2 正式 Web UI v1（✅ 2026-08-18，`da2f6d88`）** | `ui/`（Vite+React+TS）：dock 布局（dockview）、场景树/检视器/相机/帧控制/资产加载/console 面板，布局 localStorage 持久化 | 浏览器打开即完整覆盖 dev console 全部能力；UI 关掉引擎无恙 |
 | **I3 RG 可视化（🔶 2026-08-18 主体落地）** | ✅ `debug_dump()` JSON 化（passes/edges/barriers/aliases/resources/statistics）经控制平面下发（`rg.get_dump` 拉 + `telemetry.rg` 推，recompile 自动更新）；DAG 以手写 SVG 落地（代 React Flow，零新依赖）。⏳ 遗留：pass timestamp 时序瀑布（GPU 计时，触发式后置） | recompile 后图自动更新 ✅；能定位最慢 pass（待 GPU timestamp） |
 | **I4 单窗口 B1** | webview 壳（saucer/CEF/Ultralight 选型 spike 先行）+ SDL 视口 HWND 子区域嵌入；焦点规则：进视口归引擎、出视口归 UI | 单窗口编辑器外观；画面零拷贝零延迟；`--no-ui`/浏览器模式仍可用 |
+| **U1 视觉与布局重构（🔷 2026-10-12 立项）** | 设计令牌 + 控件样式统一 + 默认布局重配；详见 §5 | 令牌贯通、控件风格一致、默认"控制窄栏 + 数据主区" |
 | **I5 按需备选** | B2（UI 纹理 → RG overlay pass + 输入转发）；gizmo 与拾取高亮；截图/倍速；输入 mapping JSON 化 | 以 I4 体验与授权/体积评估为准 |
 
 依赖关系：I0 已完成；I1 可直接开始。I2 依赖 I1；I3 依赖 I2；I4 依赖 I2；I5 依赖 I4 选型结论。
+**U1 无依赖**（纯前端），排在 I4 之前。
 
 **与原 v1 排序的差异**：原 P3（Web UI）前插入 I0/I1。原因——Architecture v2 确认 app_sample god object 是复用的最大瓶颈，且正式 UI 的所有面板都应挂在 engine runtime API 上而不是 app_sample 的私有结构上；dev console 已够日常调试，UI 正式化不再是最高优先。
 
@@ -55,9 +58,43 @@
 - **健壮性**：进程隔离、命令 schema 校验、资产加载事务性、headless 不变（smoke 契约一行不动）、协议可演进、协议级回放测试文化。
 - **面板信息架构**：Scene Tree / 中央（视口+Graph+Stats）/ Inspector / Console 四区，dock 布局，深色引擎工具风。
 
-## 5. 还债清单（计入对应阶段）
+## 5. U1 — 视觉与布局重构（2026-10-12 立项，Plan.md §5 第一梯队序 3）
+
+**范围**：仅 `ui/` 前端。协议、引擎、`ui/src/protocol.ts` 的类型定义零改动。
+
+**问题（B2/B3 实机反馈）**
+
+| # | 症状 |
+|---|---|
+| 1 | 单一灰蓝配色 + 原生控件观感；缺设计令牌（色板/间距/圆角/字体层级），按钮/输入/表格/滚动条样式未统一，信息密度与层次不清 |
+| 2 | 默认布局失衡：左侧「帧控制/调试视图/帧计数」tab 组内容单薄却占约 1/3 屏宽，数据密集面板（帧时曲线/RG 图/阶段耗时/控制台）反被压缩 |
+
+**改动点**
+
+| 项 | 内容 |
+|---|---|
+| 设计令牌 | `ui/src/styles.css` 建立 CSS 变量层：色板（背景/面板/边框/文本/强调，深色引擎工具风）、间距阶梯、圆角、字体层级、控件高度 |
+| 控件统一 | 按钮/输入/下拉/复选/表格/滚动条/tab/分割条按令牌重写；消除原生外观残留 |
+| 布局配比 | 默认布局改「控制窄栏（约 240–280px）+ 数据主区」；`FrameGraphPanel`/`PhasePanel`/`RgGraphPanel`/`ConsolePanel` 归主区 |
+| 布局版本 | dockview 布局缓存版本 v2 → v3（`App.tsx` 的 localStorage key），确保旧缓存不污染新默认布局 |
+| 密度 | 面板表头/行高/内边距按令牌统一，提升同屏信息量 |
+
+**不做**：新面板、新协议方法、I5 备选（gizmo/拾取高亮/截图倍速）。
+
+**验收**
+
+| 项 | 口径 |
+|---|---|
+| 令牌贯通 | `styles.css` 无散落硬编码色值/尺寸（grep 可验） |
+| 默认布局 | 清除 localStorage 后首次打开即为「控制窄栏 + 数据主区」 |
+| 功能不回归 | 13 个面板能力与 B2/B3 逐项一致；`--no-ui` 模式不受影响 |
+| 协议零改动 | `control_plane_protocol.schema.json` 与 golden 测试逐字节不变 |
+| 构建 | `npm run build`（`tsc -b && vite build`）通过 |
+
+## 6. 还债清单（计入对应阶段）
 
 - I0：已完成 camera/scene/loader 所有权下沉与 Vulkan renderer target/façade；renderer 内部物理拆文件留作不改变接口的维护任务。
 - I1：`docs/` 补协议 JSON Schema（从 `json_rpc.cpp` 的校验逻辑反生成，避免文档漂移）。
 - I2：拾取高亮（选中对象描边/变色需要 shader 或 overlay pass，随正式 UI 一起做）。
 - scene 层级（flat SoA + parent_index + transform 传播 system）属 Architecture 计划 2，完成后 Interface 侧补"场景树按层级显示"（当前 flat 列表）。
+- U1：设计令牌缺失与默认布局失衡（§5 问题 1/2）计入本阶段，不单独留债；dockview 布局缓存版本随重构 bump。

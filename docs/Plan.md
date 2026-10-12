@@ -1,6 +1,8 @@
 # CGLab 统一计划单
 
-> 状态：**生效（2026-08-16）**。本文是全部待办事项的**唯一排序口径**。
+> 状态：**生效（2026-10-12 修订）**。本文是全部待办事项的**唯一排序口径**。
+> 本轮修订新增：§4 质量欠债（复验发现的 A3 两项缺陷）、§5 第一梯队、§6 第二梯队、
+> §7 待决策（计算机动画主线）、§10 复验记录。
 > 其余计划文档保留为设计依据与历史记录，不再单独维护顺序：
 > `Architecture.md`（as-built 总纲 + 还债清单）、`PerformancePlan.md`（A 系列设计稿 + B/C 路线）、
 > `EngineLayerDoDPlan.md`（D/F 设计稿）、`RenderLayerPlan.md`（R 系列设计稿）、
@@ -18,24 +20,33 @@
 
 ## 1. 执行序列
 
-| 序 | 里程碑 | 内容 | 设计细节 | 理由 |
-|---|---|---|---|---|
-| 1 | **M4** | R2 compare sampler + 硬件 PCF（reversed-Z 评审随附） | `EngineRoadmapPlan.md` §M4 → `RenderLayerPlan.md` §R2 | 阴影质量第一档；M3 的 debug view 正好做 PCF 前后 A/B |
-| 2 | **M5** | R3 阴影视锥剔除 + per-pass 遥测 | `EngineRoadmapPlan.md` §M5 → `RenderLayerPlan.md` §R3 | shadow pass 全量画的 CPU 随场景增长；遥测是 M8 数据源 |
-| 3 | **H1** | 录制路径 DoD 还债（子仓 backend + 主仓热路径 + 启动异常契约） | 本文 §2 | 每帧堆分配/指针追逐是高性能目标的直接债务；小、机械、可测 |
-| 4 | **M7** | T1b 分块流式上传（跨帧续传 + 进度经 A0 协议上报 + T0–T3 回退） | `EngineRoadmapPlan.md` §M7 + 子仓 `上传路径与大场景规划.md` §五.2/§六 | 1–3 s/GB 单事务挂帧是最大架构级瓶颈；M2（arena 池）已就绪 |
-| 5 | **M6** | R5 后处理链路（半分辨率 + tonemap + resolve；`--debug-view` 扩 hdr/resolved） | `EngineRoadmapPlan.md` §M6 | 画面完成度最高杠杆；R0b 的 per-pass area 已铺路 |
-| 6 | **M8** | B1→B3：控制平面收尾 + Web UI + RG 事件浏览器 | `EngineRoadmapPlan.md` §M8 + `InterfaceRedesign.md` I1–I3 | 消费 M5 遥测 + M3 调试状态；Frame Debugger 形态 |
-| 7 | **M9** | IBL：环境贴图 + 预过滤 | `EngineRoadmapPlan.md` §M9 | 材质正确性；lights_table 的第一个真实消费者方向 |
-| 8 | **M10** | CSM 分阶阴影 | `EngineRoadmapPlan.md` §M10 | 大场景阴影；依赖 M4/M5 全部就绪；**前置约束：M5 的光剔除在相机可见集上游（视锥外遮光体不投影），CSM 立项前需解耦两路剔除** |
+> 序 1–6 已全部完成（见 §12 阶段与提交记录）；序 7 起为当前待办。
+
+| 序 | 里程碑 | 内容 | 设计细节 | 理由 | 归属 |
+|---|---|---|---|---|---|
+| 1 | ~~**M4**~~ | R2 compare sampler + 硬件 PCF（reversed-Z 评审随附） | `EngineRoadmapPlan.md` §M4 → `RenderLayerPlan.md` §R2 | 阴影质量第一档；M3 的 debug view 正好做 PCF 前后 A/B | — |
+| 2 | ~~**M5**~~ | R3 阴影视锥剔除 + per-pass 遥测 | `EngineRoadmapPlan.md` §M5 → `RenderLayerPlan.md` §R3 | shadow pass 全量画的 CPU 随场景增长；遥测是 M8 数据源 | — |
+| 3 | ~~**H1**~~ | 录制路径 DoD 还债（子仓 backend + 主仓热路径 + 启动异常契约） | 本文 §2 | 每帧堆分配/指针追逐是高性能目标的直接债务；小、机械、可测 | — |
+| 4 | ~~**M7**~~ | T1b 分块流式上传（跨帧续传 + 进度经 A0 协议上报 + T0–T3 回退） | `EngineRoadmapPlan.md` §M7 + 子仓 `上传路径与大场景规划.md` §五.2/§六 | 1–3 s/GB 单事务挂帧是最大架构级瓶颈；M2（arena 池）已就绪 | — |
+| 5 | ~~**M6**~~ | R5 后处理链路（半分辨率 + tonemap + resolve；`--debug-view` 扩 hdr/resolved） | `EngineRoadmapPlan.md` §M6 | 画面完成度最高杠杆；R0b 的 per-pass area 已铺路 | — |
+| 6 | ~~**M8**~~ | B1→B3：控制平面收尾 + Web UI + RG 事件浏览器 | `EngineRoadmapPlan.md` §M8 + `InterfaceRedesign.md` I1–I3 | 消费 M5 遥测 + M3 调试状态；Frame Debugger 形态 | — |
+| 7 | **A3** | 帧边界健壮性：零 extent 帧 + smoke 契约脱硬编码 | 本文 §4 | 窗口最小化即杀进程（实测复现）；smoke 契约只在最小资产上校准、CullingSample 未生效 | 基建 |
+| 8 | **I6** | UI 视觉与布局重构（设计令牌 + 默认布局配比） | `InterfaceRedesign.md` §5 | 纯前端、零协议/引擎改动、验收直观；开发者速度项 | 基建 |
+| 9 | **R6** | RG 后端能力：FP16 色彩格式 + compute 路径首验 | `RenderLayerPlan.md` §R6 | M9 的前置（枚举表当前无浮点格式，tonemap 实为 LDR 重映射）；compute 首次实机验证 | 实验 |
+| 10 | **M9** | IBL：环境贴图 + 预过滤 | `EngineRoadmapPlan.md` §M9 + `RenderLayerPlan.md` §M9 | 材质正确性；lights_table 的第一个真实消费者方向 | 实验 |
+| 11 | **M10** | CSM 分阶阴影 | `EngineRoadmapPlan.md` §M10 + `RenderLayerPlan.md` §M10 | 大场景阴影；依赖 M4/M5；**前置：解耦相机/光两路剔除（本文 §3 C3a 已提级）** | 实验 |
+
+**归属口径**：`基建` = 夹具与基础设施，无算法学习价值，可直接实现；`实验` = 渲染/算法实现，**是仓库作者本人的实验内容**，只提供机制用法与踩坑清单，不代为实现（见 §9 文档纪律）。
 
 与原 `EngineRoadmapPlan.md` 的两处调整：
 
 1. **M7 提前到 M6 之前**。原排序 M6（画面）先于 M7（规模/加载）；按"高性能最重要"的定位，
    1–3 s/GB 的挂帧墙应先于色调映射解决。M2 已闭环，无新增前置。
-2. **新增 H1（还债段）**。2026-08-16 风格审查（见 §6）发现子仓 Vulkan 录制路径残留每帧堆分配
+2. **新增 H1（还债段）**。2026-08-16 风格审查（见 §11）发现子仓 Vulkan 录制路径残留每帧堆分配
    与指针追逐（P0–P7 曾在 core 侧消灭同构问题，backend 执行侧当时显式排除在范围外），
    主仓也有两处每帧临时 vector 与启动路径 8 处 `throw`。属"修复/还债"，排在小件能力之前。
+3. **2026-10-12 新增 A3 / I6 / R6**。复验发现两项健壮性缺陷（§4），按"修复优先"插到最前；
+   UI 重构与 R6 属开发者速度与能力补齐，排在画面项（M9/M10）之前。
 
 ## 2. H1 — 录制路径 DoD 还债
 
@@ -88,7 +99,7 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 
 | 事项 | 触发条件 | 出处 |
 |---|---|---|
-| C1 job system（infra I0–I3：线程池 + MPMC + 任务图） | ~~M7 专用传输线程立项 / 第二个真实并发负载~~ ✅ 2026-08-18 触发成立：§8 dcl 纹理并行解码即"第二个真实并发负载"（InfrastructureDesign §2 首选候选族）；I0/I1 已落地（`f3590553`/`ff55eb84`/`d844e4af`），I2 任务图随 RG 传输线程或第二个多阶段负载评审。2026-08-18 决策：Unity 式 safety system（并发别名检查）先不实现 | `infra_and_dcl/InfrastructureDesign.md` §2/§3 |
+| C1 job system（infra I0–I3：线程池 + MPMC + 任务图） | ~~M7 专用传输线程立项 / 第二个真实并发负载~~ ✅ 2026-08-18 触发成立：§13 dcl 纹理并行解码即"第二个真实并发负载"（InfrastructureDesign §2 首选候选族）；I0/I1 已落地（`f3590553`/`ff55eb84`/`d844e4af`），I2 任务图随 RG 传输线程或第二个多阶段负载评审。2026-08-18 决策：Unity 式 safety system（并发别名检查）先不实现 | `infra_and_dcl/InfrastructureDesign.md` §2/§3 |
 | C2 primitive/draw 级与 GPU-driven 剔除 | M5 后 per-pass 遥测显示 CPU 仍是瓶颈 | `PerformancePlan.md` C2 |
 | C3 场景层级 `parent_index` + 变换传播（含 UI 层级显示） | 需要层级动画/场景树编辑时 | `PerformancePlan.md` C3 |
 | B4 单窗口 webview 壳（I4） | M8 的 B2 落地后评估 | `InterfaceRedesign.md` I4 |
@@ -101,14 +112,78 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 | per-pass GPU timestamp 时序瀑布（I3"定位最慢 pass"完整验收项） | 需要按 pass 定位 GPU 热点时 | `InterfaceRedesign.md` I3 |
 | 物理多队列启用 / history 资源语义 | RG 预留能力，无排期 | RG 子仓 `ArchitectureAndInternals.md` |
 | pipeline 去重的全量哈希 + 线性扫（`vk_pipeline_store.cpp:79-88/249-258`） | 非每帧路径；批量建管线可测到开销时再议 | H1 审查记录 |
+| C3a 相机/光两路剔除解耦 | **已提级**：M10 CSM 硬前置，执行序列见 §6 | M5 记录 + `RenderLayerPlan.md` §M10 |
 
-## 4. 验收欠债登记（已实施、数据未闭环）
+## 4. 质量欠债（2026-10-12 复验登记）
+
+复验口径：Debug 92/92 target 构建 + 46/46 ctest + 4 组 GPU smoke（`--validation`）+ Release 92/92 构建，全绿。以下两项为复验中新发现的真实缺陷。
+
+| # | 症状 | 证据 | 根因 | 处置 |
+|---|---|---|---|---|
+| A3-1 | 窗口最小化 → 应用 exit 1 | 同一条 `TriangleSample --smoke-test --frames 60`：最小化窗口 = exit 1，正常窗口 = exit 0 | swapchain extent 归零后帧计划仍声明零尺寸 transient image → `vk_backend.h:196` 校验失败 → `frame_status::failed` 穿透 `application_runner.cpp:41-44` 变 `EXIT_FAILURE` | 零 extent 帧在 runtime 侧识别为"跳过提交 + 等待 resize"，失败不穿透应用层 |
+| A3-2 | smoke 契约只在最小资产上成立 | `expected_indirect_groups_per_frame = 3` 按 `assets/triangle.gltf` 校准，而 group 数 = pass 数 × arena 分段数（Sponza 实测 5）；`culling_sample.cpp:60-68` 未设三字段，契约对其空转 | 契约硬编码"每 pass 一组"，与实际分段耦合 | 期望值由 `build_frame` 实际发射行推导；三字段构造缺省即"不校验"的口径需显式化 |
+
+**A3 执行序列**
+
+| 序 | 内容 | 落点 | 验收 | 归属 |
+|---|---|---|---|---|
+| A3-1 | 零 extent 帧跳过 + resize 等待 | `engine_runtime.cpp`（帧边界出口）、`render_graph_driver.cpp` | 新增单测覆盖零 extent 帧；最小化窗口 smoke 退出码 0 且帧计数不推进；常规 smoke 契约逐字不变 | 基建 |
+| A3-2 | smoke 契约去硬编码 | `application_runner.cpp`、四个 `*_sample.cpp` | 大资产（分段 >1）smoke 通过；CullingSample 补契约字段；契约失败信息仍打印实际计数 | 基建 |
+
+## 5. 第一梯队执行计划（2026-10-12 立项）
+
+排序原则不变（修复/还债优先），四项均独立提交、独立验收。
+
+| 序 | 阶段 | 内容 | 验收 | 归属 |
+|---|---|---|---|---|
+| 1 | **A3-1** | 零 extent 帧跳过 + resize 等待 | 最小化窗口 exit 0；常规 smoke 全绿 | 基建 |
+| 2 | **A3-2** | smoke 契约由实际发射行推导 | 大资产 smoke 通过；CullingSample 契约生效 | 基建 |
+| 3 | **I6** | UI 视觉与布局重构（详见 `InterfaceRedesign.md` §5） | 设计令牌统一；默认"控制窄栏 + 数据主区"；`--no-ui` 与协议零改动 | 基建 |
+| 4 | **R6** | FP16 色彩格式 + compute 路径首验（详见 `RenderLayerPlan.md` §R6） | 浮点 RT 端到端；compute dispatch 实机零 validation 错误；LDR 路径回归逐字节不变 | 实验 |
+
+依赖：R6 无前置；A3 与 I6 无依赖，可并行。R6-1（子仓能力）完成后才能开 M9。
+
+## 6. 第二梯队执行计划（2026-10-12 立项）
+
+| 序 | 阶段 | 内容 | 前置 | 验收 | 归属 |
+|---|---|---|---|---|---|
+| 1 | **M9** | IBL：环境贴图 + 预过滤（拆两步，见 `RenderLayerPlan.md` §M9） | R6-1 | 金属材质反射环境；预过滤在加载期一次完成，稳态帧零额外计算 | 实验 |
+| 2 | **M10** | CSM 分阶阴影（见 `RenderLayerPlan.md` §M10） | C3a 解耦 + M4/M5 | 近远影清晰度对比；每阶 draw 计数进遥测 | 实验 |
+| 3 | **C3a** | 相机/光两路剔除解耦 | — | 视锥外遮光体仍投影；M5 既有剔除语义单测不变 | 实验 |
+
+**M9 拆分（两步独立验收）**
+
+| 步 | 内容 | 说明 | 归属 |
+|---|---|---|---|
+| M9-1 | compute 首个真实负载：运行时生成 BRDF LUT | 顺带完成 compute 路径首验（R6-2 的**能力**验收，此处是**真实负载**验收） | 实验 |
+| M9-2 | skybox + 预过滤 mip chain + irradiance + `gltf.frag` 接入 specular IBL | 主链路 | 实验 |
+
+## 7. 待决策：计算机动画主线（未排期）
+
+复验确认：全仓无 animation/skin/skeleton/joint/morph/keyframe 任何实现；`Architecture.md` 把动画划在范围外；M9/M10 之后路线图无动画后续里程碑。作为仓库目标之一，动画需显式立项，当前**未进入执行序列**。
+
+待定口径（下一轮决策点）：
+
+| 决策 | 选项 |
+|---|---|
+| 落点 | DCL 侧新增 animation/skin 行表 vs 主仓独立动画层 |
+| 蒙皮求值 | CPU 蒙皮（SoA 行表 + 帧边界副作用）vs GPU 蒙皮（storage buffer + compute，需 R6-2 已就绪） |
+| 前置 | C3 场景层级（`parent_index` + 变换传播）是否随动画一并提级 |
+
+**归属：实验**（全部）。行表设计、蒙皮求值、算法体均为作者本人的实验内容；需要时只补机制用法与踩坑清单。
+
+## 8. 验收欠债登记（已实施、数据未闭环）
 
 - **Sponza 实机数据回填**：`telemetry.frame.counters.{visible,culled,draws}`、`telemetry.load` 分段、
-  剔除前后帧时对比（`PerformancePlan.md` §A1/A2 验收口径）——待有 Sponza 资产的机器。
+  剔除前后帧时对比（`PerformancePlan.md` §A1/A2 验收口径）——待有 Sponza 资产的机器；
+  与本节"运行期 per-object draws 未接线"合并处理。
 - **M2 多 arena GPU 实机路径**：>256MB 真实资产加载（现仅 benchmark 逻辑级覆盖 arena_count=3）。
+- **运行期 per-object draws 未接线**：场景树 "Draws" 列读注册期 `scene_object::draw_count`
+  （`scene_registry.h:174` 恒传空 draws），handle 路径恒 0；随 Sponza 数据回填一并接线。
+- **大资产 smoke 未复验**：A3-2 完成后需用分段 >1 的资产（`scripts/gen_stream_glb.ps1` 产物）
+  跑一次 smoke，确认契约去硬编码后仍能守住不变式。
 
-## 5. 推进纪律
+## 9. 推进纪律
 
 - 每阶段：实现 → 构建（vcvars64 环境）→ **子仓 + 主仓 ctest 全绿**（主仓构建需保持
   `CGLAB_BUILD_RENDER_GRAPH_UNIT_TESTS=ON`，默认随 `BUILD_TESTING`，2026-08-16 已修正缓存）
@@ -119,7 +194,30 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 - `ArchitectureContract.cmake` 与子仓 `BackendOwnershipContract`/`CoreLayoutContract` 全程绿；
   新风格规则先落契约检查再实施。
 
-## 6. 不做（当前范围外）
+**文档纪律：归属口径**（2026-10-12 确立）
+
+本仓库是仓库作者本人的算法实验台——框架提供机制与约束，算法由作者自己写。
+
+| 归属 | 范围 | 约定 |
+|---|---|---|
+| **基建** | 健壮性、测试夹具、构建脚本、UI 杂活 | 无算法学习价值，可直接实现并提交 |
+| **实验** | 渲染效果、算法、数据结构设计 | **不代为实现**。文档只提供三类内容：机制用法（接口事实）、踩坑清单、验收/契约设计 |
+
+落到文档：`实验` 项只写"机制用法（不实现）"小节（如 `RenderLayerPlan.md` §R6），
+不写行表设计、不写算法体、不给出实现步骤；设计决策留给作者。
+
+## 10. 复验记录（2026-10-12）
+
+| 项 | 结果 |
+|---|---|
+| Debug 构建 | ✅ 92/92 target |
+| Release 构建 | ✅ 92/92 target |
+| CTest | ✅ 46/46 通过（3.62s） |
+| GPU smoke ×4（--validation） | ✅ Triangle / GltfSponza / Shadow / Culling 全 exit 0，零 validation 错误 |
+| 控制平面 + Web UI | ✅ WS 监听 + HTTP 托管 `ui/dist` 正常 |
+| 环境 | RTX 5060 Ti / Vulkan SDK 1.4.328.1 / MSVC 19.44 / Ninja |
+
+## 11. 不做（当前范围外）
 
 - deferred/G-Buffer（若立项，查看器复用 M3 机制）、GI 本体（M9 只做 IBL）、PCSS 软阴影、透明物投影；
 - 完整阶段纯化（阶段间 in/out 表化）——D3 已评估，成本高收益存疑；
@@ -127,7 +225,7 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
   `vk_graph_executor`/`vk_runtime` 双资源表中心、retirement 命名——记录在 `Architecture.md` 还债清单，
   待触碰相邻代码时顺手收敛，不单独排期。
 
-## 7. 阶段与提交记录
+## 12. 阶段与提交记录
 
 | 阶段 | 内容 | 提交 |
 |------|------|------|
@@ -146,10 +244,16 @@ DamagedHelmet/two_triangles 光剔除场景）全过。
 | dcl-并行解码 | job system 并行图像解码执行器 + asset_service 在途节流 | ✅ 2026-08-18：`99b6659a`（每图一任务入池；节流 ≤4 防嵌套提交全池堵死；Sponza 启动加载 29.4s→12.6s） |
 | dcl-转换层 | RGBA8 整块 memcpy + accessor 类型化整块展开 | ✅ 2026-08-18：子仓 `64ba4fe` + 主仓 `a74d4d13`（Sponza 启动加载 → Release 7.1–8.2s / Debug 13.6s，vs 初始 Release ~31s / Debug 76–82s） |
 | 合并门 | feature/infra-and-dcl 尖端复验（合并 main 前最后一道门） | ✅ 2026-08-22：尖端 `82aac31e`（RG `b63cbf3b` / dcl `324e43c7`，指针提交晚于此前各阶段回填，故单独复验）46/46 ctest（dcl/infra/RG/主仓全覆盖）+ 8 组 GPU smoke（`--validation`：Triangle/GltfSponza/Shadow/Culling 默认 + `--debug-view` shadow/depth/hdr/resolved）全绿 |
-| M9 | IBL | 待实施 |
-| M10 | CSM | 待实施 |
+| 复验 | main 全量复验（构建 + ctest + smoke + UI）| ✅ 2026-10-12：见 §10；同时登记两项缺陷为 §4 A3 |
+| A3 | 帧边界健壮性（A3-1 零 extent 帧 / A3-2 smoke 契约脱硬编码） | 待实施（§5 序 1-2） |
+| I6 | UI 视觉与布局重构 | 待实施（§5 序 3） |
+| R6 | RG 后端能力：FP16 色彩格式 + compute 路径首验 | 待实施（§5 序 4） |
+| M9-1 | compute 真实负载：运行时 BRDF LUT | 待实施（§6） |
+| M9-2 | IBL 主链路：skybox + 预过滤 + irradiance | 待实施（§6） |
+| M10 | CSM | 待实施（§6） |
+| C3a | 相机/光两路剔除解耦 | 待实施（§6） |
 
-## 8. 资产加载性能登记（2026-08-18，立项意向：dcl 结构与性能优化）
+## 13. 资产加载性能登记（2026-08-18，立项意向：dcl 结构与性能优化）
 
 实测（`NewSponza_Main_glTF_003.gltf`，vertex+index 192.5MB，MSVC Debug，两次）：
 `load_us` 82603529 / 76373045，其中 merge 5999/529us、upload 552795/531820us——
@@ -176,7 +280,7 @@ tinygltf 阶段的纹理解码（Release 下同为数十秒级，并非"正常"�
 
 - 场景树 "Draws" 列读注册期 `scene_object::draw_count`，handle 路径恒 0
   （`scene_registry.h:174` 恒传空 draws），Release 同；运行期 per-object draws 未接线，
-  与 §4 Sponza 回填项一并处理。
+  与 §8 Sponza 回填项一并处理。
 - smoke 契约 `expected_indirect_groups_per_frame=3`（`gltf_sponza_sample.cpp:69`）按小资产
   "每 pass 一组"校准，Sponza 实测 5 组/帧——大资产跑 smoke 双配置都会失败，契约口径问题。
 - 启动资产加载主线程空转等待（`engine_runtime.cpp:111-125`），窗口假死约 80s
@@ -205,18 +309,5 @@ tinygltf 阶段的纹理解码（Release 下同为数十秒级，并非"正常"�
    **并行解码的归属**（同日修正）：管线所有权归 dcl（解析→解码→转换是 dcl 内部流程，
    主仓不组合 dcl 阶段）；`load_options` 内定义 `image_decode_executor` 函数表缝，
    主仓以组合根身份注入 job system 实现（对齐 render_driver 函数表 DI 惯例；
-   本缝即 §3"DI 风格统一"评审的实验田）。dcl 保持零依赖；infra 抽仓后 dcl 可自带
+   本缝即 §6"DI 风格统一"评审的实验田）。dcl 保持零依赖；infra 抽仓后 dcl 可自带
    默认并行执行器。
-
-## 9. UI 重构立项意向（2026-08-18，单独 feature 分支）
-
-B2/B3 落地后的实机反馈（三角/Shadow/Sponza 目检）：
-
-1. **视觉**：单一灰蓝配色 + 原生控件观感简陋；缺设计令牌（色板/间距/圆角/字体层级），
-   按钮/输入/表格/滚动条样式未统一，信息密度与层次不清。
-2. **默认布局失衡**：左侧「帧控制/调试视图/帧计数」tab 组内容单薄却占约 1/3 屏宽，
-   数据密集面板（帧时曲线/RG 图/阶段耗时/控制台）反被压缩；默认布局应按
-   "控制窄栏 + 数据主区"重新配比，或评估响应式默认布局。
-
-**立项意向（单独 feature 分支）**：ui/ 视觉与布局整体重构——设计令牌 + 控件样式统一 +
-默认布局重排；dockview 布局缓存版本（现 v2）随重构再 bump。范围仅前端，协议/引擎零改动。

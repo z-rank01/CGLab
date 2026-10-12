@@ -187,7 +187,7 @@ debug_draws}`，measure 槽 6–8）；smoke 契约新增 per-pass 不变式（�
 端到端验证剔除生效（光外实例 shadow_draws=2 / main_draws=3）；DamagedHelmet
 （3.6MB，1233456 字节几何）ShadowSample smoke 零错误 + 目检阴影清晰
 （截帧 `build/helmet_hw_pcf.png`）。Sponza 实机"剔除前后帧时对比"仍待有资产的
-机器（Plan.md §4 欠债登记）。
+机器（Plan.md §8 欠债登记）。
 
 ---
 
@@ -279,6 +279,9 @@ stream_test.glb 由 scripts/gen_stream_glb.ps1 生成）经 scene.load_asset 运
 
 ## M9 — IBL：环境贴图 + 预过滤
 
+> **2026-10-12**：已立项为第二梯队第 1 项（Plan.md §6）；实施拆分（M9-1 compute BRDF LUT /
+> M9-2 主链路）与验收口径见 `RenderLayerPlan.md` §M9。**前置 R6（FP16 色彩格式）**。
+
 **动机**：半球环境光是权宜；metal 材质 diffuse≈0 时观感上限低。F3 注释已点名
 GI 是 lights_table 第一个真实消费者，IBL 是 GI 的最近前置。
 
@@ -292,6 +295,9 @@ specular IBL；`sun_light` 阴影保持不变。
 ---
 
 ## M10 — CSM 分阶阴影
+
+> **2026-10-12**：已立项为第二梯队第 2 项（Plan.md §6）；改动点分层表与"两路剔除解耦"
+> 硬前置见 `RenderLayerPlan.md` §M10。
 
 **动机**：大场景阴影必经之路；`sun_light.ortho_box` 已留分阶注释。
 
@@ -333,6 +339,7 @@ sampler）与 M5（每阶视锥剔除）全部就绪。
 | M5 | R3 阴影视锥剔除 + per-pass 遥测 | ✅ 2026-08-16：`a74ca942` |
 | M6 | R5 后处理链路 | ✅ 2026-08-16：`4a514b3c` |
 | M7 | T1b 分块流式上传 | ✅ 2026-08-16：`e5cad5c8` |
-| M8 | B1→B3 控制平面 + RG 事件浏览器 | 待实施 |
-| M9 | IBL | 待实施 |
-| M10 | CSM | 待实施 |
+| M8 | B1→B3 控制平面 + RG 事件浏览器 | ✅ 2026-08-18：`0e671a96` + `da2f6d88` + `65a1adf8` |
+| R6 | FP16 色彩格式 + compute 路径首验 | 待实施（Plan.md §5 序 4） |
+| M9 | IBL | 待实施（Plan.md §6 序 1，M9-1/M9-2 拆分） |
+| M10 | CSM | 待实施（Plan.md §6 序 2，前置两路剔除解耦） |
